@@ -3,7 +3,7 @@
   "title": "Keys become prompts and updates become redraws",
   "body": "The pieces need a loop.\n\n## Proposal\n\n`src/main.rs` and `src/acp.rs`: the program takes the agent command on its\ncommand line, spawns it, runs the ACP client connection on a tokio LocalSet,\nand runs one loop over two sources: crossterm key events, and session updates\nfrom the connection. Enter sends the input as a prompt; Esc cancels a prompt\nin flight; Ctrl+c quits. Every update goes through `Transcript::apply` and\nredraws. Permission requests are answered with the first allow option until\nthe screen has a way to ask.\n\n## Open\n\n- Whether the agent command is an argument or a config file. An argument\n  first.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "coax-3a79ad",
@@ -17,16 +17,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T02:57:40.184966589Z",
-  "updated_at": "2026-11-07T02:57:40.184966589Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T02:57:40.219490759Z",
+  "closed_at": "2026-11-07T02:57:40.219490759Z",
+  "close_reason": "Done in the commit titled 'Run a first ACP session against a scripted agent' on dev, 2026-11-06. The hello scenario plays through the fake agent, in process and over stdio, into the same transcript, and the screen shows it under tmux. Visual design is untouched on purpose; that is Jack's to direct.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "be1bba1",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "be1bba1",
+      "branch": "dev"
+    }
   }
 }
