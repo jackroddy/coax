@@ -3,7 +3,7 @@
   "title": "A fake agent replays a scenario over ACP",
   "body": "Nothing here can be tested against an agent: none is installed, and a real\none is not deterministic anyway.\n\n## Proposal\n\n`src/bin/fake-agent.rs`: an ACP agent over stdin and stdout that answers\n`initialize` and `session/new` and, on each `session/prompt`, plays the next\nact of a scenario file given on its command line. A scenario is JSON: a list\nof acts, each a list of steps, where a step is one of the things an agent\ncan send: a text chunk, a thought chunk, a tool call with kind, title and\nlocations, a tool call update with status and content, a plan, a permission\nrequest naming the option the test expects chosen, or a stop reason. A step\nmay carry a delay in milliseconds so streaming can be watched by eye.\n\nThe format is part of the program's interface and is versioned with it.\n\n## Rejected\n\n- Hand-written JSON-RPC in tests, bypassing the SDK. The SDK's agent side is\n  the same code a real agent uses, so the fake exercises the real wire.\n\n## Open\n\n- Whether the fake also answers client requests it does not expect, such as\n  a cancel mid-act, with something sensible rather than an error.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "coax-3a79ad",
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T02:57:40.170819322Z",
-  "updated_at": "2026-11-07T02:57:40.192200723Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T02:57:40.205850351Z",
+  "closed_at": "2026-11-07T02:57:40.205850351Z",
+  "close_reason": "Done in the commit titled 'Run a first ACP session against a scripted agent' on dev, 2026-11-06. The hello scenario plays through the fake agent, in process and over stdio, into the same transcript, and the screen shows it under tmux. Visual design is untouched on purpose; that is Jack's to direct.",
+  "resolution": "done",
   "notes": [
     {
       "id": "15a92dcf",
@@ -32,6 +32,9 @@
       "commit": "be1bba1",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "be1bba1",
+      "branch": "dev"
+    }
   }
 }
