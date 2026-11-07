@@ -39,7 +39,7 @@ impl Link {
             .terminal(false);
         let request = InitializeRequest::new(ProtocolVersion::V1)
             .client_capabilities(capabilities)
-            .client_info(Implementation::new("chat-tui", env!("CARGO_PKG_VERSION")));
+            .client_info(Implementation::new("coax", env!("CARGO_PKG_VERSION")));
         self.cx.send_request(request).block_task().await
     }
 
@@ -75,7 +75,7 @@ pub async fn run(
     let permissions = tx.clone();
     Client
         .v1()
-        .name("chat-tui")
+        .name("coax")
         .on_receive_notification(
             async move |notification: SessionNotification, _cx: ConnectionTo<Agent>| {
                 let _ = updates.send(Event::Update(Box::new(notification.update)));

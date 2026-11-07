@@ -1,9 +1,9 @@
 use agent_client_protocol::v1::schema::{StopReason, ToolCallStatus, ToolKind};
 use agent_client_protocol::{AcpAgent, Error};
-use chat_tui::acp::{self, Event, Link};
-use chat_tui::fake;
-use chat_tui::scenario::Scenario;
-use chat_tui::session::{Entry, Transcript};
+use coax::acp::{self, Event, Link};
+use coax::fake;
+use coax::scenario::Scenario;
+use coax::session::{Entry, Transcript};
 
 const HELLO: &str = include_str!("../scenarios/hello.json");
 
@@ -89,7 +89,7 @@ async fn the_hello_scenario_builds_the_expected_transcript_in_process() {
 #[tokio::test]
 async fn the_fake_agent_binary_speaks_the_same_scenario_over_stdio() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/hello.json");
-    let agent = AcpAgent::from_args([env!("CARGO_BIN_EXE_fake-agent"), path]).unwrap();
+    let agent = AcpAgent::from_args([env!("CARGO_BIN_EXE_coax-fake-agent"), path]).unwrap();
     acp::run(agent, async |link| {
         let transcript = one_prompt(link, "hello").await?;
         check_hello(&transcript);

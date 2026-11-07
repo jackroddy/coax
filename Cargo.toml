@@ -1,13 +1,16 @@
 [package]
-name = "chat-tui"
+name = "coax"
 version = "0.1.0"
-description = "a terminal chat for ACP agents"
+description = "a terminal chat for agents that speak the Agent Client Protocol"
 readme = "README.md"
 exclude = ["CLAUDE.md", ".claude", "tmp-claude"]
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 authors = ["Jack Roddy <jack.w.roddy@gmail.com>"]
+repository = "https://github.com/jackroddy/coax"
+keywords = ["acp", "agent", "chat", "tui", "terminal"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 agent-client-protocol = { version = "5", features = ["process", "stdio"] }

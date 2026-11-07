@@ -1,7 +1,8 @@
-# chat-tui
+# coax
 
-A terminal chat for agents that speak the Agent Client Protocol. The name is
-a placeholder.
+> **<u>co</u>nversational <u>a</u>gent e<u>x</u>change**
+
+`coax` is a terminal chat for agents that speak the Agent Client Protocol.
 
 ## license
 

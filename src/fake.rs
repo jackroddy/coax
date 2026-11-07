@@ -22,13 +22,16 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
     let cancel_flag = cancelled.clone();
     Agent
         .v1()
-        .name("fake-agent")
+        .name("coax-fake-agent")
         .on_receive_request(
             async |req: InitializeRequest, responder, _cx: ConnectionTo<Client>| {
                 responder.respond(
                     InitializeResponse::new(req.protocol_version)
                         .agent_capabilities(AgentCapabilities::new())
-                        .agent_info(Implementation::new("fake-agent", env!("CARGO_PKG_VERSION"))),
+                        .agent_info(Implementation::new(
+                            "coax-fake-agent",
+                            env!("CARGO_PKG_VERSION"),
+                        )),
                 )
             },
             on_receive_request!(),
@@ -97,7 +100,7 @@ async fn play(
                         _ => "cancelled".to_string(),
                     };
                     if chosen != expect {
-                        eprintln!("fake-agent: expected permission {expect}, got {chosen}");
+                        eprintln!("coax-fake-agent: expected permission {expect}, got {chosen}");
                     }
                 }
             }

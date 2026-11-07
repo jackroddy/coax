@@ -1,9 +1,9 @@
-# chat-tui
+# coax
 
-A single-crate cargo project: a terminal chat that drives an agent over the
-Agent Client Protocol (ACP). The agent is a subprocess speaking JSON-RPC on
-its stdin and stdout; this program is the ACP client and owns the screen. The
-name `chat-tui` is a placeholder until Jack picks one.
+A single-crate cargo project: `coax`, a terminal chat that drives an agent
+over the Agent Client Protocol (ACP). The agent is a subprocess speaking
+JSON-RPC on its stdin and stdout; `coax` is the ACP client and owns the
+screen. The name expands to conversational agent exchange.
 
 Design rationale that the code does not state lives in foam's memories, and
 pending work lives in foam's issues. `foam prime` prints both at session start.
@@ -21,7 +21,7 @@ is no comment.
 
 **Tests.** Unit tests stay inline in the file they cover. Integration tests
 under `tests/` drive the session model against the fake agent in
-`src/bin/fake-agent.rs`, which replays a scenario file; every ACP event the
+`src/bin/coax-fake-agent.rs`, which replays a scenario file; every ACP event the
 program handles has a scenario that exercises it. Test names are full
 sentences describing the property, not `test_foo`.
 
@@ -48,13 +48,13 @@ change that breaks any of them moves the minor. Anything else moves the patch.
 running it inside a detached tmux and reading the pane back:
 
 ```console
-$ tmux new-session -d -s chat -x 100 -y 30 "target/debug/chat-tui target/debug/fake-agent scenarios/hello.json"
+$ tmux new-session -d -s chat -x 100 -y 30 "target/debug/coax target/debug/coax-fake-agent scenarios/hello.json"
 $ tmux send-keys -t chat 'hello' Enter
 $ tmux capture-pane -t chat -p
 $ tmux kill-session -t chat
 ```
 
-**The fake agent.** `fake-agent <scenario.json>` is an ACP agent that plays
+**The fake agent.** `coax-fake-agent <scenario.json>` is an ACP agent that plays
 one act of the scenario per prompt. A step is `{"update": <session update as
 on the wire>}`, `{"permission": {...}}`, `{"delay_ms": N}` or `{"stop":
 "end_turn"}`. `scenarios/hello.json` is the reference; tests include it.
