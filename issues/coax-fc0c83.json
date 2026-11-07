@@ -3,7 +3,7 @@
   "title": "A ratatui screen draws the transcript and an input line",
   "body": "No screen exists.\n\n## Proposal\n\n`src/ui.rs`: one function that draws a `Transcript` and an input line into a\nratatui frame. Entries are wrapped at the width; the view scrolls to keep the\nnewest entry visible unless the user scrolled up; the input line is one row\nat the bottom with a cursor. A tool call shows its kind, title and status on\none line and its locations under it. Thoughts are dimmed. That is all for the\nfirst version; how it should look is Jack's call and comes after.\n\n## Out of scope\n\n- Markdown rendering. Agent text is shown as it arrives.\n- Selection and copy; the terminal does that.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "coax-3a79ad",
@@ -15,16 +15,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T02:57:40.177821302Z",
-  "updated_at": "2026-11-07T02:57:40.177821302Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T02:57:40.212744653Z",
+  "closed_at": "2026-11-07T02:57:40.212744653Z",
+  "close_reason": "Done in the commit titled 'Run a first ACP session against a scripted agent' on dev, 2026-11-06. The hello scenario plays through the fake agent, in process and over stdio, into the same transcript, and the screen shows it under tmux. Visual design is untouched on purpose; that is Jack's to direct.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "be1bba1",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "be1bba1",
+      "branch": "dev"
+    }
   }
 }
