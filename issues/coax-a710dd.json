@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T02:57:40.170819322Z",
-  "updated_at": "2026-11-07T02:57:40.170819322Z",
+  "updated_at": "2026-11-07T02:57:40.192200723Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "15a92dcf",
+      "at": "2026-11-07T02:57:40.192200293Z",
+      "author": "Jack Roddy/618aab71",
+      "text": "The open question, whether the fake answers a cancel mid-act, is settled in the commit titled 'Stop the fake agent's act on a cancel': it stops before the next step and ends the turn with cancelled. A permission step already in flight still waits for its answer; that is fine for the chat, which answers at once.",
+      "commit": "be1bba1",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "be1bba1",
