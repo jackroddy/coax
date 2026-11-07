@@ -1,0 +1,28 @@
+{
+  "id": "coax-3a79ad",
+  "title": "First session",
+  "body": "The first thing this program has to do: open an ACP session with an agent,\nsend a prompt, and show what comes back, in a terminal, readably. The agent\nduring development is a fake one in this repository that replays a scripted\nsession, because no real ACP agent is installed here and because every later\ntest needs a scripted agent anyway.\n\nThe code today is `cargo init`'s hello world.\n\n## Pieces\n\n| Issue | Role |\n|---|---|\n| fake agent | an ACP agent binary that replays a scenario file |\n| session model | the transcript as data, built from ACP updates, with no screen |\n| screen | ratatui rendering of the transcript and an input line |\n| prompt loop | keys to prompt, prompt to agent, updates to model, model to screen |\n\nThey belong together because none can be shown working without the others,\nand the fake agent is the oracle for all of them.\n\n## Out of scope\n\n- A real agent. Claude Code's ACP adapter needs node, which is not\n  installed; that is a later session with Jack.\n- Any decade wiring. The socket does not exist yet; see decade's milestone\n  \"Agent channel\".\n- Visual design beyond readable. Jack has strong views on how a chat\n  should look, which is the reason this program exists, and the screen\n  module is where they land once the data flows.",
+  "type": "milestone",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T02:57:40.156342993Z",
+  "updated_at": "2026-11-07T02:57:40.156342993Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "be1bba1",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
