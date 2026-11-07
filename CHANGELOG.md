@@ -19,6 +19,8 @@ command line, the keys, and the scenario format the fake agent reads.
   and a file the agent asks coax to read becomes `show`. The last action in a
   150 ms quiet window wins. The status line says when coax is connected.
 - `--prompt <text>` sends a first prompt as soon as the session opens.
+- When `DECADE_MCP` is set, the agent is given decade as an MCP server in the
+  session, so it can drive decade's panes itself.
 
 ## [0.1.0] - 2026-11-06
 

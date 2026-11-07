@@ -4,11 +4,11 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::ConnectionTo;
 use agent_client_protocol::v1::schema::{
     CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, Implementation,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
-    PermissionOptionKind, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionId, SessionNotification, SessionUpdate, StopReason,
-    ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
+    InitializeRequest, InitializeResponse, McpServer, McpServerHttp, NewSessionRequest,
+    NewSessionResponse, PermissionOptionKind, PromptRequest, ReadTextFileRequest,
+    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
+    SessionUpdate, StopReason, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectTo, Error, on_receive_notification, on_receive_request,
@@ -48,10 +48,11 @@ impl Link {
     }
 
     pub async fn new_session(&self, cwd: PathBuf) -> Result<NewSessionResponse, Error> {
-        self.cx
-            .send_request(NewSessionRequest::new(cwd))
-            .block_task()
-            .await
+        let mut request = NewSessionRequest::new(cwd);
+        if let Ok(url) = std::env::var("DECADE_MCP") {
+            request = request.mcp_servers(vec![McpServer::Http(McpServerHttp::new("decade", url))]);
+        }
+        self.cx.send_request(request).block_task().await
     }
 
     pub fn prompt(&self, session: SessionId, text: String) -> Result<(), Error> {
