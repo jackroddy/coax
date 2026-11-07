@@ -44,6 +44,21 @@ after `dev` merges in, with a clean tree.
 scenario format. Under cargo's rule that 0.x's minor is the breaking axis, a
 change that breaks any of them moves the minor. Anything else moves the patch.
 
+**Seeing the screen.** The program is a TUI, so a session checks it by
+running it inside a detached tmux and reading the pane back:
+
+```console
+$ tmux new-session -d -s chat -x 100 -y 30 "target/debug/chat-tui target/debug/fake-agent scenarios/hello.json"
+$ tmux send-keys -t chat 'hello' Enter
+$ tmux capture-pane -t chat -p
+$ tmux kill-session -t chat
+```
+
+**The fake agent.** `fake-agent <scenario.json>` is an ACP agent that plays
+one act of the scenario per prompt. A step is `{"update": <session update as
+on the wire>}`, `{"permission": {...}}`, `{"delay_ms": N}` or `{"stop":
+"end_turn"}`. `scenarios/hello.json` is the reference; tests include it.
+
 ## checks
 
 ```console

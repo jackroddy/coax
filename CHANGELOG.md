@@ -10,3 +10,12 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ## [Unreleased]
 
+### Added
+
+- A terminal chat that runs an ACP agent as a subprocess, sends prompts, and
+  shows the session: agent text, thoughts, tool calls with locations and diff
+  summaries, permission decisions, and the plan. Enter sends, Esc cancels,
+  Ctrl+c quits, PageUp and PageDown scroll.
+- `fake-agent`, an ACP agent that replays a scenario file, for tests and for
+  development without a real agent.
+
