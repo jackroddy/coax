@@ -1,0 +1,7 @@
+{
+  "prefix": "coax",
+  "schema_version": 3,
+  "created_at": "2026-11-07T02:57:40.136550706Z",
+  "lease_minutes": 15,
+  "stale_after": 50
+}
