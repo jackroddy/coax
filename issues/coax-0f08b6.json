@@ -1,0 +1,28 @@
+{
+  "id": "coax-0f08b6",
+  "title": "The transcript is built from ACP updates as data",
+  "body": "A transcript as plain data, built from ACP session updates, that the screen\nrenders and tests inspect, with nothing of ratatui in it.\n\n## Proposal\n\n`src/session.rs`: `Transcript { entries: Vec<Entry> }` where `Entry` is an\nenum with one variant per thing that can appear: the user's prompt, agent\ntext, agent thought, a tool call with its current status, locations and\ncontent, and the plan. Text chunks append to the last text entry of the same\nkind; a tool call update finds its call by id and replaces status, content\nand locations. One function, `apply(&mut self, update: SessionUpdate)`,\ndoes all of it. A second, small struct holds what is not transcript: the\nsession id, whether a prompt is in flight, the last stop reason.\n\nTests feed it update sequences from scenarios and assert on entries.\n\n## Rejected\n\n- Rendering straight from ACP types. Chunks need joining and updates need\n  resolving before anything is drawable, and that logic has to be testable\n  without a terminal.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "coax-3a79ad",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T02:57:40.163813942Z",
+  "updated_at": "2026-11-07T02:57:40.163813942Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "be1bba1",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
