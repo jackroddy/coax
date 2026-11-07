@@ -17,6 +17,7 @@ async fn one_prompt(mut link: Link, text: &str) -> Result<Transcript, Error> {
         match event {
             Event::Update(update) => transcript.apply(*update),
             Event::Permission { update, choice } => transcript.permission(*update, choice),
+            Event::FileRead { .. } => {}
             Event::Done(result) => {
                 transcript.finished(result?);
                 break;
@@ -140,7 +141,7 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
                         cancelled = true;
                     }
                 }
-                Event::Permission { .. } => {}
+                Event::Permission { .. } | Event::FileRead { .. } => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;

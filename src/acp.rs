@@ -17,6 +17,10 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 pub enum Event {
     Update(Box<SessionUpdate>),
+    FileRead {
+        path: std::path::PathBuf,
+        line: Option<u32>,
+    },
     Permission {
         update: Box<ToolCallUpdate>,
         choice: String,
@@ -73,6 +77,7 @@ pub async fn run(
     let (tx, events) = mpsc::unbounded_channel();
     let updates = tx.clone();
     let permissions = tx.clone();
+    let reads = tx.clone();
     Client
         .v1()
         .name("coax")
@@ -108,7 +113,11 @@ pub async fn run(
             on_receive_request!(),
         )
         .on_receive_request(
-            async |req: ReadTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
+            async move |req: ReadTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
+                let _ = reads.send(Event::FileRead {
+                    path: req.path.clone(),
+                    line: req.line,
+                });
                 match tokio::fs::read_to_string(&req.path).await {
                     Ok(text) => responder.respond(ReadTextFileResponse::new(text)),
                     Err(error) => responder.respond_with_internal_error(error),

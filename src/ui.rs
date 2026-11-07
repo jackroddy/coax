@@ -148,7 +148,12 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
             None => "idle".to_string(),
         }
     };
-    let text = format!(" {}  session {}  {state}", app.agent, app.session);
+    let decade = match &app.decade_pane {
+        Some(pane) if pane.is_empty() => "  decade".to_string(),
+        Some(pane) => format!("  decade pane {pane}"),
+        None => String::new(),
+    };
+    let text = format!(" {}  session {}  {state}{decade}", app.agent, app.session);
     frame.render_widget(
         Paragraph::new(text).style(Style::default().add_modifier(Modifier::REVERSED)),
         area,

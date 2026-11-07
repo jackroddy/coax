@@ -15,6 +15,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 agent-client-protocol = { version = "5", features = ["process", "stdio"] }
 crossterm = "0.29.0"
+decade-channel = { version = "0.1.0", path = "../decade/decade-channel" }
 ratatui = "0.30"
 serde = "1.0.229"
 serde_json = "1.0.154"

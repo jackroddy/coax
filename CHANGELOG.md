@@ -10,6 +10,16 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ## [Unreleased]
 
+### Added
+
+- Follow-along into decade. Started inside a decade pane, coax joins the
+  decade socket and, with no agent involved, tells the code pane what the
+  agent is looking at: a read tool call with a location becomes `show`, a
+  completed edit with a diff becomes `show` and `mark` of the changed lines,
+  and a file the agent asks coax to read becomes `show`. The last action in a
+  150 ms quiet window wins. The status line says when coax is connected.
+- `--prompt <text>` sends a first prompt as soon as the session opens.
+
 ## [0.1.0] - 2026-11-06
 
 The name on crates.io, and a first session.
