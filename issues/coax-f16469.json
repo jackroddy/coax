@@ -1,0 +1,28 @@
+{
+  "id": "coax-f16469",
+  "title": "The screen's look is designed",
+  "body": "`src/ui.rs` is deliberately plain: prefixes, a dimmed thought, a tool line\nwith its status, a status bar in reverse video. Jack has strong views on how\na chat should look, and the dislike of Claude Code's own TUI is the reason\ncoax exists, so the design is his to direct. Nothing here is to be\nredesigned on a session's own initiative; take direction and apply it.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:28:08.26836425Z",
+  "updated_at": "2026-11-07T05:28:08.26836425Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "0548ccc",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
