@@ -113,3 +113,44 @@ async fn a_prompt_past_the_last_act_gets_a_message_and_ends_the_turn() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
+    let scenario = Scenario::parse(
+        r#"{"acts": [{"steps": [
+            {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "starting"}}},
+            {"delay_ms": 200},
+            {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": " and finishing"}}},
+            {"stop": "end_turn"}
+        ]}]}"#,
+    )
+    .unwrap();
+    acp::run(fake::agent(scenario), async |mut link| {
+        link.initialize().await?;
+        let session = link.new_session(std::env::temp_dir()).await?.session_id;
+        link.prompt(session.clone(), "go".to_string())?;
+        let mut transcript = Transcript::default();
+        let mut cancelled = false;
+        while let Some(event) = link.events.recv().await {
+            match event {
+                Event::Update(update) => {
+                    transcript.apply(*update);
+                    if !cancelled {
+                        link.cancel(session.clone())?;
+                        cancelled = true;
+                    }
+                }
+                Event::Permission { .. } => {}
+                Event::Done(result) => {
+                    transcript.finished(result?);
+                    break;
+                }
+            }
+        }
+        assert_eq!(transcript.last_stop, Some(StopReason::Cancelled));
+        assert!(matches!(&transcript.entries[0], Entry::Agent(text) if text == "starting"));
+        Ok(())
+    })
+    .await
+    .unwrap();
+}

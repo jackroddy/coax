@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -17,6 +18,8 @@ use crate::scenario::{Act, Scenario, Step};
 
 pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
     let acts = Arc::new(Mutex::new(VecDeque::from(scenario.acts)));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancel_flag = cancelled.clone();
     Agent
         .v1()
         .name("fake-agent")
@@ -41,13 +44,18 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
                 let act = acts.lock().unwrap().pop_front();
                 let session = req.session_id;
                 let player = cx.clone();
-                cx.spawn(async move { play(player, session, act, responder).await })?;
+                let cancelled = cancelled.clone();
+                cancelled.store(false, Ordering::SeqCst);
+                cx.spawn(async move { play(player, session, act, cancelled, responder).await })?;
                 Ok(())
             },
             on_receive_request!(),
         )
         .on_receive_notification(
-            async |_n: CancelNotification, _cx: ConnectionTo<Client>| Ok(()),
+            async move |_n: CancelNotification, _cx: ConnectionTo<Client>| {
+                cancel_flag.store(true, Ordering::SeqCst);
+                Ok(())
+            },
             on_receive_notification!(),
         )
 }
@@ -56,6 +64,7 @@ async fn play(
     cx: ConnectionTo<Client>,
     session: SessionId,
     act: Option<Act>,
+    cancelled: Arc<AtomicBool>,
     responder: Responder<PromptResponse>,
 ) -> Result<(), Error> {
     let Some(act) = act else {
@@ -65,6 +74,9 @@ async fn play(
         return responder.respond(PromptResponse::new(StopReason::EndTurn));
     };
     for step in act.steps {
+        if cancelled.load(Ordering::SeqCst) {
+            return responder.respond(PromptResponse::new(StopReason::Cancelled));
+        }
         match step {
             Step::Update(update) => {
                 cx.send_notification(SessionNotification::new(session.clone(), update))?;
