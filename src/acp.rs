@@ -5,15 +5,16 @@ use agent_client_protocol::v1::ConnectionTo;
 use agent_client_protocol::v1::schema::{
     CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, Implementation,
     InitializeRequest, InitializeResponse, McpServer, McpServerHttp, NewSessionRequest,
-    NewSessionResponse, PermissionOptionKind, PromptRequest, ReadTextFileRequest,
-    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
-    SessionUpdate, StopReason, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
+    NewSessionResponse, PermissionOption, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, SessionId,
+    SessionNotification, SessionUpdate, StopReason, ToolCallUpdate, WriteTextFileRequest,
+    WriteTextFileResponse,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectTo, Error, on_receive_notification, on_receive_request,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 
 pub enum Event {
     Update(Box<SessionUpdate>),
@@ -23,7 +24,8 @@ pub enum Event {
     },
     Permission {
         update: Box<ToolCallUpdate>,
-        choice: String,
+        options: Vec<PermissionOption>,
+        reply: oneshot::Sender<RequestPermissionOutcome>,
     },
     Done(Result<StopReason, Error>),
 }
@@ -90,26 +92,17 @@ pub async fn run(
             on_receive_notification!(),
         )
         .on_receive_request(
-            async move |req: RequestPermissionRequest, responder, _cx: ConnectionTo<Agent>| {
-                let option = req
-                    .options
-                    .iter()
-                    .find(|option| option.kind == PermissionOptionKind::AllowOnce)
-                    .or(req.options.first());
-                let (outcome, choice) = match option {
-                    Some(option) => (
-                        RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
-                            option.option_id.clone(),
-                        )),
-                        option.name.clone(),
-                    ),
-                    None => (RequestPermissionOutcome::Cancelled, "cancelled".to_string()),
-                };
+            async move |req: RequestPermissionRequest, responder, cx: ConnectionTo<Agent>| {
+                let (reply, answer) = oneshot::channel();
                 let _ = permissions.send(Event::Permission {
                     update: Box::new(req.tool_call),
-                    choice,
+                    options: req.options,
+                    reply,
                 });
-                responder.respond(RequestPermissionResponse::new(outcome))
+                cx.spawn(async move {
+                    let outcome = answer.await.unwrap_or(RequestPermissionOutcome::Cancelled);
+                    responder.respond(RequestPermissionResponse::new(outcome))
+                })
             },
             on_receive_request!(),
         )

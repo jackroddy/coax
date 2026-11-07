@@ -1,4 +1,7 @@
-use agent_client_protocol::v1::schema::{StopReason, ToolCallStatus, ToolKind};
+use agent_client_protocol::v1::schema::{
+    PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome, StopReason,
+    ToolCallStatus, ToolKind,
+};
 use agent_client_protocol::{AcpAgent, Error};
 use coax::acp::{self, Event, Link};
 use coax::fake;
@@ -16,7 +19,22 @@ async fn one_prompt(mut link: Link, text: &str) -> Result<Transcript, Error> {
     while let Some(event) = link.events.recv().await {
         match event {
             Event::Update(update) => transcript.apply(*update),
-            Event::Permission { update, choice } => transcript.permission(*update, choice),
+            Event::Permission {
+                update,
+                options,
+                reply,
+            } => {
+                let allow = options
+                    .iter()
+                    .find(|option| option.kind == PermissionOptionKind::AllowOnce)
+                    .expect("the scenario offers an allow option");
+                reply
+                    .send(RequestPermissionOutcome::Selected(
+                        SelectedPermissionOutcome::new(allow.option_id.clone()),
+                    ))
+                    .unwrap();
+                transcript.permission(*update, allow.name.clone());
+            }
             Event::FileRead { .. } => {}
             Event::Done(result) => {
                 transcript.finished(result?);

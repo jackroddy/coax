@@ -2,11 +2,15 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use agent_client_protocol::Error;
-use agent_client_protocol::v1::schema::{SessionId, SessionUpdate, ToolCall};
+use agent_client_protocol::v1::schema::{
+    PermissionOption, PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome,
+    SessionId, SessionUpdate, ToolCall, ToolCallUpdate,
+};
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
 use decade_channel::code::{MARK, SHOW};
 use decade_channel::{Channel, Message};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::oneshot;
 
 use crate::acp::{Event, Link};
 use crate::follow::{self, Action as Follow};
@@ -22,9 +26,18 @@ pub struct App {
     pub agent: String,
     pub session: SessionId,
     pub decade_pane: Option<String>,
+    pub permission: Option<Permission>,
+    auto_allow: bool,
     calls: Vec<ToolCall>,
     pending: Vec<Follow>,
     flush_at: Option<Instant>,
+}
+
+pub struct Permission {
+    pub title: String,
+    pub options: Vec<PermissionOption>,
+    update: Box<ToolCallUpdate>,
+    reply: oneshot::Sender<RequestPermissionOutcome>,
 }
 
 pub enum Action {
@@ -44,7 +57,11 @@ impl App {
                 self.transcript.apply(*update);
             }
             Event::FileRead { path, line } => self.follow(vec![follow::from_read(path, line)]),
-            Event::Permission { update, choice } => {
+            Event::Permission {
+                update,
+                options,
+                reply,
+            } => {
                 if !self
                     .calls
                     .iter()
@@ -57,7 +74,26 @@ impl App {
                     call.update(update.fields.clone());
                     self.calls.push(call);
                 }
-                self.transcript.permission(*update, choice)
+                let title = update
+                    .fields
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| update.tool_call_id.to_string());
+                self.permission = Some(Permission {
+                    title,
+                    options,
+                    update,
+                    reply,
+                });
+                if self.auto_allow {
+                    let allow = self.permission.as_ref().and_then(|p| {
+                        p.options
+                            .iter()
+                            .position(|o| o.kind == PermissionOptionKind::AllowOnce)
+                            .or((!p.options.is_empty()).then_some(0))
+                    });
+                    self.decide(allow);
+                }
             }
             Event::Done(Ok(stop)) => self.transcript.finished(stop),
             Event::Done(Err(error)) => {
@@ -122,8 +158,39 @@ impl App {
         }
     }
 
+    pub fn decide(&mut self, option: Option<usize>) {
+        let Some(permission) = self.permission.take() else {
+            return;
+        };
+        let (outcome, choice) = match option.and_then(|i| permission.options.get(i)) {
+            Some(option) => (
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                    option.option_id.clone(),
+                )),
+                option.name.clone(),
+            ),
+            None => (RequestPermissionOutcome::Cancelled, "cancelled".to_string()),
+        };
+        let _ = permission.reply.send(outcome);
+        self.transcript.permission(*permission.update, choice);
+    }
+
     pub fn key(&mut self, key: KeyEvent) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if let Some(permission) = &self.permission {
+            match key.code {
+                KeyCode::Char('c') if ctrl => return Action::Quit,
+                KeyCode::Esc => self.decide(None),
+                KeyCode::Char(digit) if digit.is_ascii_digit() => {
+                    let index = digit.to_digit(10).unwrap() as usize;
+                    if (1..=permission.options.len()).contains(&index) {
+                        self.decide(Some(index - 1));
+                    }
+                }
+                _ => {}
+            }
+            return Action::None;
+        }
         match key.code {
             KeyCode::Char('c') if ctrl => Action::Quit,
             KeyCode::Char('u') if ctrl => {
@@ -161,7 +228,11 @@ impl App {
     }
 }
 
-pub async fn run(mut link: Link, first_prompt: Option<String>) -> Result<(), Error> {
+pub async fn run(
+    mut link: Link,
+    first_prompt: Option<String>,
+    auto_allow: bool,
+) -> Result<(), Error> {
     let init = link.initialize().await?;
     let agent = init
         .agent_info
@@ -178,6 +249,8 @@ pub async fn run(mut link: Link, first_prompt: Option<String>) -> Result<(), Err
         agent,
         session,
         decade_pane: decade.as_ref().map(|_| String::new()),
+        permission: None,
+        auto_allow,
         calls: Vec::new(),
         pending: Vec::new(),
         flush_at: None,

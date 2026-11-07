@@ -12,9 +12,17 @@ use crate::session::{Entry, Tool};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let plan_rows = app.transcript.plan.len().min(6) as u16;
-    let [plan_area, transcript_area, status_area, input_area] = Layout::vertical([
+    let permission_rows = if app.permission.is_some() { 2 } else { 0 };
+    let [
+        plan_area,
+        transcript_area,
+        permission_area,
+        status_area,
+        input_area,
+    ] = Layout::vertical([
         Constraint::Length(plan_rows),
         Constraint::Min(1),
+        Constraint::Length(permission_rows),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -22,6 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     draw_plan(frame, plan_area, app);
     draw_transcript(frame, transcript_area, app);
+    draw_permission(frame, permission_area, app);
     draw_status(frame, status_area, app);
     draw_input(frame, input_area, app);
 }
@@ -137,6 +146,23 @@ fn tool_lines(tool: &Tool, out: &mut Vec<Line>) {
             out.push(Line::from(summary).style(dim()));
         }
     }
+}
+
+fn draw_permission(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(permission) = &app.permission else {
+        return;
+    };
+    let options: Vec<String> = permission
+        .options
+        .iter()
+        .enumerate()
+        .map(|(i, option)| format!("[{}] {}", i + 1, option.name))
+        .collect();
+    let lines = vec![
+        Line::from(format!("? {}", permission.title)).style(Style::default().fg(Color::Yellow)),
+        Line::from(format!("  {}   [Esc] cancel", options.join("  "))),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
