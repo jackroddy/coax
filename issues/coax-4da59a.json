@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-09T04:10:35.972880868Z",
   "defer_until": null,
   "created_at": "2026-11-07T05:28:08.259442572Z",
-  "updated_at": "2026-11-09T03:55:35.972880868Z",
+  "updated_at": "2026-11-09T03:57:38.842009234Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "a201ae37",
+      "at": "2026-11-09T03:57:38.842008514Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "The first run against the real adapter worked with no change to coax.\n\nThe package moved from `zed-industries/claude-code-acp` to `agentclientprotocol/claude-agent-acp`. Node 22.23.4 is installed through mise with no version selected, so each command runs under `mise exec`. Setup and run:\n\n```console\n$ mise exec node@22.23.4 -- npm install --prefix tmp-claude/2026-11-08-zed-adapter/npm @agentclientprotocol/claude-agent-acp@0.101.0\n$ CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false mise exec node@22.23.4 -- target/debug/coax tmp-claude/2026-11-08-zed-adapter/npm/node_modules/.bin/claude-agent-acp\n```\n\nAuth came from the existing claude.ai login. Two turns ran: a Read and an `ls`, then a `touch`. coax showed each prompt, the tool calls with status and location, the reply, and `EndTurn` in the status line. The adapter wrote nothing to stderr. The replies followed the Dense output style from `~/.claude/settings.json`, so the adapter loaded the user settings.\n\nFindings: coax-efe3a6 (long tool titles cut off) and coax-419109 (no permission request arrived). The agent's markdown shows as raw text, which is display work for coax-f16469.",
+      "commit": "0548ccc",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "0548ccc",
