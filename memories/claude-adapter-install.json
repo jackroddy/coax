@@ -1,0 +1,10 @@
+{
+  "slug": "claude-adapter-install",
+  "text": "On Jack's machine, Claude Code's ACP adapter is the standalone release build of `agentclientprotocol/claude-agent-acp` v0.101.0, unpacked to `~/.local/share/claude-agent-acp/`. The folder holds `claude-agent-acp` and the bundled `claude` it runs from beside itself, and needs no node. `~/.config/coax/config.toml` points its `claude` entry at that full path. Nothing updates it. A new version means downloading the release tarball again.",
+  "created_at": "2026-11-09T04:40:54.536251528Z",
+  "updated_at": "2026-11-09T04:40:54.536251528Z",
+  "stamp": {
+    "commit": "e9ae3c8",
+    "branch": "dev"
+  }
+}
