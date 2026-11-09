@@ -34,6 +34,10 @@ pub struct Picker<'a> {
     default: Option<usize>,
     sessions: Vec<SessionRow>,
     selected: Selected,
+
+    /// Whether the user has moved the highlight; until then it follows the
+    /// newest session as listings arrive.
+    moved: bool,
     path: &'a Path,
 }
 
@@ -88,6 +92,7 @@ impl<'a> Picker<'a> {
             default,
             sessions: Vec::new(),
             selected: Selected::Agent(default.unwrap_or(0)),
+            moved: false,
             path,
         }
     }
@@ -112,6 +117,13 @@ impl<'a> Picker<'a> {
             }));
         self.sessions
             .sort_by_key(|row| std::cmp::Reverse(row.updated.as_ref().map(|at| at.seconds)));
+        if !self.moved {
+            self.selected = match self.sessions.first() {
+                Some(row) => Selected::Session(row.agent, row.id.clone()),
+                None => Selected::Agent(self.default.unwrap_or(0)),
+            };
+            return;
+        }
         if let Selected::Session(agent, id) = &self.selected {
             let kept = self
                 .sessions
@@ -140,6 +152,7 @@ impl<'a> Picker<'a> {
     }
 
     fn select(&mut self, position: usize) {
+        self.moved = true;
         self.selected = match self.sessions.get(position) {
             Some(row) => Selected::Session(row.agent, row.id.clone()),
             None => Selected::Agent(position - self.sessions.len()),
@@ -549,21 +562,27 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_starts_on_the_default_agent_below_the_sessions() {
+    fn the_cursor_starts_on_the_newest_session() {
         let config = config(Some("beta"));
         let mut picker = Picker::new(&config, Path::new("config.toml"));
         picker.listing(listing_of(
             "alpha",
-            &[("a1", "one", "2026-11-01T10:00:00Z")],
+            &[
+                ("a1", "older", "2026-11-01T10:00:00Z"),
+                ("a2", "newer", "2026-11-05T10:00:00Z"),
+            ],
         ));
         assert_eq!(
             picker.key(press(KeyCode::Enter)),
-            Some(Choice::Agent("beta"))
+            Some(Choice::Session {
+                agent: "alpha",
+                id: SessionId::new("a2".to_string())
+            })
         );
     }
 
     #[test]
-    fn moving_up_from_the_first_agent_reaches_the_newest_session() {
+    fn moving_down_from_the_newest_session_reaches_the_older_one_then_the_agents() {
         let config = config(None);
         let mut picker = Picker::new(&config, Path::new("config.toml"));
         picker.listing(listing_of(
@@ -573,7 +592,7 @@ mod tests {
                 ("b2", "older", "2026-11-02T10:00:00Z"),
             ],
         ));
-        picker.key(press(KeyCode::Char('k')));
+        picker.key(press(KeyCode::Char('j')));
         assert_eq!(
             picker.key(press(KeyCode::Enter)),
             Some(Choice::Session {
@@ -581,18 +600,15 @@ mod tests {
                 id: SessionId::new("b2".to_string())
             })
         );
-        picker.key(press(KeyCode::Char('k')));
+        picker.key(press(KeyCode::Char('j')));
         assert_eq!(
             picker.key(press(KeyCode::Enter)),
-            Some(Choice::Session {
-                agent: "beta",
-                id: SessionId::new("b1".to_string())
-            })
+            Some(Choice::Agent("alpha"))
         );
     }
 
     #[test]
-    fn sessions_that_arrive_late_do_not_move_the_highlight() {
+    fn the_highlight_follows_the_newest_session_until_the_user_moves_it() {
         let config = config(Some("gamma"));
         let mut picker = Picker::new(&config, Path::new("config.toml"));
         picker.listing(listing_of(
@@ -602,7 +618,22 @@ mod tests {
         picker.listing(listing_of("beta", &[("b1", "two", "2026-11-02T10:00:00Z")]));
         assert_eq!(
             picker.key(press(KeyCode::Enter)),
-            Some(Choice::Agent("gamma"))
+            Some(Choice::Session {
+                agent: "beta",
+                id: SessionId::new("b1".to_string())
+            })
+        );
+        picker.key(press(KeyCode::Char('j')));
+        picker.listing(listing_of(
+            "gamma",
+            &[("c1", "three", "2026-11-03T10:00:00Z")],
+        ));
+        assert_eq!(
+            picker.key(press(KeyCode::Enter)),
+            Some(Choice::Session {
+                agent: "alpha",
+                id: SessionId::new("a1".to_string())
+            })
         );
     }
 

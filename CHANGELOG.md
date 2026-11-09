@@ -17,8 +17,9 @@ command line, the keys, and the scenario format the fake agent reads.
   `coax --agent <name>` starts that entry.
 - A picker over the named agents. It opens on a launch with no agent named
   and no command. Up and Down (or `k` and `j`) move, Enter starts the
-  highlighted agent, and Esc or Ctrl+c quits. `default = "<name>"` in the
-  config sets which agent starts highlighted. With no agents configured, the
+  highlighted agent, and Esc or Ctrl+c quits. The highlight starts on the
+  newest earlier session when there is one, and otherwise on the agent named
+  by `default = "<name>"` in the config. With no agents configured, the
   picker names the file to create. The picker opens with the same
   first line and rule as the session header, and marks the chosen row with `›`
   and a shaded background.
