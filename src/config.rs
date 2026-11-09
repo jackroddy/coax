@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use agent_client_protocol::AcpAgentConfig;
 use serde::Deserialize;
 
+use crate::palette::PaletteConfig;
+
 /// The settings read from `config.toml`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +17,10 @@ pub struct Config {
     /// The agents to choose from, by name.
     #[serde(default)]
     pub agents: BTreeMap<String, AcpAgentConfig>,
+
+    /// Colour overrides.
+    #[serde(default)]
+    pub palette: PaletteConfig,
 }
 
 impl Config {
@@ -40,6 +46,8 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::style::Color;
+
     use super::*;
 
     #[test]
@@ -83,5 +91,44 @@ mod tests {
         let error = Config::load(&path).unwrap_err();
         std::fs::remove_file(&path).unwrap();
         assert!(error.contains("coax-config-unknown-key.toml"), "{error}");
+    }
+
+    #[test]
+    fn a_palette_table_overrides_the_named_colours() {
+        let config: Config = toml::from_str(
+            "[palette]\naccent = \"#DA745B\"\ncyan = \"darkgray\"\nmuted = \"#6D6977\"\n",
+        )
+        .unwrap();
+        let palette = config.palette.resolve();
+        assert_eq!(palette.accent, Color::Rgb(0xDA, 0x74, 0x5B));
+        assert_eq!(palette.cyan, Color::DarkGray);
+        assert_eq!(palette.muted, Some(Color::Rgb(0x6D, 0x69, 0x77)));
+        assert_eq!(palette.green, Color::Green);
+    }
+
+    #[test]
+    fn a_bad_palette_value_is_an_error_naming_the_file() {
+        let path = std::env::temp_dir().join("coax-config-bad-colour.toml");
+        std::fs::write(&path, "[palette]\naccent = \"salmon\"\n").unwrap();
+        let error = Config::load(&path).unwrap_err();
+        std::fs::remove_file(&path).unwrap();
+        assert!(error.contains("coax-config-bad-colour.toml"), "{error}");
+        assert!(error.contains("salmon"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_palette_name_is_an_error() {
+        assert!(toml::from_str::<Config>("[palette]\nbrown = \"#8E5C4C\"\n").is_err());
+    }
+
+    #[test]
+    fn an_absent_palette_gives_the_ansi_fallbacks() {
+        let palette = Config::default().palette.resolve();
+        assert_eq!(palette.accent, Color::Yellow);
+        assert_eq!(palette.muted, None);
+        assert_eq!(palette.selection, Color::DarkGray);
+        assert_eq!(palette.foreground, Color::Reset);
+        assert_eq!(palette.orange, Color::LightRed);
+        assert_eq!(palette.blue, Color::Blue);
     }
 }

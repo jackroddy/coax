@@ -27,6 +27,12 @@ command line, the keys, and the scenario format the fake agent reads.
   the options numbered; a digit answers, Esc cancels. The answer stays in
   the conversation as a dim `⎿` line. `--allow` answers every
   request with the first allow option instead, for scripted runs.
+- A `[palette]` table in `config.toml` sets the colours, under omarchy's
+  names: `accent`, `muted`, `selection`, `foreground`, `red`, `yellow`,
+  `orange`, `green`, `cyan`, `blue` and `magenta`. A value is `"#RRGGBB"` or an
+  ANSI colour name. A name left out keeps its ANSI colour, and without
+  `muted` dim text uses the terminal's dim attribute. A bad value is an error
+  naming the file.
 - Ctrl+t shows or hides the plan, as a list above the prompt. It is hidden
   until then.
 - `--prompt <text>` sends a first prompt as soon as the session opens.

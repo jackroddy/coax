@@ -61,7 +61,10 @@ fn load_config() -> (Config, PathBuf) {
         fail(2, "neither XDG_CONFIG_HOME nor HOME is set");
     };
     match Config::load(&path) {
-        Ok(config) => (config, path),
+        Ok(config) => {
+            coax::palette::init(config.palette.resolve());
+            (config, path)
+        }
         Err(error) => fail(2, &error),
     }
 }

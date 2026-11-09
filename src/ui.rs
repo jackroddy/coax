@@ -17,6 +17,8 @@ const MAX_PLAN_ROWS: usize = 6;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
+    let foreground = Style::new().fg(palette::get().foreground);
+    frame.buffer_mut().set_style(area, foreground);
     let input = input_view(
         &app.input,
         (area.width as usize).saturating_sub(PROMPT_LEAD.len()),
@@ -68,7 +70,9 @@ pub fn pane(title: &str, focused: bool) -> Block<'static> {
         .border_type(BorderType::Rounded)
         .padding(Padding::horizontal(1));
     if focused {
-        let title_style = Style::new().fg(palette::FOCUS).add_modifier(Modifier::BOLD);
+        let title_style = Style::new()
+            .fg(palette::get().blue)
+            .add_modifier(Modifier::BOLD);
         block.title(Span::styled(format!(" {title} "), title_style))
     } else {
         block
@@ -83,7 +87,7 @@ pub fn title_bar(frame: &mut Frame, area: Rect, title: &str, right: Line) {
     let [top, rule] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
     let badge = Style::new()
         .fg(palette::INK)
-        .bg(palette::REF)
+        .bg(palette::get().cyan)
         .add_modifier(Modifier::BOLD);
     let left = Line::from(vec![
         Span::styled(" coax ", badge),
@@ -105,12 +109,13 @@ pub fn title_bar(frame: &mut Frame, area: Rect, title: &str, right: Line) {
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let state = if app.transcript.in_flight {
-        Span::styled("◐ working", Style::new().fg(palette::WORKING))
+        Span::styled("◐ working", Style::new().fg(palette::get().yellow))
     } else {
         match &app.transcript.last_stop {
-            Some(stop) if *stop != StopReason::EndTurn => {
-                Span::styled(format!("idle, {stop:?}"), Style::new().fg(palette::WORKING))
-            }
+            Some(stop) if *stop != StopReason::EndTurn => Span::styled(
+                format!("idle, {stop:?}"),
+                Style::new().fg(palette::get().yellow),
+            ),
             _ => Span::styled("idle", dim()),
         }
     };
@@ -175,8 +180,8 @@ fn draw_plan(frame: &mut Frame, area: Rect, app: &App) {
         .take(area.height as usize)
         .map(|entry| {
             let (glyph, style) = match entry.status {
-                PlanEntryStatus::InProgress => ("◐", Style::new().fg(palette::WORKING)),
-                PlanEntryStatus::Completed => ("●", Style::new().fg(palette::DONE)),
+                PlanEntryStatus::InProgress => ("◐", Style::new().fg(palette::get().yellow)),
+                PlanEntryStatus::Completed => ("●", Style::new().fg(palette::get().green)),
                 _ => ("○", dim()),
             };
             Line::from(vec![
@@ -235,22 +240,23 @@ fn markdown(text: &str, width: usize) -> Vec<Line<'static>> {
 fn screen_style(style: cmr::Style) -> Style {
     let mut out = Style::new();
     if let Some(color) = style.fg {
+        let palette = palette::get();
         out = out.fg(match color {
             cmr::Color::Black => Color::Black,
-            cmr::Color::Red => Color::Red,
-            cmr::Color::Green => Color::Green,
-            cmr::Color::Yellow => Color::Yellow,
-            cmr::Color::Blue => Color::Blue,
-            cmr::Color::Magenta => Color::Magenta,
-            cmr::Color::Cyan => Color::Cyan,
+            cmr::Color::Red => palette.red,
+            cmr::Color::Green => palette.green,
+            cmr::Color::Yellow => palette.yellow,
+            cmr::Color::Blue => palette.blue,
+            cmr::Color::Magenta => palette.magenta,
+            cmr::Color::Cyan => palette.cyan,
             cmr::Color::Gray => Color::Gray,
-            cmr::Color::DarkGray => Color::DarkGray,
-            cmr::Color::LightRed => Color::LightRed,
-            cmr::Color::LightGreen => Color::LightGreen,
-            cmr::Color::LightYellow => Color::LightYellow,
-            cmr::Color::LightBlue => Color::LightBlue,
-            cmr::Color::LightMagenta => Color::LightMagenta,
-            cmr::Color::LightCyan => Color::LightCyan,
+            cmr::Color::DarkGray => palette.muted.unwrap_or(Color::DarkGray),
+            cmr::Color::LightRed => palette.orange,
+            cmr::Color::LightGreen => palette.green,
+            cmr::Color::LightYellow => palette.yellow,
+            cmr::Color::LightBlue => palette.blue,
+            cmr::Color::LightMagenta => palette.magenta,
+            cmr::Color::LightCyan => palette.cyan,
             cmr::Color::White => Color::White,
         });
     }
@@ -277,7 +283,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                 let body = app
                     .rendered
                     .agent(index, text, usable.saturating_sub(2).max(1));
-                let lead = Span::styled("● ", Style::new().fg(palette::AGENT));
+                let lead = Span::styled("● ", Style::new().fg(palette::get().magenta));
                 if body.is_empty() {
                     lines.push(Line::from(lead.clone()));
                 }
@@ -299,7 +305,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                 let pad = width.saturating_sub(chip.chars().count());
                 lines.push(Line::from(vec![
                     Span::raw(" ".repeat(pad)),
-                    Span::styled(chip, Style::new().bg(palette::SHADE)),
+                    Span::styled(chip, Style::new().bg(palette::get().selection)),
                 ]));
             }
             Entry::Notice(text) => {
@@ -350,7 +356,7 @@ fn bubble(text: &str, width: usize) -> Vec<Line<'static>> {
         .unwrap_or(0);
     let inner = longest + 2;
     let pad = " ".repeat(width.saturating_sub(inner + 2));
-    let fill = Style::new().bg(palette::SHADE);
+    let fill = Style::new().bg(palette::get().selection);
     let edge = |left: &str, middle: String, right: &str| {
         Line::from(vec![
             Span::raw(pad.clone()),
@@ -401,15 +407,15 @@ fn wrapped(
 fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> [Line<'static>; 2] {
     let (dot, status, status_style) = match tool.status {
         ToolCallStatus::InProgress => (
-            Style::new().fg(palette::WORKING),
+            Style::new().fg(palette::get().yellow),
             "running…",
-            Style::new().fg(palette::WORKING),
+            Style::new().fg(palette::get().yellow),
         ),
-        ToolCallStatus::Completed => (Style::new().fg(palette::DONE), "done", dim()),
+        ToolCallStatus::Completed => (Style::new().fg(palette::get().green), "done", dim()),
         ToolCallStatus::Failed => (
-            Style::new().fg(palette::ALARM),
+            Style::new().fg(palette::get().red),
             "failed",
-            Style::new().fg(palette::ALARM),
+            Style::new().fg(palette::get().red),
         ),
         _ => (dim(), "pending", dim()),
     };
@@ -432,8 +438,8 @@ fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> [Line<'static>; 2] {
         let plus = format!("+{added}");
         let minus = format!(" −{removed}");
         used = plus.chars().count() + minus.chars().count();
-        detail.push(Span::styled(plus, Style::new().fg(palette::DONE)));
-        detail.push(Span::styled(minus, Style::new().fg(palette::ALARM)));
+        detail.push(Span::styled(plus, Style::new().fg(palette::get().green)));
+        detail.push(Span::styled(minus, Style::new().fg(palette::get().red)));
     }
 
     // the location gives way when the row cannot hold it
@@ -515,8 +521,8 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     let (added, removed) = diff_size(content);
     if added + removed > 0 {
         lines.push(Line::from(vec![
-            Span::styled(format!("+{added}"), Style::new().fg(palette::DONE)),
-            Span::styled(format!(" −{removed}"), Style::new().fg(palette::ALARM)),
+            Span::styled(format!("+{added}"), Style::new().fg(palette::get().green)),
+            Span::styled(format!(" −{removed}"), Style::new().fg(palette::get().red)),
         ]));
         lines.push(Line::default());
     }
@@ -629,11 +635,14 @@ fn wrap_input(text: &str, width: usize) -> Vec<String> {
 }
 
 pub fn dim() -> Style {
-    Style::default().add_modifier(Modifier::DIM)
+    match palette::get().muted {
+        Some(color) => Style::new().fg(color),
+        None => Style::default().add_modifier(Modifier::DIM),
+    }
 }
 
 fn focus() -> Style {
-    Style::new().fg(palette::FOCUS)
+    Style::new().fg(palette::get().blue)
 }
 
 fn bold() -> Style {

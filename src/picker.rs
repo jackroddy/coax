@@ -133,14 +133,14 @@ impl<'a> Picker<'a> {
             Span::raw(gutter),
             Span::styled(
                 format!("{:<name_width$}  ", self.names[index]),
-                Style::new().fg(palette::REF),
+                Style::new().fg(palette::get().cyan),
             ),
             Span::styled(command, ui::dim()),
             Span::raw(" ".repeat(width.saturating_sub(used))),
             Span::styled(tail, ui::dim()),
         ]);
         if chosen {
-            line.style(Style::new().bg(palette::SHADE))
+            line.style(Style::new().bg(palette::get().selection))
         } else {
             line
         }
