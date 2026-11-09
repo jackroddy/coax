@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T08:29:02.155804268Z",
-  "updated_at": "2026-11-09T08:34:00.367336157Z",
+  "updated_at": "2026-11-09T08:40:13.755338801Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "60aebb6b",
+      "at": "2026-11-09T08:40:13.755338181Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Landed in 3ea53f8. `src/command.rs` parses the prompt (`parse`, `matches`, `command_name`). `App::enter_command` in `src/app.rs` handles Enter on a command, and `src/ui.rs` draws the list, the confirm box and the prompt colour.\n\nDecisions on the open questions. A setting's command name is its name lowercased with spaces as `-`. An agent command's input is whatever follows the name, shown in the confirm box and sent as `/name input`. Enter on a highlighted entry fills it into the prompt, and a second Enter runs it. A `//` name the agent has not advertised does nothing. `Settings::commands` keeps the latest `available_commands_update`.",
+      "commit": "3ea53f8",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4a2d95f",
