@@ -3,7 +3,7 @@
   "title": "Single-slash commands open coax's dialogs and double-slash commands go to the agent",
   "body": "Each session setting has a chip in coax's header (coax-3ca4b5). A click opens a picker for that setting, and a choice goes to the agent through `session/set_config_option`, or through `session/set_mode` for agents with only the older modes API. Today the prompt sends everything typed to the agent, slash commands included. An ACP agent advertises its own slash commands through `available_commands_update`, and the user runs one by sending its text as a prompt. The Claude adapter lists `/compact`, `/init` and the user's skills, among others.\n\n## Proposal\n\nTwo prefixes, two mechanisms:\n\n| typed | what it is | what Enter does | prompt text colour |\n|---|---|---|---|\n| `/name` | a coax command | opens a dialog; never sends anything | cyan |\n| `//name` | one of the agent's slash commands | sends `/name` to the agent as a prompt, after a confirm | green |\n\n- coax commands: one per header chip, named after the setting, as in `/mode`, `/model`, `/effort` and `/fast`. Enter opens that chip's picker, the same one a click opens. The command takes no value. `/model` does nothing while the agent works, as the chip does, and its picker keeps the warning about rereading the conversation.\n- Agent commands: `//compact` sends `/compact`. Before sending, coax shows a small confirm box naming the command and its description from `available_commands_update`. Enter sends, Esc backs out.\n- Colour: the prompt's text turns cyan as soon as it starts with a single `/`, and green when it starts with `//`, from the palette's `cyan` and `green`.\n- Preview: while a command is being typed, a popup above the prompt lists the matching commands, coax's or the agent's by prefix, each with its description. Choosing one from the list fills it into the prompt.\n\nSince a single `/` never reaches the agent, a coax command and an agent command can share a name with no conflict.\n\n## Rejected\n\n- A value after a coax command, as in `/model sonnet`. Jack wants the command to open the picker and nothing more.\n- Sending `/name` to the agent from a single slash. The two kinds of command stay separate.\n\n## Open\n\n- Whether a setting name with spaces or capitals becomes a command name by lowercasing it and joining it with `-`.\n- How an agent command that takes input (its `input.hint`) gets that input: typed after the name, as in `//review the parser`, and shown in the confirm box.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T08:29:02.155804268Z",
-  "updated_at": "2026-11-09T08:40:13.755338801Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T08:40:13.763786752Z",
+  "closed_at": "2026-11-09T08:40:13.763786752Z",
+  "close_reason": "Landed in 3ea53f8; the note on this issue has the details.",
+  "resolution": "done",
   "notes": [
     {
       "id": "60aebb6b",
@@ -32,6 +32,9 @@
       "commit": "4a2d95f",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "3ea53f8",
+      "branch": "dev"
+    }
   }
 }
