@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T03:57:33.103865925Z",
-  "updated_at": "2026-11-09T03:57:33.103865925Z",
+  "updated_at": "2026-11-09T08:06:42.393738437Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "793e4b6a",
+      "at": "2026-11-09T08:06:42.393737667Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Cause found. The Claude adapter starts every new session in Claude Code's `auto` permission mode when no `permissions.defaultMode` is set (`resolveInitialPermissionMode` in `src/session-mode.ts` of `claude-agent-acp` v0.101.0). In `auto`, Claude Code's own classifier approves actions it judges safe, so `mkdir` and `touch` inside the project ran without a `session/request_permission`. Jack's settings set no `defaultMode` and no permission rules.\n\nChecked on 2026-11-09 with a `session/new` and no prompt: `modes.currentModeId` was `auto`, and the available modes were `default`, `acceptEdits`, `plan`, `auto` and `bypassPermissions`. coax's permission prompt works; the agent never asked.",
+      "commit": "f8a9596",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "0548ccc",
