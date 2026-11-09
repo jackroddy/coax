@@ -127,7 +127,7 @@ impl Settings {
         let mut settings: Vec<(usize, Setting)> = self
             .options
             .iter()
-            .map(|option| (rank(option.category.as_ref()), setting(option)))
+            .filter_map(|option| Some((rank(option.category.as_ref()), setting(option)?)))
             .collect();
         if self.options.is_empty()
             && let Some(modes) = &self.modes
@@ -154,7 +154,7 @@ fn is_unguarded(mode: &str) -> bool {
     matches!(mode, "auto" | "bypassPermissions")
 }
 
-fn setting(option: &SessionConfigOption) -> Setting {
+fn setting(option: &SessionConfigOption) -> Option<Setting> {
     let is_mode = matches!(option.category, Some(SessionConfigOptionCategory::Mode));
     let value_only = is_mode || matches!(option.category, Some(SessionConfigOptionCategory::Model));
     let (value, control, current) = match &option.kind {
@@ -182,14 +182,14 @@ fn setting(option: &SessionConfigOption) -> Setting {
                 String::new(),
             )
         }
-        _ => (String::new(), Control::Flip(false), String::new()),
+        _ => return None,
     };
     let label = if value_only {
         value
     } else {
         format!("{} {value}", option.name)
     };
-    Setting {
+    Some(Setting {
         id: option.id.0.to_string(),
         name: option.name.clone(),
         label,
@@ -198,7 +198,7 @@ fn setting(option: &SessionConfigOption) -> Setting {
         unguarded: is_mode && is_unguarded(&current),
         from_modes: false,
         model: matches!(option.category, Some(SessionConfigOptionCategory::Model)),
-    }
+    })
 }
 
 fn mode_setting(modes: &SessionModeState) -> Setting {
