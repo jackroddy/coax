@@ -172,3 +172,115 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
     .await
     .unwrap();
 }
+
+const RESUME: &str = include_str!("../scenarios/resume.json");
+
+#[tokio::test]
+async fn the_fake_agent_lists_the_sessions_in_its_scenario() {
+    let scenario = Scenario::parse(RESUME).unwrap();
+    acp::run(fake::agent(scenario), async |link| {
+        let init = link.initialize().await?;
+        assert!(init.agent_capabilities.load_session);
+        assert!(init.agent_capabilities.session_capabilities.list.is_some());
+        let sessions = link.list_sessions(std::env::temp_dir()).await?;
+        let titles: Vec<_> = sessions
+            .iter()
+            .map(|info| info.title.as_deref().unwrap())
+            .collect();
+        assert_eq!(titles, ["Read the entry point", "Plan the notes file"]);
+        assert_eq!(&*sessions[0].session_id.0, "earlier-1");
+        assert_eq!(
+            sessions[1].updated_at.as_deref(),
+            Some("2026-11-09T06:45:00Z")
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_scenario_with_no_sessions_advertises_neither_list_nor_load() {
+    let scenario = Scenario::parse(HELLO).unwrap();
+    acp::run(fake::agent(scenario), async |link| {
+        let init = link.initialize().await?;
+        assert!(!init.agent_capabilities.load_session);
+        assert!(init.agent_capabilities.session_capabilities.list.is_none());
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn loading_a_session_replays_its_history_into_the_transcript() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/resume.json");
+    let agent = AcpAgent::from_args([env!("CARGO_BIN_EXE_coax-fake-agent"), path]).unwrap();
+    acp::run(agent, async |mut link| {
+        link.initialize().await?;
+        link.load_session("earlier-1".into(), std::env::temp_dir())
+            .await?;
+        let mut transcript = Transcript::default();
+        while let Ok(Event::Update(update)) = link.events.try_recv() {
+            transcript.apply(*update);
+        }
+        assert!(matches!(&transcript.entries[0], Entry::User(text) if text == "What does src/main.rs do?"));
+        assert!(matches!(&transcript.entries[1], Entry::Tool(tool) if tool.title == "Read src/main.rs"));
+        assert!(matches!(
+            &transcript.entries[2],
+            Entry::Agent(text) if text == "It is a hello world. Nothing else lives there yet."
+        ));
+        assert_eq!(transcript.entries.len(), 3);
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn loading_an_unknown_session_is_an_error() {
+    let scenario = Scenario::parse(RESUME).unwrap();
+    acp::run(fake::agent(scenario), async |link| {
+        link.initialize().await?;
+        let loaded = link
+            .load_session("missing".into(), std::env::temp_dir())
+            .await;
+        assert!(loaded.is_err());
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_prompt_after_loading_plays_the_scenarios_acts() {
+    let scenario = Scenario::parse(RESUME).unwrap();
+    acp::run(fake::agent(scenario), async |mut link| {
+        link.initialize().await?;
+        link.load_session("earlier-2".into(), std::env::temp_dir())
+            .await?;
+        while link.events.try_recv().is_ok() {}
+        link.prompt("earlier-2".into(), "hello".to_string())?;
+        let mut transcript = Transcript::default();
+        while let Some(event) = link.events.recv().await {
+            match event {
+                Event::Update(update) => transcript.apply(*update),
+                Event::Permission { options, reply, .. } => {
+                    reply
+                        .send(RequestPermissionOutcome::Selected(
+                            SelectedPermissionOutcome::new(options[0].option_id.clone()),
+                        ))
+                        .unwrap();
+                }
+                Event::Done(result) => {
+                    transcript.finished(result?);
+                    break;
+                }
+            }
+        }
+        assert!(matches!(&transcript.entries[0], Entry::Thought(_)));
+        Ok(())
+    })
+    .await
+    .unwrap();
+}

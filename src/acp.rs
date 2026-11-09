@@ -4,11 +4,12 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::ConnectionTo;
 use agent_client_protocol::v1::schema::{
     CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, Implementation,
-    InitializeRequest, InitializeResponse, McpServer, McpServerHttp, NewSessionRequest,
-    NewSessionResponse, PermissionOption, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    InitializeRequest, InitializeResponse, ListSessionsRequest, LoadSessionRequest,
+    LoadSessionResponse, McpServer, McpServerHttp, NewSessionRequest, NewSessionResponse,
+    PermissionOption, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, SessionId,
-    SessionNotification, SessionUpdate, StopReason, ToolCallUpdate, WriteTextFileRequest,
-    WriteTextFileResponse,
+    SessionInfo, SessionNotification, SessionUpdate, StopReason, ToolCallUpdate,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectTo, Error, on_receive_notification, on_receive_request,
@@ -46,10 +47,36 @@ impl Link {
     }
 
     pub async fn new_session(&self, cwd: PathBuf) -> Result<NewSessionResponse, Error> {
-        let mut request = NewSessionRequest::new(cwd);
-        if let Ok(url) = std::env::var("DECADE_MCP") {
-            request = request.mcp_servers(vec![McpServer::Http(McpServerHttp::new("decade", url))]);
+        let request = NewSessionRequest::new(cwd).mcp_servers(mcp_servers());
+        self.cx.send_request(request).block_task().await
+    }
+
+    /// The sessions the agent has for `cwd`, following `nextCursor` to the end.
+    pub async fn list_sessions(&self, cwd: PathBuf) -> Result<Vec<SessionInfo>, Error> {
+        let mut sessions = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let request = ListSessionsRequest::new()
+                .cwd(cwd.clone())
+                .cursor(cursor.clone());
+            let page = self.cx.send_request(request).block_task().await?;
+            sessions.extend(page.sessions);
+            match page.next_cursor {
+                // an agent that repeats a cursor would loop here for good
+                Some(next) if cursor.as_ref() != Some(&next) => cursor = Some(next),
+                _ => return Ok(sessions),
+            }
         }
+    }
+
+    /// Load `session`. The agent replays its history as updates on `events`
+    /// before this returns.
+    pub async fn load_session(
+        &self,
+        session: SessionId,
+        cwd: PathBuf,
+    ) -> Result<LoadSessionResponse, Error> {
+        let request = LoadSessionRequest::new(session, cwd).mcp_servers(mcp_servers());
         self.cx.send_request(request).block_task().await
     }
 
@@ -66,6 +93,13 @@ impl Link {
 
     pub fn cancel(&self, session: SessionId) -> Result<(), Error> {
         self.cx.send_notification(CancelNotification::new(session))
+    }
+}
+
+fn mcp_servers() -> Vec<McpServer> {
+    match std::env::var("DECADE_MCP") {
+        Ok(url) => vec![McpServer::Http(McpServerHttp::new("decade", url))],
+        Err(_) => Vec::new(),
     }
 }
 

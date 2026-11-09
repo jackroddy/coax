@@ -1,0 +1,284 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "agent_thought_chunk",
+            "content": {
+              "type": "text",
+              "text": "The user said hello. I should look at the entry point before answering."
+            }
+          }
+        },
+        {
+          "delay_ms": 300
+        },
+        {
+          "update": {
+            "sessionUpdate": "plan",
+            "entries": [
+              {
+                "content": "Read the entry point",
+                "priority": "high",
+                "status": "in_progress"
+              },
+              {
+                "content": "Answer",
+                "priority": "medium",
+                "status": "pending"
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "c1",
+            "title": "Read src/main.rs",
+            "kind": "read",
+            "status": "in_progress",
+            "locations": [
+              {
+                "path": "src/main.rs",
+                "line": 1
+              }
+            ]
+          }
+        },
+        {
+          "delay_ms": 400
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "c1",
+            "status": "completed",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "fn main() {}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "plan",
+            "entries": [
+              {
+                "content": "Read the entry point",
+                "priority": "high",
+                "status": "completed"
+              },
+              {
+                "content": "Answer",
+                "priority": "medium",
+                "status": "in_progress"
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Hello. "
+            }
+          }
+        },
+        {
+          "delay_ms": 150
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "The entry point is a hello world, "
+            }
+          }
+        },
+        {
+          "delay_ms": 150
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "so there is not much to say about it yet.\n\nI could add a note file if you like."
+            }
+          }
+        },
+        {
+          "permission": {
+            "tool_call": {
+              "toolCallId": "c2",
+              "title": "Write NOTES.md",
+              "kind": "edit",
+              "locations": [
+                {
+                  "path": "NOTES.md"
+                }
+              ]
+            },
+            "options": [
+              {
+                "optionId": "allow",
+                "name": "Allow once",
+                "kind": "allow_once"
+              },
+              {
+                "optionId": "reject",
+                "name": "Reject",
+                "kind": "reject_once"
+              }
+            ],
+            "expect": "allow"
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "c2",
+            "status": "completed",
+            "content": [
+              {
+                "type": "diff",
+                "path": "NOTES.md",
+                "oldText": null,
+                "newText": "# notes\n\nhello\n"
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "plan",
+            "entries": [
+              {
+                "content": "Read the entry point",
+                "priority": "high",
+                "status": "completed"
+              },
+              {
+                "content": "Answer",
+                "priority": "medium",
+                "status": "completed"
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "\n\nDone. NOTES.md has three lines."
+            }
+          }
+        },
+        {
+          "stop": "end_turn"
+        }
+      ]
+    },
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Second turn: nothing to do."
+            }
+          }
+        },
+        {
+          "stop": "end_turn"
+        }
+      ]
+    }
+  ],
+  "sessions": [
+    {
+      "id": "earlier-1",
+      "title": "Read the entry point",
+      "updated_at": "2026-11-08T09:30:00Z",
+      "history": [
+        {
+          "update": {
+            "sessionUpdate": "user_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "What does src/main.rs do?"
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "h1",
+            "title": "Read src/main.rs",
+            "kind": "read",
+            "status": "completed",
+            "locations": [
+              {
+                "path": "src/main.rs",
+                "line": 1
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "It is a hello world. "
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Nothing else lives there yet."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "earlier-2",
+      "title": "Plan the notes file",
+      "updated_at": "2026-11-09T06:45:00Z",
+      "history": [
+        {
+          "update": {
+            "sessionUpdate": "user_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Should we add a notes file?"
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Yes. A short NOTES.md would do."
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

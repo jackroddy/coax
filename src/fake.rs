@@ -5,9 +5,11 @@ use std::time::Duration;
 
 use agent_client_protocol::v1::schema::{
     AgentCapabilities, CancelNotification, ContentBlock, ContentChunk, Implementation,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, SessionId,
-    SessionNotification, SessionUpdate, StopReason,
+    InitializeRequest, InitializeResponse, ListSessionsRequest, ListSessionsResponse,
+    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
+    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, SessionCapabilities,
+    SessionId, SessionInfo, SessionListCapabilities, SessionNotification, SessionUpdate,
+    StopReason,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
 use agent_client_protocol::{
@@ -17,6 +19,9 @@ use agent_client_protocol::{
 use crate::scenario::{Act, Scenario, Step};
 
 pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
+    let saved = Arc::new(scenario.sessions);
+    let advertised = saved.clone();
+    let listed = saved.clone();
     let acts = Arc::new(Mutex::new(VecDeque::from(scenario.acts)));
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancel_flag = cancelled.clone();
@@ -24,10 +29,16 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
         .v1()
         .name("coax-fake-agent")
         .on_receive_request(
-            async |req: InitializeRequest, responder, _cx: ConnectionTo<Client>| {
+            async move |req: InitializeRequest, responder, _cx: ConnectionTo<Client>| {
+                let mut capabilities = AgentCapabilities::new();
+                if !advertised.is_empty() {
+                    capabilities = capabilities.load_session(true).session_capabilities(
+                        SessionCapabilities::new().list(SessionListCapabilities::new()),
+                    );
+                }
                 responder.respond(
                     InitializeResponse::new(req.protocol_version)
-                        .agent_capabilities(AgentCapabilities::new())
+                        .agent_capabilities(capabilities)
                         .agent_info(Implementation::new(
                             "coax-fake-agent",
                             env!("CARGO_PKG_VERSION"),
@@ -39,6 +50,38 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
         .on_receive_request(
             async |_req: NewSessionRequest, responder, _cx: ConnectionTo<Client>| {
                 responder.respond(NewSessionResponse::new("fake-session"))
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: ListSessionsRequest, responder, _cx: ConnectionTo<Client>| {
+                let cwd = req.cwd.unwrap_or_default();
+                let sessions = listed
+                    .iter()
+                    .map(|saved| {
+                        SessionInfo::new(saved.id.clone(), cwd.clone())
+                            .title(saved.title.clone())
+                            .updated_at(saved.updated_at.clone())
+                    })
+                    .collect();
+                responder.respond(ListSessionsResponse::new(sessions))
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: LoadSessionRequest, responder, cx: ConnectionTo<Client>| {
+                let Some(saved) = saved.iter().find(|saved| *saved.id == *req.session_id.0) else {
+                    return responder.respond_with_error(Error::invalid_params());
+                };
+                for step in &saved.history {
+                    if let Step::Update(update) = step {
+                        cx.send_notification(SessionNotification::new(
+                            req.session_id.clone(),
+                            update.clone(),
+                        ))?;
+                    }
+                }
+                responder.respond(LoadSessionResponse::new())
             },
             on_receive_request!(),
         )

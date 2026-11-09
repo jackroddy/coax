@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use agent_client_protocol::Error;
 use agent_client_protocol::v1::schema::{
-    PermissionOption, PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome,
-    SessionId, ToolCallUpdate,
+    InitializeResponse, PermissionOption, PermissionOptionKind, RequestPermissionOutcome,
+    SelectedPermissionOutcome, SessionId, ToolCallUpdate,
 };
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event as TermEvent, KeyCode, KeyEvent, KeyModifiers,
@@ -220,18 +220,46 @@ impl App {
     }
 }
 
+/// The terminal's events, read on a thread of their own.
+pub type Keys = UnboundedReceiver<io::Result<TermEvent>>;
+
+/// Which session a run opens on.
+pub enum Start {
+    New,
+    Load(SessionId),
+}
+
+/// What the user asked for at launch.
+pub struct Opening {
+    pub start: Start,
+    pub first_prompt: Option<String>,
+    pub auto_allow: bool,
+    pub keys: Keys,
+}
+
 pub async fn run(
     mut link: Link,
+    init: InitializeResponse,
     name: Option<String>,
-    first_prompt: Option<String>,
-    auto_allow: bool,
+    opening: Opening,
 ) -> Result<(), Error> {
-    let init = link.initialize().await?;
+    let Opening {
+        start,
+        first_prompt,
+        auto_allow,
+        mut keys,
+    } = opening;
     let agent = name
         .or(init.agent_info.map(|info| info.name))
         .unwrap_or_else(|| "agent".to_string());
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
-    let session = link.new_session(cwd.clone()).await?.session_id;
+    let session = match start {
+        Start::New => link.new_session(cwd.clone()).await?.session_id,
+        Start::Load(id) => {
+            link.load_session(id.clone(), cwd.clone()).await?;
+            id
+        }
+    };
 
     let (decade, mut decade_messages) = connect_decade();
     let mut app = App {
@@ -251,11 +279,14 @@ pub async fn run(
         cwd,
         auto_allow,
     };
+    // a loaded session's history arrives before its load response
+    while let Ok(event) = link.events.try_recv() {
+        app.event(event);
+    }
     if let Some(text) = first_prompt {
         app.transcript.prompt(text.clone());
         link.prompt(app.session.clone(), text)?;
     }
-    let mut keys = key_thread();
     let mut terminal = ratatui::init();
     let _ = crossterm::execute!(io::stdout(), EnableMouseCapture);
     let restore_terminal = std::panic::take_hook();
@@ -329,7 +360,7 @@ fn connect_decade() -> (Option<Channel>, UnboundedReceiver<Message>) {
     }
 }
 
-fn key_thread() -> UnboundedReceiver<io::Result<TermEvent>> {
+pub fn key_thread() -> Keys {
     let (tx, rx) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         loop {

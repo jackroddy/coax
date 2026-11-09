@@ -38,6 +38,20 @@ command line, the keys, and the scenario format the fake agent reads.
   block wider than the box shows a window onto it, with a dim `◂` or `▸` at
   the edge that has more. Shift with the wheel, or a horizontal wheel, over
   the block pans it four columns at a time.
+- A bare `coax` starts every configured agent at once and lists their earlier
+  sessions for the current folder in a `sessions` pane above the agents,
+  newest first, each with its title, its agent and its age. j and k move
+  through the sessions and then the agents. Enter on a session loads it
+  through `session/load` and shows its history, and Enter on an agent starts
+  a new session as before. Only agents that advertise `session/load` and
+  `session/list` contribute sessions. A session is chosen only in the picker,
+  never from inside a conversation. `--agent` and a raw command start a new
+  session without listing.
+- The scenario format gains an optional top-level `sessions` array. Each entry
+  has an `id`, a `title`, an `updated_at` timestamp and a `history` of
+  `update` steps. With it, the fake agent advertises `session/list` and
+  `session/load`, lists the sessions and replays a session's history when it
+  is loaded. `scenarios/resume.json` is an example.
 - Ctrl+t shows or hides the plan, as a list above the prompt. It is hidden
   until then.
 - `--prompt <text>` sends a first prompt as soon as the session opens.

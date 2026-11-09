@@ -1,8 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use agent_client_protocol::AcpAgent;
+use agent_client_protocol::{AcpAgent, Error};
+use coax::agents::Agents;
+use coax::app::{Opening, Start};
 use coax::config::Config;
+use coax::picker::Choice;
 use coax::{acp, app, picker};
+use tokio::task::LocalSet;
 
 const USAGE: &str =
     "usage: coax [--prompt <text>] [--allow] [--agent <name> | <agent command> [args...]]";
@@ -80,36 +84,60 @@ async fn main() {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
-    let (agent, name) = match options.launch {
+    let opening = Opening {
+        start: Start::New,
+        first_prompt: options.first_prompt,
+        auto_allow: options.auto_allow,
+        keys: app::key_thread(),
+    };
+    let result = match options.launch {
         Launch::Command(words) => match AcpAgent::from_args(words) {
-            Ok(agent) => (agent, None),
+            Ok(agent) => open(agent, None, opening).await,
             Err(error) => fail(2, &error.to_string()),
         },
         Launch::Named(name) => {
             let (config, path) = load_config();
             match config.agents.get(&name) {
-                Some(agent) => (AcpAgent::new(agent.clone()), Some(name)),
+                Some(agent) => open(AcpAgent::new(agent.clone()), Some(name), opening).await,
                 None => fail(2, &format!("no agent named {name} in {}", path.display())),
             }
         }
         Launch::Pick => {
             let (config, path) = load_config();
-            match picker::pick(&config, &path) {
-                Ok(Some(name)) => (AcpAgent::new(config.agents[&name].clone()), Some(name)),
-                Ok(None) => return,
-                Err(error) => fail(1, &error.to_string()),
-            }
+            LocalSet::new()
+                .run_until(pick(&config, &path, opening))
+                .await
         }
     };
-    let first_prompt = options.first_prompt;
-    let auto_allow = options.auto_allow;
-    if let Err(error) = acp::run(agent, async |link| {
-        app::run(link, name, first_prompt, auto_allow).await
-    })
-    .await
-    {
+    if let Err(error) = result {
         app::restore();
         fail(1, &error.to_string());
+    }
+}
+
+async fn open(agent: AcpAgent, name: Option<String>, opening: Opening) -> Result<(), Error> {
+    acp::run(agent, async |link| {
+        let init = link.initialize().await?;
+        app::run(link, init, name, opening).await
+    })
+    .await
+}
+
+/// Start every configured agent, show the picker over their sessions and
+/// open the one chosen.
+async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), Error> {
+    let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
+    let mut agents = Agents::start(config, &cwd);
+    let choice = picker::pick(config, path, &mut agents.listings, &mut opening.keys)
+        .await
+        .map_err(Error::into_internal_error)?;
+    match choice {
+        Choice::Quit => Ok(()),
+        Choice::Agent(name) => agents.open(name, opening).await,
+        Choice::Session { agent, id } => {
+            opening.start = Start::Load(id);
+            agents.open(agent, opening).await
+        }
     }
 }
 
