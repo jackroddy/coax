@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:28:08.26836425Z",
-  "updated_at": "2026-11-09T05:57:25.317798989Z",
+  "updated_at": "2026-11-09T06:02:45.092161078Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -32,6 +32,14 @@
       "author": "Jack Roddy/4d38e22a",
       "text": "Step d2 of the redesign landed: header, rounded session and prompt panes, footer hints, `src/palette.rs`. Next are d3 (prompt and thought styling, tool runs folded under \"✦ N tools\", which also fixes coax-efe3a6) and d4 (permission modal, plan side pane).",
       "commit": "d030149",
+      "branch": "dev"
+    },
+    {
+      "id": "acdd0426",
+      "at": "2026-11-09T06:02:45.092159988Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Steps d3 and d4 landed on dev: prompt and thought styling, tool runs under \"✦ N tools\", the permission box and the plan pane. The four-step redesign is complete; further changes come from Jack using it.",
+      "commit": "1ee873c",
       "branch": "dev"
     }
   ],
