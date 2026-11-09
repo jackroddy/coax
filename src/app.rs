@@ -24,6 +24,7 @@ pub struct App {
     pub transcript: Transcript,
     pub input: String,
     pub scroll: usize,
+    pub show_plan: bool,
 
     /// Rows a page scroll moves, set by the last draw.
     pub page: usize,
@@ -150,6 +151,10 @@ impl App {
         }
         match key.code {
             KeyCode::Char('c') if ctrl => Action::Quit,
+            KeyCode::Char('t') if ctrl => {
+                self.show_plan = !self.show_plan;
+                Action::None
+            }
             KeyCode::Char('u') if ctrl => {
                 self.input.clear();
                 Action::None
@@ -207,6 +212,7 @@ pub async fn run(
         transcript: Transcript::default(),
         input: String::new(),
         scroll: 0,
+        show_plan: false,
         page: 1,
         lines_seen: 0,
         agent,
