@@ -1,0 +1,28 @@
+{
+  "id": "coax-419109",
+  "title": "No permission request reached coax for a Bash touch in the trial run",
+  "body": "In the trial run on coax-4da59a the agent ran `mkdir -p` and `touch` inside the project, and no `session/request_permission` reached coax. `~/.claude/settings.json` sets no `defaultMode`. Nobody has checked the cause yet. Candidates are an allow rule in Jack's settings, the mode the adapter starts a session in, or a mode it picks for a client that declares no capabilities. Until a request comes through, the permission prompt from 0548ccc is untested against the real adapter.",
+  "type": "task",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T03:57:33.103865925Z",
+  "updated_at": "2026-11-09T03:57:33.103865925Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "0548ccc",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
