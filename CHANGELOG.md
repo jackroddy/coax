@@ -158,6 +158,10 @@ command line, the keys, and the scenario format the fake agent reads.
   terminal that reports it apart from Enter. Enter still sends. Each line
   wraps on its own, and Up and Down move the cursor between lines when the
   prompt has more than one.
+- Pasting into the prompt inserts the text at the cursor with its newlines
+  kept, and never sends it. coax turns on bracketed paste for this and turns
+  it off again on exit, so a terminal without bracketed paste behaves as
+  before.
 
 ### Changed
 

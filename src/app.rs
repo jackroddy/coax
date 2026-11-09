@@ -10,8 +10,8 @@ use agent_client_protocol::v1::schema::{
     SelectedPermissionOutcome, SessionId, ToolCallId, ToolCallUpdate,
 };
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, Event as TermEvent, KeyCode, KeyEvent, KeyModifiers,
-    MouseButton, MouseEvent, MouseEventKind,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event as TermEvent, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use decade_channel::{Channel, Message};
 use ratatui::layout::{Position, Rect};
@@ -669,6 +669,16 @@ impl App {
         self.edited();
     }
 
+    /// Insert pasted text at the cursor with its newlines kept. A paste
+    /// never sends, and does nothing while a box has the keys.
+    pub fn paste(&mut self, text: &str) {
+        if self.permission.is_some() || self.confirm.is_some() || self.menu.is_some() {
+            return;
+        }
+        self.unknown = None;
+        self.insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
+    }
+
     fn edited(&mut self) {
         self.command_cursor = 0;
         self.command_closed = false;
@@ -1065,10 +1075,10 @@ pub async fn run(
         link.prompt(app.session.clone(), text)?;
     }
     let mut terminal = ratatui::init();
-    let _ = crossterm::execute!(io::stdout(), EnableMouseCapture);
+    enter_input_modes();
     let restore_terminal = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+        leave_input_modes();
         restore_terminal(info);
     }));
     let mut spin = tokio::time::interval(SPIN_INTERVAL);
@@ -1089,6 +1099,10 @@ pub async fn run(
             },
             key = keys.recv() => match key {
                 Some(Ok(TermEvent::Key(key))) => app.key(key, Instant::now()),
+                Some(Ok(TermEvent::Paste(text))) => {
+                    app.paste(&text);
+                    Action::None
+                }
                 Some(Ok(TermEvent::Mouse(mouse))) => {
                     app.mouse(mouse)
                 }
@@ -1137,8 +1151,16 @@ pub async fn run(
     result
 }
 
+fn enter_input_modes() {
+    let _ = crossterm::execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste);
+}
+
+fn leave_input_modes() {
+    let _ = crossterm::execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
+}
+
 pub fn restore() {
-    let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+    leave_input_modes();
     ratatui::restore();
 }
 
@@ -2598,5 +2620,31 @@ mod tests {
         assert_eq!(app.input, "one\ntw\nthree");
         chord(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
         assert_eq!(app.input, "one\ntwthree");
+    }
+
+    #[test]
+    fn a_paste_goes_in_at_the_cursor_with_its_newlines_and_does_not_send() {
+        let mut app = with_input("ad");
+        chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        app.paste("b\r\nc\ré\n");
+        assert_eq!(app.input, "ab\nc\né\nd");
+        assert_eq!(app.cursor, "ab\nc\né\n".len());
+        assert!(app.transcript.entries.is_empty());
+    }
+
+    #[test]
+    fn a_pasted_command_name_is_not_run() {
+        let mut app = with_input("");
+        app.paste("/mo");
+        assert_eq!(app.input, "/mo");
+        assert!(app.transcript.entries.is_empty());
+    }
+
+    #[test]
+    fn a_paste_is_ignored_while_a_permission_box_is_open() {
+        let mut app = with_input("x");
+        open_permission(&mut app);
+        app.paste("lost");
+        assert_eq!(app.input, "x");
     }
 }
