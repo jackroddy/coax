@@ -280,32 +280,18 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
         match entry {
             Entry::User(text) => lines.extend(bubble(text, width)),
             Entry::Agent(text) => {
-                let body = app
-                    .rendered
-                    .agent(index, text, usable.saturating_sub(2).max(1));
-                let lead = Span::styled("● ", Style::new().fg(palette::get().magenta));
-                if body.is_empty() {
-                    lines.push(Line::from(lead.clone()));
-                }
-                for (n, row) in body.iter().enumerate() {
-                    let start = if n == 0 {
-                        lead.clone()
-                    } else {
-                        Span::raw("  ")
-                    };
-                    let mut spans = vec![start];
-                    spans.extend(row.spans.iter().cloned());
-                    lines.push(Line::from(spans));
-                }
+                let widest = (width * 9 / 10).max(5);
+                let body = app.rendered.agent(index, text, widest - 4);
+                let rows = body.iter().cloned().map(trim_end).collect();
+                lines.extend(framed(rows, palette::get().blue, None));
             }
             Entry::Thought(text) => wrapped("✻ ", "  ", dim(), text, usable, dim(), &mut lines),
             Entry::Tool(tool) => lines.extend(tool_block(tool, &app.cwd, usable)),
             Entry::Permission { choice, .. } => {
-                let chip = format!(" {choice} ");
-                let pad = width.saturating_sub(chip.chars().count());
+                let pad = width.saturating_sub(choice.chars().count());
                 lines.push(Line::from(vec![
                     Span::raw(" ".repeat(pad)),
-                    Span::styled(chip, Style::new().bg(palette::get().selection)),
+                    Span::styled(choice.clone(), Style::new().fg(palette::get().accent)),
                 ]));
             }
             Entry::Notice(text) => {
@@ -337,44 +323,65 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(visible), area);
 }
 
-/// A message of yours as a rounded bubble against the right edge, at most
+/// A message of yours in an accent bubble against the right edge, at most
 /// 70% of `width` wide.
 fn bubble(text: &str, width: usize) -> Vec<Line<'static>> {
     let widest = (width * 7 / 10).max(5);
-    let mut rows: Vec<String> = Vec::new();
+    let mut rows: Vec<Line> = Vec::new();
     for paragraph in text.split('\n') {
         let pieces = textwrap::wrap(paragraph, widest - 4);
         if pieces.is_empty() {
-            rows.push(String::new());
+            rows.push(Line::default());
         }
-        rows.extend(pieces.into_iter().map(|piece| piece.into_owned()));
+        rows.extend(
+            pieces
+                .into_iter()
+                .map(|piece| Line::from(piece.into_owned())),
+        );
     }
-    let longest = rows
-        .iter()
-        .map(|row| row.chars().count())
-        .max()
-        .unwrap_or(0);
-    let inner = longest + 2;
-    let pad = " ".repeat(width.saturating_sub(inner + 2));
-    let fill = Style::new().bg(palette::get().selection);
-    let edge = |left: &str, middle: String, right: &str| {
+    framed(rows, palette::get().accent, Some(width))
+}
+
+/// `rows` inside a rounded border of colour `border` with a space of padding
+/// each side. With `Some(width)` the box sits against the right edge of that
+/// width, and otherwise against the left.
+fn framed(
+    rows: Vec<Line<'static>>,
+    border: Color,
+    right_edge: Option<usize>,
+) -> Vec<Line<'static>> {
+    let inner = rows.iter().map(Line::width).max().unwrap_or(0);
+    let pad = right_edge.map_or(0, |width| width.saturating_sub(inner + 4));
+    let edge = Style::new().fg(border);
+    let side = |left: &str, middle: &str, right: &str| {
         Line::from(vec![
-            Span::raw(pad.clone()),
-            Span::styled(format!("{left}{middle}{right}"), dim()),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(format!("{left}{}{right}", middle.repeat(inner + 2)), edge),
         ])
     };
-    let mut lines = vec![edge("╭", "─".repeat(inner), "╮")];
+    let mut lines = vec![side("╭", "─", "╮")];
     for row in rows {
-        let gap = " ".repeat(longest - row.chars().count());
-        lines.push(Line::from(vec![
-            Span::raw(pad.clone()),
-            Span::styled("│", dim()),
-            Span::styled(format!(" {row}{gap} "), fill),
-            Span::styled("│", dim()),
-        ]));
+        let gap = inner - row.width();
+        let mut spans = vec![Span::raw(" ".repeat(pad)), Span::styled("│ ", edge)];
+        spans.extend(row.spans);
+        spans.push(Span::styled(format!("{} │", " ".repeat(gap)), edge));
+        lines.push(Line::from(spans));
     }
-    lines.push(edge("╰", "─".repeat(inner), "╯"));
+    lines.push(side("╰", "─", "╯"));
     lines
+}
+
+/// `line` without the spaces that end it.
+fn trim_end(mut line: Line<'static>) -> Line<'static> {
+    while let Some(last) = line.spans.last_mut() {
+        let kept = last.content.trim_end().len();
+        if kept > 0 {
+            last.content = last.content[..kept].to_string().into();
+            break;
+        }
+        line.spans.pop();
+    }
+    line
 }
 
 fn wrapped(
@@ -823,5 +830,27 @@ mod tests {
                 .iter()
                 .all(|row| row.trim_start().starts_with('│') && row.ends_with('│'))
         );
+    }
+
+    #[test]
+    fn an_agent_box_is_sized_to_its_longest_line_without_trailing_padding() {
+        let rows = vec![
+            trim_end(Line::from("short   ")),
+            trim_end(Line::from("a longer line   ")),
+        ];
+        let lines = plain(&framed(rows, Color::Blue, None));
+        assert_eq!(lines[0], "╭───────────────╮");
+        assert_eq!(lines[1], "│ short         │");
+        assert_eq!(lines[2], "│ a longer line │");
+        assert_eq!(lines[3], "╰───────────────╯");
+    }
+
+    #[test]
+    fn a_bubble_border_takes_the_given_colour_and_has_no_background() {
+        let lines = framed(vec![Line::from("hi")], Color::Red, Some(20));
+        for span in lines.iter().flat_map(|line| &line.spans) {
+            assert_eq!(span.style.bg, None);
+        }
+        assert_eq!(lines[1].spans[1].style.fg, Some(Color::Red));
     }
 }
