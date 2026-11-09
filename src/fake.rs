@@ -4,14 +4,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_client_protocol::v1::schema::{
-    AgentCapabilities, CancelNotification, ContentBlock, ContentChunk, Implementation,
-    InitializeRequest, InitializeResponse, ListSessionsRequest, ListSessionsResponse,
-    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, SessionCapabilities,
-    SessionConfigKind, SessionConfigOptionValue, SessionConfigSelectOptions, SessionId,
-    SessionInfo, SessionListCapabilities, SessionNotification, SessionUpdate,
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
-    SetSessionModeResponse, StopReason,
+    AgentCapabilities, AvailableCommand, AvailableCommandsUpdate, CancelNotification, ContentBlock,
+    ContentChunk, Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest,
+    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+    NewSessionResponse, PromptRequest, PromptResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, SessionCapabilities, SessionConfigKind, SessionConfigOptionValue,
+    SessionConfigSelectOptions, SessionId, SessionInfo, SessionListCapabilities,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
 use agent_client_protocol::{
@@ -23,6 +23,8 @@ use crate::scenario::{Act, Scenario, Step};
 pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
     let options = Arc::new(Mutex::new(scenario.config_options));
     let modes = Arc::new(Mutex::new(scenario.modes));
+    let commands = Arc::new(scenario.commands);
+    let (new_commands, load_commands) = (commands.clone(), commands);
     let (new_options, load_options, set_options) =
         (options.clone(), options.clone(), options.clone());
     let (new_modes, load_modes, set_modes) = (modes.clone(), modes.clone(), modes.clone());
@@ -55,13 +57,14 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
             on_receive_request!(),
         )
         .on_receive_request(
-            async move |_req: NewSessionRequest, responder, _cx: ConnectionTo<Client>| {
+            async move |_req: NewSessionRequest, responder, cx: ConnectionTo<Client>| {
                 let options = new_options.lock().unwrap().clone();
                 responder.respond(
                     NewSessionResponse::new("fake-session")
                         .config_options((!options.is_empty()).then_some(options))
                         .modes(new_modes.lock().unwrap().clone()),
-                )
+                )?;
+                advertise(&cx, "fake-session".into(), &new_commands)
             },
             on_receive_request!(),
         )
@@ -162,7 +165,8 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
                     LoadSessionResponse::new()
                         .config_options((!options.is_empty()).then_some(options))
                         .modes(load_modes.lock().unwrap().clone()),
-                )
+                )?;
+                advertise(&cx, req.session_id.clone(), &load_commands)
             },
             on_receive_request!(),
         )
@@ -185,6 +189,19 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
             },
             on_receive_notification!(),
         )
+}
+
+fn advertise(
+    cx: &ConnectionTo<Client>,
+    session: SessionId,
+    commands: &[AvailableCommand],
+) -> Result<(), Error> {
+    if commands.is_empty() {
+        return Ok(());
+    }
+    let update =
+        SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands.to_vec()));
+    cx.send_notification(SessionNotification::new(session, update))
 }
 
 async fn play(

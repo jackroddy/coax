@@ -394,5 +394,22 @@
       "type": "boolean",
       "currentValue": false
     }
+  ],
+  "commands": [
+    {
+      "name": "compact",
+      "description": "Summarise the conversation to free context"
+    },
+    {
+      "name": "review",
+      "description": "Review code",
+      "input": {
+        "hint": "what to review"
+      }
+    },
+    {
+      "name": "init",
+      "description": "Create a CLAUDE.md for this project"
+    }
   ]
 }

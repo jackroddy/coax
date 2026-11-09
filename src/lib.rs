@@ -1,6 +1,7 @@
 pub mod acp;
 pub mod agents;
 pub mod app;
+pub mod command;
 pub mod config;
 pub mod fake;
 pub mod palette;

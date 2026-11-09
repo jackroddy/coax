@@ -1,6 +1,6 @@
 use agent_client_protocol::v1::schema::{
-    PermissionOption, SessionConfigOption, SessionModeState, SessionUpdate, StopReason,
-    ToolCallUpdate, Usage,
+    AvailableCommand, PermissionOption, SessionConfigOption, SessionModeState, SessionUpdate,
+    StopReason, ToolCallUpdate, Usage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +12,10 @@ pub struct Scenario {
     /// options. A `set_config_option` request changes them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub config_options: Vec<SessionConfigOption>,
+
+    /// The slash commands the agent advertises after a session opens.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<AvailableCommand>,
 
     /// The older modes API, offered next to `config_options`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

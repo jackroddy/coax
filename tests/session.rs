@@ -176,6 +176,16 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
     .unwrap();
 }
 
+/// The next setting event, past the updates a new session sends.
+async fn next_setting(link: &mut Link) -> Option<Event> {
+    while let Some(event) = link.events.recv().await {
+        if matches!(event, Event::Setting(_)) {
+            return Some(event);
+        }
+    }
+    None
+}
+
 const RESUME: &str = include_str!("../scenarios/resume.json");
 
 #[tokio::test]
@@ -317,7 +327,8 @@ async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error(
             value: value.into(),
         };
         link.change(session.clone(), choose("model", "sonnet"))?;
-        let Some(Event::Setting(Ok(Applied::Options(options)))) = link.events.recv().await else {
+        let Some(Event::Setting(Ok(Applied::Options(options)))) = next_setting(&mut link).await
+        else {
             panic!("expected the updated options");
         };
         let mut settings = Settings::default();
@@ -326,7 +337,7 @@ async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error(
 
         link.change(session.clone(), choose("model", "gpt"))?;
         assert!(matches!(
-            link.events.recv().await,
+            next_setting(&mut link).await,
             Some(Event::Setting(Err(_)))
         ));
 
@@ -337,7 +348,8 @@ async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error(
                 value: true.into(),
             },
         )?;
-        let Some(Event::Setting(Ok(Applied::Options(options)))) = link.events.recv().await else {
+        let Some(Event::Setting(Ok(Applied::Options(options)))) = next_setting(&mut link).await
+        else {
             panic!("expected the updated options");
         };
         settings.set_options(options);
@@ -440,4 +452,23 @@ async fn text_never_merges_across_a_subagent_boundary() {
     assert!(
         matches!(&transcript.entries[4], Entry::Agent(text) if text == "Both helpers are done.")
     );
+}
+
+#[tokio::test]
+async fn a_new_session_advertises_the_scenarios_commands() {
+    let scenario = Scenario::parse(RESUME).unwrap();
+    acp::run(fake::agent(scenario), async |mut link| {
+        link.initialize().await?;
+        link.new_session(std::env::temp_dir()).await?;
+        let Some(Event::Update(update)) = link.events.recv().await else {
+            panic!("expected the commands");
+        };
+        let mut settings = Settings::default();
+        settings.apply(&update);
+        let names: Vec<&str> = settings.commands.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["compact", "review", "init"]);
+        Ok(())
+    })
+    .await
+    .unwrap();
 }

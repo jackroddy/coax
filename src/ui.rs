@@ -10,6 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use crate::app::{App, ChipArea, ChipTarget, ExitKey, MenuTarget};
+use crate::command;
 use crate::palette;
 use crate::session::{Child, Entry, Tool};
 use crate::settings::{self, Control};
@@ -53,7 +54,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_menu(frame, app);
     draw_plan(frame, plan_area, app);
     draw_rule(frame, upper_rule);
-    draw_input(frame, prompt_area, &input);
+    draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
+    draw_commands(frame, app, upper_rule);
+    draw_confirm(frame, transcript_area, app);
     draw_guard_rule(frame, lower_rule, app);
 }
 
@@ -1018,7 +1021,8 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     );
 }
 
-fn draw_input(frame: &mut Frame, area: Rect, input: &InputView) {
+fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<Color>) {
+    let text = colour.map_or(Style::default(), |colour| Style::new().fg(colour));
     let lines: Vec<Line> = input
         .rows
         .iter()
@@ -1029,12 +1033,98 @@ fn draw_input(frame: &mut Frame, area: Rect, input: &InputView) {
             } else {
                 Span::raw(PROMPT_LEAD)
             };
-            Line::from(vec![lead, Span::raw(row.clone())])
+            Line::from(vec![lead, Span::styled(row.clone(), text)])
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), area);
     let (column, row) = input.cursor;
     frame.set_cursor_position((area.x + column, area.y + row));
+}
+
+/// The colour of the prompt's text: cyan for a coax command, green for an
+/// agent command.
+fn prompt_colour(input: &str) -> Option<Color> {
+    match command::parse(input) {
+        command::Typed::Plain => None,
+        command::Typed::Coax { .. } => Some(palette::get().cyan),
+        command::Typed::Agent { .. } => Some(palette::get().green),
+    }
+}
+
+/// The commands matching the prompt's text, in a box above the prompt.
+fn draw_commands(frame: &mut Frame, app: &App, above: Rect) {
+    let list = app.popup();
+    if list.is_empty() {
+        return;
+    }
+    let colour = prompt_colour(&app.input).unwrap_or_default();
+    let screen = frame.area();
+    let shown = list.len().min(6).min((above.y as usize).saturating_sub(2));
+    if shown == 0 {
+        return;
+    }
+    let cursor = app.command_cursor.min(list.len() - 1);
+    let first = (cursor + 1).saturating_sub(shown);
+    let width = screen.width.min(70);
+    let area = Rect {
+        x: 0,
+        y: above.y - shown as u16 - 2,
+        width,
+        height: shown as u16 + 2,
+    };
+    let inner = (width as usize).saturating_sub(4);
+    let name_width = list
+        .iter()
+        .map(|entry| entry.fill.trim_end().chars().count())
+        .max()
+        .unwrap_or(0);
+    let lines: Vec<Line> = list
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(shown)
+        .map(|(index, entry)| {
+            let name = format!("{:<name_width$}", entry.fill.trim_end());
+            let room = inner.saturating_sub(name_width + 2);
+            let line = Line::from(vec![
+                Span::styled(name, Style::new().fg(colour)),
+                Span::styled(format!("  {}", cut(&entry.description, room)), dim()),
+            ]);
+            if index == cursor {
+                line.style(Style::new().bg(palette::get().selection))
+            } else {
+                line
+            }
+        })
+        .collect();
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(pane("commands", false)), area);
+}
+
+/// The box that asks before an agent command is sent.
+fn draw_confirm(frame: &mut Frame, over: Rect, app: &App) {
+    let Some(confirm) = &app.confirm else {
+        return;
+    };
+    let text = confirm.text();
+    let mut lines = vec![Line::styled(
+        text.clone(),
+        Style::new().fg(palette::get().green),
+    )];
+    lines.push(Line::styled(confirm.description.clone(), dim()));
+    let wanted = lines.iter().map(Line::width).max().unwrap_or(0).max(24) + 4;
+    let width = (wanted as u16).min(over.width);
+    let height = (lines.len() as u16 + 2).min(over.height);
+    let area = Rect {
+        x: over.x + (over.width - width) / 2,
+        y: over.y + (over.height - height) / 2,
+        width,
+        height,
+    };
+    let block = pane("send to the agent", true)
+        .title_bottom(Line::styled("enter send   esc cancel", dim()).right_aligned());
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// The prompt rows that fit on screen and where the cursor sits among them.
@@ -1598,5 +1688,16 @@ mod tests {
                 "    main.rs is a stub.",
             ]
         );
+    }
+
+    #[test]
+    fn the_prompt_is_cyan_for_a_coax_command_and_green_for_an_agent_command() {
+        let palette = palette::get();
+        assert_eq!(prompt_colour("/mode"), Some(palette.cyan));
+        assert_eq!(prompt_colour("/"), Some(palette.cyan));
+        assert_eq!(prompt_colour("//compact"), Some(palette.green));
+        assert_eq!(prompt_colour("//"), Some(palette.green));
+        assert_eq!(prompt_colour("hello /mode"), None);
+        assert_eq!(prompt_colour(""), None);
     }
 }

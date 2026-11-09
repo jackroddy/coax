@@ -1,5 +1,5 @@
 use agent_client_protocol::v1::schema::{
-    Cost, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    AvailableCommand, Cost, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
     SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState, SessionUpdate, Usage,
 };
 
@@ -15,6 +15,9 @@ pub struct Settings {
     pub context: Option<Context>,
     pub cost: Option<Cost>,
     pub tokens: Option<Tokens>,
+
+    /// The slash commands the agent offers.
+    pub commands: Vec<AvailableCommand>,
 }
 
 pub struct Context {
@@ -36,6 +39,7 @@ pub struct Setting {
 
     /// The text of the setting's chip.
     pub label: String,
+    pub description: Option<String>,
     pub control: Control,
 
     /// Whether the setting is the agent's mode, and the mode is one in which
@@ -89,6 +93,9 @@ impl Settings {
             }
             SessionUpdate::CurrentModeUpdate(update) => {
                 self.set_mode(&update.current_mode_id.0);
+            }
+            SessionUpdate::AvailableCommandsUpdate(update) => {
+                self.commands = update.available_commands.clone();
             }
             SessionUpdate::UsageUpdate(update) => {
                 self.context = Some(Context {
@@ -186,6 +193,7 @@ fn setting(option: &SessionConfigOption) -> Setting {
         id: option.id.0.to_string(),
         name: option.name.clone(),
         label,
+        description: option.description.clone(),
         control,
         unguarded: is_mode && is_unguarded(&current),
         from_modes: false,
@@ -213,6 +221,7 @@ fn mode_setting(modes: &SessionModeState) -> Setting {
         id: "mode".to_string(),
         name: "mode".to_string(),
         label,
+        description: None,
         control: Control::Choose(choices),
         unguarded: is_unguarded(&current),
         from_modes: true,

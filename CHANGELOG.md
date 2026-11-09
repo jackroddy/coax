@@ -89,6 +89,23 @@ command line, the keys, and the scenario format the fake agent reads.
   current model or pressing Esc backs out. While the agent is working, the
   model chip is dim and a click on it does nothing. Other settings still
   switch at once.
+- Commands in the prompt. A prompt that starts with `/` is a coax command and
+  turns cyan. There is one per header chip, named after the setting in
+  lowercase with spaces as `-`, such as `/mode`, `/model`, `/effort` and
+  `/fast`. Enter opens that chip's box, or flips a yes or no setting, and the
+  command never sends anything to the agent. `/model` waits while the agent
+  works, as the chip does. A prompt that starts with `//` is one of the
+  agent's slash commands and turns green. `//compact` sends `/compact` after a
+  box that names the command and its description asks for Enter, and Esc backs
+  out. Text after the name goes with the command, so `//review the parser`
+  sends `/review the parser`.
+- While a command's name is being typed, a list above the prompt shows the
+  matching commands with their descriptions: coax's for `/`, and the ones the
+  agent advertises through `available_commands_update` for `//`. Up and Down
+  move in it, Enter on an entry fills it into the prompt and a second Enter
+  runs it, and Esc closes the list.
+- The scenario format gains an optional top-level `commands` array, the slash
+  commands the fake agent advertises when a session opens.
 - Ctrl+t shows or hides the plan, as a list above the prompt. It is hidden
   until then.
 - `--prompt <text>` sends a first prompt as soon as the session opens.

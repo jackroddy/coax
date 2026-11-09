@@ -19,8 +19,9 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 
 use crate::acp::{Applied, Change, Event, Link};
+use crate::command::{self, Candidate, Kind};
 use crate::session::{Entry, Transcript};
-use crate::settings::{Control, Settings};
+use crate::settings::{Control, Setting, Settings};
 use crate::ui;
 
 const WHEEL_LINES: usize = 3;
@@ -48,6 +49,15 @@ pub struct App {
     pub input: String,
     pub scroll: usize,
     pub show_plan: bool,
+
+    /// The highlighted entry of the command list under the prompt.
+    pub command_cursor: usize,
+
+    /// Whether Esc has closed the command list for the text typed so far.
+    pub command_closed: bool,
+
+    /// An agent command waiting for a yes before it is sent.
+    pub confirm: Option<Confirm>,
 
     /// The subagent calls shown unfolded.
     pub expanded: HashSet<ToolCallId>,
@@ -107,6 +117,24 @@ pub enum ChipTarget {
 
     /// The `⋯` chip, standing for the settings from this index on.
     Overflow(usize),
+}
+
+/// An agent command, as the box that asks before sending it shows it.
+pub struct Confirm {
+    pub name: String,
+    pub description: String,
+    pub input: String,
+}
+
+impl Confirm {
+    /// The prompt it sends: `/name` and then the input.
+    pub fn text(&self) -> String {
+        if self.input.is_empty() {
+            format!("/{}", self.name)
+        } else {
+            format!("/{} {}", self.name, self.input)
+        }
+    }
 }
 
 /// The picker box open under a chip.
@@ -265,7 +293,7 @@ impl App {
     }
 
     fn click(&mut self, position: Position) -> Action {
-        if self.permission.is_some() {
+        if self.permission.is_some() || self.confirm.is_some() {
             return Action::None;
         }
         if self.menu.is_some() {
@@ -292,29 +320,8 @@ impl App {
             return Action::None;
         };
         let anchor = chip.area.x;
-        let settings = self.settings.settings();
         match chip.target {
-            ChipTarget::Setting(index) => {
-                let Some(setting) = settings.get(index) else {
-                    return Action::None;
-                };
-                match &setting.control {
-                    Control::Flip(on) => Action::Change(flip(&setting.id, *on)),
-                    Control::Choose(_) if setting.model && self.transcript.in_flight => {
-                        Action::None
-                    }
-                    Control::Choose(choices) => {
-                        self.menu = Some(Menu {
-                            target: MenuTarget::Setting(setting.id.clone()),
-                            cursor: choices.iter().position(|c| c.current).unwrap_or(0),
-                            anchor,
-                            error: None,
-                            confirm: None,
-                        });
-                        Action::None
-                    }
-                }
-            }
+            ChipTarget::Setting(index) => self.activate(index, anchor),
             ChipTarget::Overflow(first) => {
                 self.menu = Some(Menu {
                     target: MenuTarget::Overflow(first),
@@ -334,6 +341,125 @@ impl App {
             .entries
             .iter()
             .any(|entry| matches!(entry, Entry::User(_) | Entry::Agent(_)))
+    }
+
+    /// Do what a click on the chip of setting `index` does: flip a yes or no
+    /// setting, or open a choice's box under column `anchor`. The model waits
+    /// while the agent works.
+    fn activate(&mut self, index: usize, anchor: u16) -> Action {
+        let settings = self.settings.settings();
+        let Some(setting) = settings.get(index) else {
+            return Action::None;
+        };
+        match &setting.control {
+            Control::Flip(on) => Action::Change(flip(&setting.id, *on)),
+            Control::Choose(_) if setting.model && self.transcript.in_flight => Action::None,
+            Control::Choose(choices) => {
+                self.menu = Some(Menu {
+                    target: MenuTarget::Setting(setting.id.clone()),
+                    cursor: choices.iter().position(|c| c.current).unwrap_or(0),
+                    anchor,
+                    error: None,
+                    confirm: None,
+                });
+                Action::None
+            }
+        }
+    }
+
+    /// The commands the prompt's text can complete to, while a name is being
+    /// typed.
+    pub fn popup(&self) -> Vec<Candidate> {
+        let busy = self.permission.is_some() || self.menu.is_some() || self.confirm.is_some();
+        if busy || self.command_closed || !command::naming(&self.input) {
+            return Vec::new();
+        }
+        command::matches(
+            &self.input,
+            &self.settings.settings(),
+            &self.settings.commands,
+        )
+    }
+
+    /// Enter on a command: fill the highlighted entry of the list, or run
+    /// the command when the prompt already holds it.
+    fn enter_command(&mut self) -> Action {
+        let settings = self.settings.settings();
+        let list = self.popup();
+        let entry = match list.get(self.command_cursor.min(list.len().saturating_sub(1))) {
+            Some(entry) if self.input.trim_end() != entry.fill.trim_end() => {
+                self.input = entry.fill.clone();
+                self.command_cursor = 0;
+                return Action::None;
+            }
+            Some(entry) => Some(entry.clone()),
+            None => self.exact(&settings),
+        };
+        let Some(entry) = entry else {
+            return Action::None;
+        };
+        match entry.kind {
+            Kind::Coax(index) => {
+                self.input.clear();
+                let anchor = self
+                    .chips
+                    .iter()
+                    .find(|chip| chip.target == ChipTarget::Setting(index))
+                    .map_or(0, |chip| chip.area.x);
+                self.activate(index, anchor)
+            }
+            Kind::Agent { name } => {
+                if self.transcript.in_flight {
+                    return Action::None;
+                }
+                let input = match command::parse(&self.input) {
+                    command::Typed::Agent { input, .. } => input.trim_end().to_string(),
+                    _ => String::new(),
+                };
+                self.confirm = Some(Confirm {
+                    name,
+                    description: entry.description,
+                    input,
+                });
+                Action::None
+            }
+        }
+    }
+
+    /// The command named exactly by the prompt's text, if there is one.
+    fn exact(&self, settings: &[Setting]) -> Option<Candidate> {
+        let name = match command::parse(&self.input) {
+            command::Typed::Coax { name } | command::Typed::Agent { name, .. } => name,
+            command::Typed::Plain => return None,
+        };
+        command::matches(&self.input, settings, &self.settings.commands)
+            .into_iter()
+            .find(|candidate| candidate.fill.trim_start_matches('/').trim_end() == name)
+    }
+
+    fn confirm_key(&mut self, key: KeyEvent) -> Action {
+        match key.code {
+            KeyCode::Enter => {
+                let Some(confirm) = self.confirm.take() else {
+                    return Action::None;
+                };
+                let text = confirm.text();
+                self.input.clear();
+                self.transcript.prompt(text.clone());
+                self.scroll = 0;
+                Action::Prompt(text)
+            }
+            KeyCode::Esc => {
+                self.confirm = None;
+                Action::None
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn edited(&mut self) {
+        self.command_cursor = 0;
+        self.command_closed = false;
     }
 
     /// How many rows the open menu has.
@@ -475,8 +601,27 @@ impl App {
             }
             return Action::None;
         }
+        if self.confirm.is_some() {
+            return self.confirm_key(key);
+        }
         if self.menu.is_some() {
             return self.menu_key(key);
+        }
+        let list = self.popup().len();
+        match key.code {
+            KeyCode::Up if list > 0 => {
+                self.command_cursor = self.command_cursor.saturating_sub(1);
+                return Action::None;
+            }
+            KeyCode::Down if list > 0 => {
+                self.command_cursor = (self.command_cursor + 1).min(list - 1);
+                return Action::None;
+            }
+            KeyCode::Esc if list > 0 => {
+                self.command_closed = true;
+                return Action::None;
+            }
+            _ => {}
         }
         match key.code {
             KeyCode::Char('t') if ctrl => {
@@ -485,9 +630,13 @@ impl App {
             }
             KeyCode::Char('u') if ctrl => {
                 self.input.clear();
+                self.edited();
                 Action::None
             }
             KeyCode::Esc if self.transcript.in_flight => Action::Cancel,
+            KeyCode::Enter if !matches!(command::parse(&self.input), command::Typed::Plain) => {
+                self.enter_command()
+            }
             KeyCode::Enter => {
                 if self.transcript.in_flight || self.input.trim().is_empty() {
                     return Action::None;
@@ -499,6 +648,7 @@ impl App {
             }
             KeyCode::Backspace => {
                 self.input.pop();
+                self.edited();
                 Action::None
             }
             KeyCode::PageUp => {
@@ -515,6 +665,7 @@ impl App {
             }
             KeyCode::Char(ch) if !ctrl => {
                 self.input.push(ch);
+                self.edited();
                 Action::None
             }
             _ => Action::None,
@@ -582,6 +733,9 @@ pub async fn run(
         input: String::new(),
         scroll: 0,
         show_plan: false,
+        command_cursor: 0,
+        command_closed: false,
+        confirm: None,
         expanded: HashSet::new(),
         folds: Vec::new(),
         settings,
@@ -717,6 +871,9 @@ mod tests {
             input: String::new(),
             scroll: 0,
             show_plan: false,
+            command_cursor: 0,
+            command_closed: false,
+            confirm: None,
             expanded: HashSet::new(),
             folds: Vec::new(),
             settings: Settings::default(),
@@ -1179,5 +1336,163 @@ mod tests {
             screen.contains("rereads the conversation (412k tokens) through"),
             "{screen}"
         );
+    }
+
+    fn with_commands() -> App {
+        use agent_client_protocol::v1::schema::{AvailableCommandsUpdate, SessionUpdate};
+
+        let scenario = Scenario::parse(include_str!("../scenarios/resume.json")).unwrap();
+        let mut app = with_settings();
+        app.settings.apply(&SessionUpdate::AvailableCommandsUpdate(
+            AvailableCommandsUpdate::new(scenario.commands),
+        ));
+        app
+    }
+
+    fn type_text(app: &mut App, text: &str) {
+        for ch in text.chars() {
+            app.key(
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+                Instant::now(),
+            );
+        }
+    }
+
+    fn press(app: &mut App, code: KeyCode) -> Action {
+        app.key(KeyEvent::new(code, KeyModifiers::NONE), Instant::now())
+    }
+
+    #[test]
+    fn a_slash_prefix_lists_the_coax_commands_that_start_with_it() {
+        let mut app = with_commands();
+        type_text(&mut app, "/mo");
+        let names: Vec<String> = app.popup().into_iter().map(|entry| entry.fill).collect();
+        assert_eq!(names, ["/mode", "/model"]);
+        type_text(&mut app, "dex");
+        assert!(app.popup().is_empty());
+    }
+
+    #[test]
+    fn enter_on_a_listed_coax_command_fills_it_and_a_second_enter_opens_its_box() {
+        let mut app = with_commands();
+        type_text(&mut app, "/mo");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert_eq!(app.input, "/mode");
+        assert!(app.menu.is_none());
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert!(matches!(
+            &app.menu.as_ref().unwrap().target,
+            MenuTarget::Setting(id) if id == "mode"
+        ));
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn the_arrows_move_within_the_list_before_enter_fills_an_entry() {
+        let mut app = with_commands();
+        type_text(&mut app, "/mo");
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.input, "/model");
+    }
+
+    #[test]
+    fn a_slash_command_never_sends_a_prompt() {
+        for text in ["/mode", "/model", "/mo", "/", "/nothing", "/fast"] {
+            let mut app = with_commands();
+            type_text(&mut app, text);
+            for _ in 0..3 {
+                let action = press(&mut app, KeyCode::Enter);
+                assert!(!matches!(action, Action::Prompt(_)), "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_unknown_slash_command_does_nothing_and_keeps_the_text() {
+        let mut app = with_commands();
+        type_text(&mut app, "/nothing");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert_eq!(app.input, "/nothing");
+        assert!(app.menu.is_none());
+    }
+
+    #[test]
+    fn escape_closes_the_list_without_cancelling_the_turn() {
+        let mut app = with_commands();
+        app.transcript.in_flight = true;
+        type_text(&mut app, "/m");
+        assert!(!app.popup().is_empty());
+        assert!(matches!(press(&mut app, KeyCode::Esc), Action::None));
+        assert!(app.popup().is_empty());
+        assert!(matches!(press(&mut app, KeyCode::Esc), Action::Cancel));
+    }
+
+    #[test]
+    fn the_model_command_does_nothing_while_the_agent_works() {
+        let mut app = with_commands();
+        app.transcript.in_flight = true;
+        type_text(&mut app, "/model");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.menu.is_none());
+    }
+
+    #[test]
+    fn a_double_slash_command_asks_before_sending_and_enter_sends_it_as_a_prompt() {
+        let mut app = with_commands();
+        type_text(&mut app, "//compact");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        let confirm = app.confirm.as_ref().unwrap();
+        assert_eq!(confirm.text(), "/compact");
+        assert_eq!(
+            confirm.description,
+            "Summarise the conversation to free context"
+        );
+        let Action::Prompt(text) = press(&mut app, KeyCode::Enter) else {
+            panic!("expected a prompt");
+        };
+        assert_eq!(text, "/compact");
+        assert!(app.confirm.is_none());
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn the_input_after_an_agent_commands_name_goes_into_the_prompt_it_sends() {
+        let mut app = with_commands();
+        type_text(&mut app, "//review the parser");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.confirm.as_ref().unwrap().text(), "/review the parser");
+        let Action::Prompt(text) = press(&mut app, KeyCode::Enter) else {
+            panic!("expected a prompt");
+        };
+        assert_eq!(text, "/review the parser");
+    }
+
+    #[test]
+    fn escape_backs_out_of_the_confirm_and_keeps_the_text() {
+        let mut app = with_commands();
+        type_text(&mut app, "//compact");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.confirm.is_none());
+        assert_eq!(app.input, "//compact");
+    }
+
+    #[test]
+    fn an_agent_command_is_not_sent_while_the_agent_works() {
+        let mut app = with_commands();
+        app.transcript.in_flight = true;
+        type_text(&mut app, "//compact");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.confirm.is_none());
+    }
+
+    #[test]
+    fn an_unknown_agent_command_is_not_sent() {
+        let mut app = with_commands();
+        type_text(&mut app, "//nothing");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert!(app.confirm.is_none());
     }
 }
