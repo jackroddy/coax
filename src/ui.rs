@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use agent_client_protocol::v1::schema::{
     PlanEntryStatus, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
 };
@@ -215,12 +217,34 @@ fn screen_style(style: cmr::Style) -> Style {
 fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     let width = area.width.max(4) as usize;
     let mut lines: Vec<Line> = Vec::new();
-    for (index, entry) in app.transcript.entries.iter().enumerate() {
-        match entry {
+    let entries = &app.transcript.entries;
+    let mut index = 0;
+    while index < entries.len() {
+        match &entries[index] {
+            Entry::User(text) => wrapped("› ", "  ", focus(), text, width, bold(), &mut lines),
             Entry::Agent(text) => lines.extend_from_slice(app.rendered.agent(index, text, width)),
-            entry => entry_lines(entry, width, &mut lines),
+            Entry::Thought(text) => wrapped("│ ", "│ ", dim(), text, width, dim(), &mut lines),
+            Entry::Tool(_) => {
+                let run: Vec<&Tool> = entries[index..]
+                    .iter()
+                    .map_while(|entry| match entry {
+                        Entry::Tool(tool) => Some(tool),
+                        _ => None,
+                    })
+                    .collect();
+                tool_run(&run, &app.cwd, width, &mut lines);
+                index += run.len() - 1;
+            }
+            Entry::Permission { title, choice } => {
+                lines.push(Line::from(format!("? {title} -> {choice}")).style(dim()));
+            }
+            Entry::Notice(text) => {
+                lines
+                    .push(Line::from(format!("! {text}")).style(Style::new().fg(palette::WORKING)));
+            }
         }
         lines.push(Line::default());
+        index += 1;
     }
     let height = area.height as usize;
     let max_scroll = lines.len().saturating_sub(height);
@@ -230,38 +254,96 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(visible), area);
 }
 
-fn entry_lines(entry: &Entry, width: usize, out: &mut Vec<Line>) {
-    match entry {
-        Entry::User(text) => wrapped("> ", text, width, bold(), out),
-        Entry::Agent(text) => out.extend(markdown(text, width)),
-        Entry::Thought(text) => wrapped("~ ", text, width, dim(), out),
-        Entry::Tool(tool) => tool_lines(tool, out),
-        Entry::Permission { title, choice } => {
-            out.push(Line::from(format!("? {title} -> {choice}")).style(dim()));
-        }
-        Entry::Notice(text) => {
-            out.push(Line::from(format!("! {text}")).style(Style::default().fg(Color::Yellow)));
-        }
-    }
-}
-
-fn wrapped(prefix: &str, text: &str, width: usize, style: Style, out: &mut Vec<Line>) {
-    let inner = width.saturating_sub(prefix.len()).max(1);
-    let indent = " ".repeat(prefix.len());
-    for (i, paragraph) in text.split('\n').enumerate() {
+fn wrapped(
+    first: &str,
+    rest: &str,
+    lead_style: Style,
+    text: &str,
+    width: usize,
+    style: Style,
+    out: &mut Vec<Line>,
+) {
+    let inner = width.saturating_sub(first.chars().count()).max(1);
+    let mut lead = first;
+    for paragraph in text.split('\n') {
         let pieces = textwrap::wrap(paragraph, inner);
         if pieces.is_empty() {
-            out.push(Line::default());
+            out.push(Line::from(Span::styled(lead.to_string(), lead_style)));
+            lead = rest;
         }
-        for (j, piece) in pieces.iter().enumerate() {
-            let lead = if i == 0 && j == 0 { prefix } else { &indent };
-            out.push(Line::from(format!("{lead}{piece}")).style(style));
+        for piece in pieces {
+            out.push(Line::from(vec![
+                Span::styled(lead.to_string(), lead_style),
+                Span::styled(piece.into_owned(), style),
+            ]));
+            lead = rest;
         }
     }
 }
 
-fn tool_lines(tool: &Tool, out: &mut Vec<Line>) {
-    let kind = match tool.kind {
+fn tool_run(tools: &[&Tool], cwd: &Path, width: usize, out: &mut Vec<Line>) {
+    let noun = if tools.len() == 1 { "tool" } else { "tools" };
+    out.push(Line::from(vec![
+        Span::styled("✦ ", Style::new().fg(palette::AGENT)),
+        Span::styled(format!("{} {noun}", tools.len()), dim()),
+    ]));
+    for (n, tool) in tools.iter().enumerate() {
+        let branch = if n + 1 == tools.len() {
+            "└─ "
+        } else {
+            "├─ "
+        };
+        out.push(tool_line(tool, branch, cwd, width));
+    }
+}
+
+fn tool_line(tool: &Tool, branch: &str, cwd: &Path, width: usize) -> Line<'static> {
+    let (glyph, glyph_style) = match tool.status {
+        ToolCallStatus::InProgress => ("◐", Style::new().fg(palette::WORKING)),
+        ToolCallStatus::Completed => ("●", Style::new().fg(palette::DONE)),
+        ToolCallStatus::Failed => ("●", Style::new().fg(palette::ALARM)),
+        _ => ("○", dim()),
+    };
+    let head = vec![
+        Span::styled(format!("  {branch}"), dim()),
+        Span::styled(format!("{glyph} "), glyph_style),
+        Span::styled(format!("{:<6} ", kind_word(tool.kind)), dim()),
+    ];
+    let room = width.saturating_sub(head.iter().map(Span::width).sum());
+
+    let mut diff = Vec::new();
+    let (added, removed) = diff_size(tool);
+    if added + removed > 0 {
+        diff.push(Span::styled(
+            format!("  +{added}"),
+            Style::new().fg(palette::DONE),
+        ));
+        diff.push(Span::styled(
+            format!(" −{removed}"),
+            Style::new().fg(palette::ALARM),
+        ));
+    }
+    let diff_width: usize = diff.iter().map(Span::width).sum();
+    let title_width = tool.title.chars().count();
+
+    // the title keeps its room before the location does
+    let place = location(tool, cwd)
+        .map(|place| format!("  {place}"))
+        .filter(|place| title_width + place.chars().count() + diff_width <= room);
+    let place_width = place.as_ref().map_or(0, |place| place.chars().count());
+    let title = cut(&tool.title, room.saturating_sub(place_width + diff_width));
+
+    let mut spans = head;
+    spans.push(Span::raw(title));
+    if let Some(place) = place {
+        spans.push(Span::styled(place, dim()));
+    }
+    spans.extend(diff);
+    Line::from(spans)
+}
+
+fn kind_word(kind: ToolKind) -> &'static str {
+    match kind {
         ToolKind::Read => "read",
         ToolKind::Edit => "edit",
         ToolKind::Delete => "delete",
@@ -272,38 +354,47 @@ fn tool_lines(tool: &Tool, out: &mut Vec<Line>) {
         ToolKind::Fetch => "fetch",
         ToolKind::SwitchMode => "mode",
         _ => "tool",
-    };
-    let (status, color) = match tool.status {
-        ToolCallStatus::Pending => ("pending", Color::DarkGray),
-        ToolCallStatus::InProgress => ("running", Color::Cyan),
-        ToolCallStatus::Completed => ("done", Color::Green),
-        ToolCallStatus::Failed => ("failed", Color::Red),
-        _ => ("unknown", Color::DarkGray),
-    };
-    out.push(Line::from(vec![
-        Span::styled(format!("* {kind:<6} "), dim()),
-        Span::raw(tool.title.clone()),
-        Span::styled(format!("  {status}"), Style::default().fg(color)),
-    ]));
-    for location in &tool.locations {
-        let place = match location.line {
-            Some(line) => format!("    {}:{line}", location.path.display()),
-            None => format!("    {}", location.path.display()),
-        };
-        out.push(Line::from(place).style(dim()));
     }
+}
+
+fn location(tool: &Tool, cwd: &Path) -> Option<String> {
+    let location = tool.locations.first()?;
+    let path = location.path.strip_prefix(cwd).unwrap_or(&location.path);
+    let path = path.display().to_string();
+    if tool.title.contains(&path) {
+        return None;
+    }
+    Some(match location.line {
+        Some(line) => format!("{path}:{line}"),
+        None => path,
+    })
+}
+
+fn diff_size(tool: &Tool) -> (usize, usize) {
+    let mut added = 0;
+    let mut removed = 0;
     for content in &tool.content {
         if let ToolCallContent::Diff(diff) = content {
-            let added = diff.new_text.lines().count();
-            let removed = diff
+            added += diff.new_text.lines().count();
+            removed += diff
                 .old_text
                 .as_ref()
-                .map(|text| text.lines().count())
-                .unwrap_or(0);
-            let summary = format!("    {} +{added} -{removed}", diff.path.display());
-            out.push(Line::from(summary).style(dim()));
+                .map_or(0, |text| text.lines().count());
         }
     }
+    (added, removed)
+}
+
+fn cut(text: &str, room: usize) -> String {
+    if text.chars().count() <= room {
+        return text.to_string();
+    }
+    if room == 0 {
+        return String::new();
+    }
+    let mut out: String = text.chars().take(room - 1).collect();
+    out.push('…');
+    out
 }
 
 fn draw_permission(frame: &mut Frame, area: Rect, app: &App) {
@@ -337,12 +428,18 @@ fn dim() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 
+fn focus() -> Style {
+    Style::new().fg(palette::FOCUS)
+}
+
 fn bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
 }
 
 #[cfg(test)]
 mod tests {
+    use agent_client_protocol::v1::schema::ToolCallLocation;
+
     use super::*;
 
     fn plain(lines: &[Line]) -> Vec<String> {
@@ -364,6 +461,44 @@ mod tests {
             plain(rendered.agent(0, "one two three", 8)),
             ["one two", "three"]
         );
+    }
+
+    fn tool(title: &str, path: &str, line: Option<u32>) -> Tool {
+        let mut location = ToolCallLocation::new(path);
+        location.line = line;
+        Tool {
+            id: "c1".into(),
+            title: title.to_string(),
+            kind: ToolKind::Read,
+            status: ToolCallStatus::Completed,
+            locations: vec![location],
+            content: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_tool_title_too_long_for_the_pane_is_cut_with_an_ellipsis() {
+        let tool = tool("Read a/very/long/path/to/some/file.rs", "/work/x.rs", None);
+        let line = tool_line(&tool, "└─ ", Path::new("/work"), 30).to_string();
+        assert_eq!(line, "  └─ ● read   Read a/very/lon…");
+        assert_eq!(line.chars().count(), 30);
+    }
+
+    #[test]
+    fn the_location_is_dropped_when_the_title_already_names_the_file() {
+        let shown = tool("Read src/main.rs", "/work/src/main.rs", Some(3));
+        let line = tool_line(&shown, "└─ ", Path::new("/work"), 80).to_string();
+        assert_eq!(line, "  └─ ● read   Read src/main.rs");
+        let other = tool("Read the entry point", "/work/src/main.rs", Some(3));
+        let line = tool_line(&other, "└─ ", Path::new("/work"), 80).to_string();
+        assert_eq!(line, "  └─ ● read   Read the entry point  src/main.rs:3");
+    }
+
+    #[test]
+    fn the_location_gives_way_before_the_title_is_cut() {
+        let tool = tool("Read the entry point", "/work/src/main.rs", Some(3));
+        let line = tool_line(&tool, "└─ ", Path::new("/work"), 40).to_string();
+        assert_eq!(line, "  └─ ● read   Read the entry point");
     }
 
     #[test]

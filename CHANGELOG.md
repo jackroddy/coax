@@ -31,6 +31,11 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- Your prompts start with `›`, and the agent's thoughts sit behind a dim `│`
+  gutter. Consecutive tool calls group under one `✦ N tools` line, with one
+  line per call: a status glyph, the kind, the title, and the size of any
+  edit. A line too long for the pane is cut with `…`, so the status stays
+  visible.
 - The screen has a header and a footer in place of the reverse-video status
   bar. The header names the agent by its config entry when it has one. It
   also shows whether the agent is working, decade when connected, and the

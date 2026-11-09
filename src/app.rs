@@ -1,4 +1,5 @@
 use std::io;
+use std::path::PathBuf;
 
 use agent_client_protocol::Error;
 use agent_client_protocol::v1::schema::{
@@ -23,6 +24,7 @@ pub struct App {
     pub decade_pane: Option<String>,
     pub permission: Option<Permission>,
     pub rendered: ui::Rendered,
+    pub cwd: PathBuf,
     auto_allow: bool,
 }
 
@@ -175,7 +177,7 @@ pub async fn run(
         .or(init.agent_info.map(|info| info.name))
         .unwrap_or_else(|| "agent".to_string());
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
-    let session = link.new_session(cwd).await?.session_id;
+    let session = link.new_session(cwd.clone()).await?.session_id;
 
     let (decade, mut decade_messages) = connect_decade();
     let mut app = App {
@@ -187,6 +189,7 @@ pub async fn run(
         decade_pane: decade.as_ref().map(|_| String::new()),
         permission: None,
         rendered: ui::Rendered::default(),
+        cwd,
         auto_allow,
     };
     if let Some(text) = first_prompt {
