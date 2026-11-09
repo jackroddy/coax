@@ -902,6 +902,10 @@ impl App {
             }
             let working = self.transcript.in_flight && self.permission.is_none();
             if exit == ExitKey::CtrlC && working {
+                self.guard = Some(Guard {
+                    key: exit,
+                    until: now + GUARD_WINDOW,
+                });
                 return Action::Cancel;
             }
             if exit == ExitKey::CtrlC && !self.input.is_empty() {
@@ -1971,11 +1975,25 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_while_the_agent_is_working_cancels_the_turn() {
+    fn ctrl_c_while_the_agent_is_working_cancels_the_turn_and_arms_the_guard() {
         let mut app = app();
         app.transcript.in_flight = true;
-        assert!(matches!(app.key(ctrl('c'), Instant::now()), Action::Cancel));
-        assert!(app.guard.is_none());
+        let start = Instant::now();
+        assert!(matches!(app.key(ctrl('c'), start), Action::Cancel));
+        assert!(app.guard.is_some());
+
+        // an agent that ignores the cancel leaves the turn in flight
+        assert!(matches!(app.key(ctrl('c'), start), Action::Quit));
+    }
+
+    #[test]
+    fn a_second_ctrl_c_after_the_window_cancels_again_while_the_agent_works() {
+        let mut app = app();
+        app.transcript.in_flight = true;
+        let start = Instant::now();
+        app.key(ctrl('c'), start);
+        let later = start + GUARD_WINDOW + Duration::from_millis(1);
+        assert!(matches!(app.key(ctrl('c'), later), Action::Cancel));
     }
 
     #[test]

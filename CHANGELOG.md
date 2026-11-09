@@ -203,6 +203,9 @@ command line, the keys, and the scenario format the fake agent reads.
 - A second permission request no longer cancels the first. The requests queue,
   the box shows the oldest with `N more` under it, and the next appears when
   one is answered. A box closes, as cancelled, when its turn ends.
+- Ctrl+c while the agent works cancels the turn and also arms the exit guard,
+  so a second Ctrl+c within 1.5 seconds quits when the agent ignores the
+  cancel.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The
