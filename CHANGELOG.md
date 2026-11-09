@@ -25,6 +25,13 @@ command line, the keys, and the scenario format the fake agent reads.
   and a shaded background.
 - Started inside a decade pane, coax joins the decade socket. The status
   line says when it is connected.
+- coax names its agent to decade in hello (the agent's name, its version and
+  the session id) and reports on it. The state is `working` during a turn,
+  `attention` with the tool call's title as the question while a permission
+  request waits, `done` after a turn that ended normally and `idle` after a
+  cancel. The activity is the title of the running tool call. The model,
+  context use, session tokens and cost go along when they change. coax sends
+  `ended` when it quits or the agent exits.
 - Permission requests from the agent open a box over the conversation, with
   the options numbered; a digit answers, Esc cancels. The answer stays in
   the conversation as a dim `⎿` line. `--allow` answers every

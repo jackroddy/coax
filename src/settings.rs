@@ -126,6 +126,14 @@ impl Settings {
         });
     }
 
+    /// The model setting's current value as the header shows it.
+    pub fn model(&self) -> Option<String> {
+        self.settings()
+            .into_iter()
+            .find(|setting| setting.model)
+            .map(|setting| setting.label)
+    }
+
     /// The settings in header order: mode, model, thought level, model
     /// config, then the rest in the order the agent sent them.
     pub fn settings(&self) -> Vec<Setting> {

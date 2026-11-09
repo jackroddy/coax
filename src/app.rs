@@ -15,7 +15,7 @@ use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event as TermEvent, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use decade_channel::{Channel, Message};
+use decade_channel::Message;
 use ratatui::layout::{Position, Rect};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
@@ -26,6 +26,7 @@ use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
 use crate::prompt;
+use crate::report::{self, Reporter, Snapshot};
 use crate::session::{Entry, Transcript};
 use crate::settings::{Control, Setting, Settings};
 use crate::ui;
@@ -1196,6 +1197,11 @@ async fn session(
         auto_allow,
         mut keys,
     } = opening;
+    let version = init
+        .agent_info
+        .as_ref()
+        .map(|info| info.version.clone())
+        .unwrap_or_default();
     let agent = name
         .or(init.agent_info.map(|info| info.name))
         .unwrap_or_else(|| "agent".to_string());
@@ -1229,7 +1235,15 @@ async fn session(
         }
     };
 
-    let (decade, mut decade_messages) = connect_decade();
+    let identity = decade_channel::Agent {
+        name: agent.clone(),
+        version,
+        session: session.0.to_string(),
+    };
+    let (mut reporter, mut decade_messages) = match report::connect_env(&identity) {
+        Some((reporter, messages)) => (Some(reporter), Some(messages)),
+        None => (None, None),
+    };
     let mut app = App {
         transcript: Transcript::default(),
         input: String::new(),
@@ -1267,7 +1281,7 @@ async fn session(
         lines_seen: 0,
         agent,
         session,
-        decade_pane: decade.as_ref().map(|_| String::new()),
+        decade_pane: reporter.as_ref().map(|_| String::new()),
         permission: None,
         queued: VecDeque::new(),
         rendered: ui::Rendered::default(),
@@ -1286,11 +1300,12 @@ async fn session(
     let mut spin = tokio::time::interval(SPIN_INTERVAL);
     spin.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut redraw = true;
-    loop {
+    let result = loop {
         if redraw && let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
             break Err(Error::into_internal_error(error));
         }
         redraw = true;
+        report_to_decade(&mut reporter, &mut app);
         let expiry = app.guard.map(|guard| guard.until);
         let copied_until = app.copied.map(|(_, until)| until);
         let action = tokio::select! {
@@ -1363,6 +1378,31 @@ async fn session(
         if let Err(error) = outcome {
             break Err(error);
         }
+    };
+    if let Some(reporter) = reporter {
+        reporter.end();
+    }
+    result
+}
+
+/// Tell decade what changed about the agent. A failed send drops the channel
+/// and the session carries on without it.
+fn report_to_decade(reporter: &mut Option<Reporter>, app: &mut App) {
+    if app.exited
+        && let Some(reporter) = reporter.take()
+    {
+        reporter.end();
+        return;
+    }
+    let Some(open) = reporter else {
+        return;
+    };
+    let question = app.permission.as_ref().map(|p| p.title.as_str());
+    let now = Snapshot::of(&app.transcript, question, &app.settings);
+    if open.send(now).is_err() {
+        *reporter = None;
+        app.decade_pane = None;
+        app.transcript.notice("decade went away".to_string());
     }
 }
 
@@ -1418,23 +1458,6 @@ fn leave_input_modes() {
 fn restore() {
     leave_input_modes();
     ratatui::restore();
-}
-
-fn connect_decade() -> (Option<Channel>, Option<UnboundedReceiver<Message>>) {
-    match Channel::from_env("coax", &[], &[], None) {
-        Some(Ok((channel, messages))) => {
-            let (tx, rx) = mpsc::unbounded_channel();
-            std::thread::spawn(move || {
-                for message in messages {
-                    if tx.send(message).is_err() {
-                        return;
-                    }
-                }
-            });
-            (Some(channel), Some(rx))
-        }
-        Some(Err(_)) | None => (None, None),
-    }
 }
 
 /// Set while a child process owns the terminal, so the key thread leaves

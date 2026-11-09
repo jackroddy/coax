@@ -11,6 +11,7 @@ pub mod header;
 pub mod palette;
 pub mod picker;
 pub mod prompt;
+pub mod report;
 pub mod scenario;
 pub mod session;
 pub mod settings;
