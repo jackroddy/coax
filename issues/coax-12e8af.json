@@ -1,7 +1,7 @@
 {
   "id": "coax-12e8af",
-  "title": "A coax restart resumes the conversation",
-  "body": "Quitting coax ends the ACP session; the conversation is gone from the screen\non the next start.\n\n## Proposal\n\nACP's session/load and session/resume, when the agent advertises them,\nwith the session id kept in a file under the project's directory so coax\ncan reopen the last session. The transcript is rebuilt from the replayed\nupdates through `Transcript::apply`, which already handles them.",
+  "title": "A coax launch lists earlier sessions and resumes one",
+  "body": "Quitting coax ends the ACP session. On the next start the conversation is gone from the screen. A bare `coax` opens a picker over the configured agents (`src/picker.rs`), and every choice there starts a new session.\n\n## Proposal\n\nA bare `coax` starts every configured agent in the background and initializes each one. For each agent that advertises `load_session` and the `session/list` capability, coax calls `session/list` with the current folder as `cwd` and follows `nextCursor`. Each agent runs on its own local task (`src/agents.rs`) that holds its `Link`, reports its sessions to the picker, and then waits to be told to open or to stop.\n\nThe picker shows a `sessions` pane above the `agents` pane. A row has the title, the agent's name and the age against the right edge, newest first across all agents. j and k move through the sessions and then the agents as one list, and the cursor starts on the default agent. The pane is hidden when there are no sessions. The picker waits up to 300 ms for the lists before its first draw, and a slower agent fills in afterwards.\n\nEnter on a session sends `session/load`, not `session/resume`, on that agent's running process, with the same `mcp_servers` as `new_session`. The agent replays the history as session updates. `app::run` drains them through `Transcript::apply` and the session continues normally. Enter on an agent starts a new session on its running process. Every other agent process is stopped.\n\nAn agent that fails to start, to initialize or to list contributes no sessions. Its row stays, and choosing it fails with the error as it does today.\n\nThe fake agent reads an optional top-level `sessions` array from its scenario (`id`, `title`, `updated_at`, `history`). With it, the agent advertises `session/list` and `session/load`, and replays a session's history when it is loaded. `scenarios/resume.json` is the example.\n\n## Rejected\n\n- CLI flags such as `-c`, `-r` or a session id. A session is chosen in the picker.\n- `session/resume`. It continues a session without replaying its history, so the screen would start empty.\n- Switching sessions from inside a running conversation. `CLAUDE.md` says a session is chosen in the picker at launch, and nowhere else.\n- Keeping the last session id in a file under the project. The agent already knows its sessions, and `session/list` asks it.\n\n## Cost\n\n`--agent` and a raw command start a new session without listing, as before. The scenario format gains the `sessions` block, which changes the format, so it is noted in the changelog.",
   "type": "feature",
   "status": "open",
   "priority": 3,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:28:08.276907881Z",
-  "updated_at": "2026-11-07T05:28:08.276907881Z",
+  "updated_at": "2026-11-09T08:00:59.335691622Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
