@@ -209,6 +209,9 @@ command line, the keys, and the scenario format the fake agent reads.
 - The agent's answer to a setting change closes or marks only the menu that
   asked for it. A late answer used to close an unrelated menu or write its
   error into it.
+- Picker boxes under the status line widen to fit their longest row, up to the
+  screen width less four columns. They stopped at 60 columns and cut a model's
+  description.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

@@ -3078,7 +3078,18 @@ mod tests {
         let screen = header_rows_all(&mut app, 100);
         assert!(screen.contains('…'));
         let area = app.menu_area.expect("the box is drawn");
-        assert!(area.width <= 60);
+        assert_eq!(area.width, 96);
+    }
+
+    #[test]
+    fn a_menu_widens_to_fit_its_longest_row_up_to_four_columns_short_of_the_screen() {
+        let mut app = app();
+        let long = "a".repeat(80);
+        send(&mut app, &long);
+        open_history(&mut app);
+        let screen = header_rows_all(&mut app, 120);
+        assert!(screen.contains(&long), "{screen}");
+        assert_eq!(app.menu_area.unwrap().width, 80 + 2 + 4);
     }
 
     #[test]

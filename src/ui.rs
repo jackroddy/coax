@@ -1573,7 +1573,7 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
         .unwrap_or(0)
         .max(title.width() + 2)
         + 4;
-    let width = (wanted as u16).min(60).min(screen.width);
+    let width = (wanted as u16).min(screen.width.saturating_sub(4).max(24).min(screen.width));
     let warning = menu.confirm.as_ref().and_then(|value| match &menu.target {
         MenuTarget::Setting(id) => {
             let setting = settings.iter().find(|setting| setting.id == *id)?;
