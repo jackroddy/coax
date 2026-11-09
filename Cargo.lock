@@ -357,6 +357,7 @@ dependencies = [
  "textwrap",
  "tokio",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]

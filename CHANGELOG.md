@@ -147,6 +147,13 @@ command line, the keys, and the scenario format the fake agent reads.
 - Enter on a `/name` or `//name` that matches no command leaves the text in the
   prompt and shows a dim `no command /name` (or `no agent command //name`)
   in the rule under the prompt until the next key.
+- The prompt has a cursor, and the terminal cursor is drawn at it, on
+  wrapped rows too. Left and Right move by a character. Alt+Left, Alt+Right,
+  Ctrl+Left, Ctrl+Right, Alt+b and Alt+f move by a word. Ctrl+a and Ctrl+e go
+  to the start and end of the line, and Home and End to the start and end of
+  the prompt. Delete removes the character after the cursor, Ctrl+w the word
+  before it, and Ctrl+k everything from the cursor to the end of the line.
+  Ctrl+u still clears the whole prompt.
 
 ### Changed
 
@@ -180,6 +187,8 @@ command line, the keys, and the scenario format the fake agent reads.
   PageDown move a full page, and End jumps to the bottom. While scrolled up,
   new output leaves the view where it is and the last row says how many lines
   are below.
+- End jumps the conversation to the bottom only while the prompt is empty. With
+  text in the prompt it moves the cursor to the end of the prompt.
 - Agent text is drawn as markdown: headings, lists, tables, rules, inline
   code and fenced code with highlighting.
 - A bare `coax` opens the agent picker in place of printing usage. A flag

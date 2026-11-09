@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use crate::acp::{Applied, Change, Event, Link};
 use crate::clipboard;
 use crate::command::{self, Candidate, Kind};
+use crate::prompt;
 use crate::session::{Entry, Transcript};
 use crate::settings::{Control, Setting, Settings};
 use crate::ui;
@@ -76,6 +77,9 @@ impl Drag {
 pub struct App {
     pub transcript: Transcript,
     pub input: String,
+
+    /// The cursor's byte index into `input`, always on a char boundary.
+    pub cursor: usize,
     pub scroll: usize,
     pub show_plan: bool,
 
@@ -570,7 +574,7 @@ impl App {
         let list = self.popup();
         let entry = match list.get(self.command_cursor.min(list.len().saturating_sub(1))) {
             Some(entry) if self.input.trim_end() != entry.fill.trim_end() => {
-                self.input = entry.fill.clone();
+                self.set_input(entry.fill.clone());
                 self.command_cursor = 0;
                 return Action::None;
             }
@@ -583,7 +587,7 @@ impl App {
         };
         match entry.kind {
             Kind::Coax(index) => {
-                self.input.clear();
+                self.clear_input();
                 let anchor = self
                     .chips
                     .iter()
@@ -627,7 +631,7 @@ impl App {
                     return Action::None;
                 };
                 let text = confirm.text();
-                self.input.clear();
+                self.clear_input();
                 self.transcript.prompt(text.clone());
                 self.scroll = 0;
                 Action::Prompt(text)
@@ -638,6 +642,31 @@ impl App {
             }
             _ => Action::None,
         }
+    }
+
+    fn set_input(&mut self, text: String) {
+        self.cursor = text.len();
+        self.input = text;
+    }
+
+    fn clear_input(&mut self) {
+        self.input.clear();
+        self.cursor = 0;
+    }
+
+    fn insert(&mut self, text: &str) {
+        self.input.insert_str(self.cursor, text);
+        self.cursor += text.len();
+        self.edited();
+    }
+
+    /// Remove the text from `from` to the cursor, or from the cursor to
+    /// `from` when that is later.
+    fn remove_between(&mut self, from: usize) {
+        let (start, end) = (from.min(self.cursor), from.max(self.cursor));
+        self.input.replace_range(start..end, "");
+        self.cursor = start;
+        self.edited();
     }
 
     fn edited(&mut self) {
@@ -747,6 +776,7 @@ impl App {
     /// the exit guard disarms it.
     pub fn key(&mut self, key: KeyEvent, now: Instant) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         self.unknown = None;
         let armed = self.guard.take().filter(|guard| guard.until > now);
         let exit = match key.code {
@@ -763,7 +793,7 @@ impl App {
                 return Action::Cancel;
             }
             if exit == ExitKey::CtrlC && !self.input.is_empty() {
-                self.input.clear();
+                self.clear_input();
                 return Action::None;
             }
             self.guard = Some(Guard {
@@ -813,7 +843,7 @@ impl App {
                 Action::None
             }
             KeyCode::Char('u') if ctrl => {
-                self.input.clear();
+                self.clear_input();
                 self.edited();
                 Action::None
             }
@@ -826,13 +856,65 @@ impl App {
                     return Action::None;
                 }
                 let text = std::mem::take(&mut self.input);
+                self.cursor = 0;
                 self.transcript.prompt(text.clone());
                 self.scroll = 0;
                 Action::Prompt(text)
             }
             KeyCode::Backspace => {
-                self.input.pop();
-                self.edited();
+                self.remove_between(prompt::char_before(&self.input, self.cursor));
+                Action::None
+            }
+            KeyCode::Delete => {
+                self.remove_between(prompt::char_after(&self.input, self.cursor));
+                Action::None
+            }
+            KeyCode::Char('w') if ctrl => {
+                self.remove_between(prompt::word_before(&self.input, self.cursor));
+                Action::None
+            }
+            KeyCode::Char('k') if ctrl => {
+                let mut end = prompt::line_end(&self.input, self.cursor);
+                if end == self.cursor {
+                    end = prompt::char_after(&self.input, end);
+                }
+                self.remove_between(end);
+                Action::None
+            }
+            KeyCode::Left if alt || ctrl => {
+                self.cursor = prompt::word_before(&self.input, self.cursor);
+                Action::None
+            }
+            KeyCode::Char('b') if alt => {
+                self.cursor = prompt::word_before(&self.input, self.cursor);
+                Action::None
+            }
+            KeyCode::Right if alt || ctrl => {
+                self.cursor = prompt::word_after(&self.input, self.cursor);
+                Action::None
+            }
+            KeyCode::Char('f') if alt => {
+                self.cursor = prompt::word_after(&self.input, self.cursor);
+                Action::None
+            }
+            KeyCode::Left => {
+                self.cursor = prompt::char_before(&self.input, self.cursor);
+                Action::None
+            }
+            KeyCode::Right => {
+                self.cursor = prompt::char_after(&self.input, self.cursor);
+                Action::None
+            }
+            KeyCode::Char('a') if ctrl => {
+                self.cursor = prompt::line_start(&self.input, self.cursor);
+                Action::None
+            }
+            KeyCode::Char('e') if ctrl => {
+                self.cursor = prompt::line_end(&self.input, self.cursor);
+                Action::None
+            }
+            KeyCode::Home => {
+                self.cursor = 0;
                 Action::None
             }
             KeyCode::PageUp => {
@@ -843,13 +925,16 @@ impl App {
                 self.scroll = self.scroll.saturating_sub(self.page);
                 Action::None
             }
-            KeyCode::End => {
+            KeyCode::End if self.input.is_empty() => {
                 self.scroll = 0;
                 Action::None
             }
+            KeyCode::End => {
+                self.cursor = self.input.len();
+                Action::None
+            }
             KeyCode::Char(ch) if !ctrl => {
-                self.input.push(ch);
-                self.edited();
+                self.insert(ch.encode_utf8(&mut [0; 4]));
                 Action::None
             }
             _ => Action::None,
@@ -915,6 +1000,7 @@ pub async fn run(
     let mut app = App {
         transcript: Transcript::default(),
         input: String::new(),
+        cursor: 0,
         scroll: 0,
         show_plan: false,
         command_cursor: 0,
@@ -1082,6 +1168,7 @@ mod tests {
         App {
             transcript: Transcript::default(),
             input: String::new(),
+            cursor: 0,
             scroll: 0,
             show_plan: false,
             command_cursor: 0,
@@ -2296,5 +2383,142 @@ mod tests {
         type_text(&mut app, "//nothing");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
         assert!(app.confirm.is_none());
+    }
+
+    fn chord(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+        app.key(KeyEvent::new(code, modifiers), Instant::now());
+    }
+
+    fn with_input(text: &str) -> App {
+        let mut app = app();
+        app.set_input(text.to_string());
+        app
+    }
+
+    #[test]
+    fn typing_inserts_at_the_cursor_and_moves_it_on() {
+        let mut app = with_input("ac");
+        chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        type_text(&mut app, "b");
+        assert_eq!(app.input, "abc");
+        assert_eq!(app.cursor, 2);
+    }
+
+    #[test]
+    fn left_and_right_step_over_whole_multibyte_chars() {
+        let mut app = with_input("a日😀");
+        chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 4);
+        chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 1);
+        type_text(&mut app, "é");
+        assert_eq!(app.input, "aé日😀");
+        chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 6);
+        chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(app.cursor, app.input.len());
+    }
+
+    #[test]
+    fn backspace_and_delete_remove_whole_chars_around_the_cursor() {
+        let mut app = with_input("a日b");
+        chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.input, "ab");
+        assert_eq!(app.cursor, 1);
+        chord(&mut app, KeyCode::Delete, KeyModifiers::NONE);
+        assert_eq!(app.input, "a");
+        chord(&mut app, KeyCode::Delete, KeyModifiers::NONE);
+        assert_eq!(app.input, "a");
+        chord(&mut app, KeyCode::Home, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(app.input, "a");
+    }
+
+    #[test]
+    fn alt_arrows_and_alt_b_f_jump_by_words() {
+        let mut app = with_input("one 日本 three");
+        chord(&mut app, KeyCode::Left, KeyModifiers::ALT);
+        assert_eq!(app.cursor, 11);
+        chord(&mut app, KeyCode::Char('b'), KeyModifiers::ALT);
+        assert_eq!(app.cursor, 4);
+        chord(&mut app, KeyCode::Right, KeyModifiers::ALT);
+        assert_eq!(app.cursor, 10);
+        chord(&mut app, KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(app.cursor, app.input.len());
+        assert_eq!(app.input, "one 日本 three");
+    }
+
+    #[test]
+    fn ctrl_a_and_ctrl_e_go_to_the_ends_of_the_line() {
+        let mut app = with_input("日本");
+        chord(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert_eq!(app.cursor, 0);
+        chord(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert_eq!(app.cursor, 6);
+    }
+
+    #[test]
+    fn home_and_end_go_to_the_ends_of_a_prompt_with_text() {
+        let mut app = with_input("hello");
+        chord(&mut app, KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 0);
+        chord(&mut app, KeyCode::End, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 5);
+    }
+
+    #[test]
+    fn end_on_an_empty_prompt_still_scrolls_the_conversation_to_the_bottom() {
+        let mut app = app();
+        app.scroll = 7;
+        chord(&mut app, KeyCode::End, KeyModifiers::NONE);
+        assert_eq!(app.scroll, 0);
+        let mut app = with_input("text");
+        app.scroll = 7;
+        chord(&mut app, KeyCode::End, KeyModifiers::NONE);
+        assert_eq!(app.scroll, 7);
+    }
+
+    #[test]
+    fn ctrl_w_deletes_the_word_before_the_cursor() {
+        let mut app = with_input("keep 日本語 tail");
+        for _ in 0..5 {
+            chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        }
+        chord(&mut app, KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, "keep  tail");
+        assert_eq!(app.cursor, 5);
+        chord(&mut app, KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, " tail");
+        assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn ctrl_k_deletes_from_the_cursor_to_the_end() {
+        let mut app = with_input("日本語 tail");
+        chord(&mut app, KeyCode::Home, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, "日");
+        assert_eq!(app.cursor, 3);
+    }
+
+    #[test]
+    fn ctrl_u_still_clears_the_whole_prompt_wherever_the_cursor_is() {
+        let mut app = with_input("日本語");
+        chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn sending_a_prompt_resets_the_cursor() {
+        let mut app = with_input("hi");
+        chord(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 0);
+        type_text(&mut app, "x");
+        assert_eq!(app.input, "x");
     }
 }

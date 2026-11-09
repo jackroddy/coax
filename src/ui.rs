@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::Path;
 use std::time::Instant;
 
@@ -25,6 +26,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.buffer_mut().set_style(area, foreground);
     let input = input_view(
         &app.input,
+        app.cursor,
         (area.width as usize).saturating_sub(PROMPT_LEAD.len()),
         (area.height / 2) as usize,
     );
@@ -1378,15 +1380,21 @@ impl InputView {
     }
 }
 
-fn input_view(text: &str, width: usize, max_rows: usize) -> InputView {
-    let all = wrap_input(text, width);
+fn input_view(text: &str, cursor: usize, width: usize, max_rows: usize) -> InputView {
+    let all = wrap_rows(text, width);
     let shown = max_rows.max(PROMPT_ROWS);
-    let skipped = all.len().saturating_sub(shown);
-    let rows = all[skipped..].to_vec();
-    let last = rows.last().map_or(0, |row| row.chars().count());
+    let cursor = cursor.min(text.len());
+    let cursor_row = all.iter().rposition(|row| row.start <= cursor).unwrap_or(0);
+    let skipped = all.len().saturating_sub(shown).min(cursor_row);
+    let end = (skipped + shown).min(all.len());
+    let rows = all[skipped..end]
+        .iter()
+        .map(|row| text[row.clone()].to_string())
+        .collect();
+    let column = text[all[cursor_row].start..cursor].chars().count();
     let cursor = (
-        (PROMPT_LEAD.len() + last) as u16,
-        rows.len().saturating_sub(1) as u16,
+        (PROMPT_LEAD.len() + column) as u16,
+        (cursor_row - skipped) as u16,
     );
     InputView {
         rows,
@@ -1395,33 +1403,45 @@ fn input_view(text: &str, width: usize, max_rows: usize) -> InputView {
     }
 }
 
-/// Break `text` into rows of at most `width` characters at word breaks.
-/// A word longer than a row is split, and the last row is never full, so the
-/// cursor always has a column after the last character.
-fn wrap_input(text: &str, width: usize) -> Vec<String> {
+/// Break `text` into rows of at most `width` characters at word breaks, as
+/// byte ranges of `text`. A word longer than a row is split, and the last
+/// row is never full, so the cursor always has a column after the last
+/// character.
+fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
     let width = width.max(1);
-    let chars: Vec<char> = text.chars().collect();
-    let mut rows = vec![String::new()];
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut rows = Vec::new();
+    let mut start = 0;
     let mut used = 0;
-    for token in chars.chunk_by(|a, b| (*a == ' ') == (*b == ' ')) {
-        let is_space = token[0] == ' ';
+    for token in chars.chunk_by(|a, b| (a.1 == ' ') == (b.1 == ' ')) {
+        let is_space = token[0].1 == ' ';
         if used + token.len() > width && !is_space && used > 0 {
-            rows.push(String::new());
+            rows.push(start..token[0].0);
+            start = token[0].0;
             used = 0;
         }
-        for &ch in token {
+        for &(i, _) in token {
             if used == width {
-                rows.push(String::new());
+                rows.push(start..i);
+                start = i;
                 used = 0;
             }
-            rows.last_mut().unwrap().push(ch);
             used += 1;
         }
     }
+    rows.push(start..text.len());
     if used == width {
-        rows.push(String::new());
+        rows.push(text.len()..text.len());
     }
     rows
+}
+
+#[cfg(test)]
+fn wrap_input(text: &str, width: usize) -> Vec<String> {
+    wrap_rows(text, width)
+        .into_iter()
+        .map(|row| text[row].to_string())
+        .collect()
 }
 
 /// The picker box hanging under a header chip.
@@ -1682,28 +1702,47 @@ mod tests {
 
     #[test]
     fn the_cursor_follows_trailing_spaces() {
-        let view = input_view("hi   ", 20, 10);
+        let view = input_view("hi   ", 5, 20, 10);
         assert_eq!(view.cursor, (2 + 5, 0));
     }
 
     #[test]
     fn a_row_filled_to_the_edge_puts_the_cursor_on_a_new_row() {
-        let view = input_view("abcd", 4, 10);
+        let view = input_view("abcd", 4, 4, 10);
         assert_eq!(view.rows, ["abcd", ""]);
         assert_eq!(view.cursor, (2, 1));
     }
 
     #[test]
+    fn the_cursor_sits_where_the_text_is_edited_across_wrapped_rows() {
+        let view = input_view("one two three", 4, 9, 10);
+        assert_eq!(view.rows, ["one two ", "three"]);
+        assert_eq!(view.cursor, (2 + 4, 0));
+        let view = input_view("one two three", 8, 9, 10);
+        assert_eq!(view.cursor, (2, 1));
+        let view = input_view("one two three", 0, 9, 10);
+        assert_eq!(view.cursor, (2, 0));
+    }
+
+    #[test]
+    fn the_window_follows_a_cursor_above_the_last_rows() {
+        let text = "a ".repeat(30);
+        let view = input_view(&text, 0, 4, 5);
+        assert!(view.starts_here);
+        assert_eq!(view.cursor, (2, 0));
+    }
+
+    #[test]
     fn the_prompt_shows_one_row_for_short_text_and_grows_with_long_text() {
-        assert_eq!(input_view("", 20, 10).height(), 1);
+        assert_eq!(input_view("", 0, 20, 10).height(), 1);
         let long = "word ".repeat(12);
-        assert_eq!(input_view(&long, 20, 10).height(), 4);
+        assert_eq!(input_view(&long, long.len(), 20, 10).height(), 4);
     }
 
     #[test]
     fn past_the_limit_the_prompt_shows_the_last_rows() {
         let text = "a ".repeat(30);
-        let view = input_view(&text, 4, 5);
+        let view = input_view(&text, text.len(), 4, 5);
         assert_eq!(view.rows.len(), 5);
         assert!(!view.starts_here);
         assert_eq!(view.cursor.1, 4);
