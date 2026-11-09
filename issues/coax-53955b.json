@@ -3,7 +3,7 @@
   "title": "The header shows the model, the context in use and the session's tokens",
   "body": "coax's header shows the agent's name, whether it is working, decade when connected, and the session. ACP carries three more things coax drops today in `src/session.rs`:\n\n- Context: a `usage_update` session update, `UsageUpdate { used, size, cost }`, gives the tokens in context against the window size. The Claude adapter sends one after each model reply (`acp-agent.ts:6376` in `agentclientprotocol/claude-agent-acp` v0.101.0).\n- Usage: the response to `session/prompt` can carry `Usage` with input, output, thought, cache-read and cache-write tokens, totaled across the session. `UsageUpdate.cost` can carry a running cost.\n- Model: the session's config options arrive when a session opens. One has the category `model`, with the current value and the choices. A `config_option_update` arrives when it changes.\n\n## Proposal\n\n- The model goes after the agent's name, dim.\n- Context shows as `ctx 81k/200k 41%`, yellow past 80% and red past 95%.\n- Session tokens show as `↑120k ↓9k` when the header has room. Cost shows only when the agent sends one.\n\n## Open\n\n- Nobody has checked whether the Claude adapter fills `Usage` on the prompt response, or sends a cost on a subscription. One small prompt to the real agent answers both.\n- coax-225f94 needs the same model, context, token and cost fields for decade's agent report. The two should share one place in `App` that holds them.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T08:00:49.034336559Z",
-  "updated_at": "2026-11-09T08:00:49.034336559Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T08:14:59.741897537Z",
+  "closed_at": "2026-11-09T08:14:59.741897537Z",
+  "close_reason": "Folded into coax-3ca4b5, which adds the settings chips to the same header work.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "567afeb",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "f8a9596",
+      "branch": "dev"
+    }
   }
 }
