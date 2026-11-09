@@ -3241,4 +3241,17 @@ mod tests {
         assert!(second.try_recv().is_ok());
         assert!(app.permission.is_none());
     }
+
+    #[test]
+    fn a_menu_with_a_warning_fits_a_very_short_screen() {
+        let mut app = in_a_conversation_with_the_model_menu_open();
+        app.key(down(), Instant::now());
+        app.key(enter(), Instant::now());
+        for height in 1..10 {
+            let mut terminal = Terminal::new(TestBackend::new(30, height)).unwrap();
+            terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+            let area = app.menu_area.unwrap();
+            assert!(area.bottom() <= height, "{area:?} on {height} rows");
+        }
+    }
 }

@@ -1606,7 +1606,7 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
         .max(1);
     let first = (menu.cursor + 1).saturating_sub(visible);
     // the box sits on the status line, which has the chips it hangs from
-    let height = (visible + error) as u16 + 2;
+    let height = ((visible + error) as u16 + 2).min(screen.height);
     let area = Rect {
         x: menu.anchor.min(screen.width - width),
         y: screen.height.saturating_sub(1 + height),
