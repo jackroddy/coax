@@ -1,0 +1,28 @@
+{
+  "id": "coax-e55827",
+  "title": "The status line drops the token totals before it hides rarely changed settings",
+  "body": "The status line under the prompt (`src/header.rs` and `src/ui.rs`) shows the settings on the left and the session's numbers on the right. When the line overflows, the right side drops its least important items first: tokens and cost, then the context count, then the plan. Settings move into `⋯` only after that. With the Claude adapter's six settings, whose labels read `fast mode off · ultracode off · agent default`, a 120-column screen loses the `↑ ↓` totals and the cost once the conversation's scroll bar takes its column. The verification run on 2026-11-09 saw this.\n\n## Proposal\n\nSettings that rarely change (`model_config` and uncategorised ones) move into `⋯` before any number on the right is dropped. Mode, model and thought level stay visible as long as anything else does.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T20:32:49.216422416Z",
+  "updated_at": "2026-11-09T20:32:49.216422416Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "95a68b4",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
