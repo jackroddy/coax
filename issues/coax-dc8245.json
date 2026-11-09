@@ -1,0 +1,28 @@
+{
+  "id": "coax-dc8245",
+  "title": "Every header chip has a slash command in the prompt",
+  "body": "Each session setting has a chip in coax's header (coax-3ca4b5). A click opens a picker for that setting, and a choice goes to the agent through `session/set_config_option`, or through `session/set_mode` for agents with only the older modes API. Today the prompt passes everything typed to the agent, slash commands included.\n\n## Proposal\n\n- Every chip gets a slash command typed in the prompt, named after the setting: `/mode`, `/model`, `/effort`, `/fast`, and so on, from the setting's name in the agent's config options.\n- With a value, as in `/model sonnet` or `/mode plan`, coax applies it the way the picker does. The value matches a choice's name or value, ignoring case.\n- With no value, the command opens that chip's picker.\n- The model command keeps the picker's warning about rereading the conversation, and stays refused while the agent works.\n- An unknown value lists the valid choices as a dim line and applies nothing.\n\n## Open\n\n- Name clashes. The agent advertises its own slash commands through `available_commands_update`, and some may share a name with a setting. Which one wins, and how the other stays reachable, is undecided.\n- Whether a setting name with spaces or capitals turns into a command name by lowercasing it and joining it with `-`.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T08:29:02.155804268Z",
+  "updated_at": "2026-11-09T08:29:02.155804268Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4a2d95f",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
