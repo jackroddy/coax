@@ -3,7 +3,7 @@
   "title": "coax names its agent to decade and reports the agent's state",
   "body": "`connect_decade` in `src/app.rs` joins the decade socket with `Channel::from_env(\"coax\", &[], &[], None)`. The last argument is an `Option<&Agent>` that coax leaves empty, so decade does not know an agent runs in coax's pane.\n\ndecade's protocol (`../decade/docs/protocol.md`, the hello section and \"Agents\") lets a client that runs an agent name it in hello as `Agent { name, version, session }`. The client then reports on it with `agent` messages carrying `AgentUpdate` fields: `state` (`idle`, `working`, `done`, `attention`), `activity`, `question`, `model`, `context`, `tokens` and `cost`. decade uses the state to badge workspaces and to raise a desktop notification.\n\ncoax has most of this already. `app::run` connects after the ACP session opens, so the agent's name (`App::agent`), its reported version (`agent_info.version`) and the session ID are all known by then. `Transcript::in_flight` and the permission prompt map onto `working` and `attention`.\n\n## Open\n\n- The decade-channel API was uncommitted and still changing on 2026-11-08. Recheck it before building on it.\n- Which ACP events map to `activity`, and whether coax can fill `model`, `context`, `tokens` or `cost` from anything the adapter sends.\n- Jack has more uses for the socket in mind that have not been discussed yet.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T06:11:13.774421647Z",
-  "updated_at": "2026-11-09T08:14:59.759372071Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T10:18:38.470864209Z",
+  "closed_at": "2026-11-09T10:18:38.470864209Z",
+  "close_reason": "Landed in 78c9cae. hello names the agent, and coax sends state, activity, question, model, context, tokens and cost as they change, then ended on quit or agent exit. src/report.rs holds the snapshot and its diff, and tests/decade.rs pins the lines sent for a turn with a tool call and a permission.",
+  "resolution": "done",
   "notes": [
     {
       "id": "b0456fd8",
@@ -32,6 +32,9 @@
       "commit": "f348667",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "78c9cae",
+      "branch": "dev"
+    }
   }
 }
