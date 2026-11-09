@@ -41,7 +41,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         prompt_area,
         lower_rule,
     ] = Layout::vertical([
-        Constraint::Length(2),
+        Constraint::Length(3),
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
         Constraint::Length(1),

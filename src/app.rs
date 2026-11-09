@@ -1448,10 +1448,10 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    /// The two header rows, one string each.
-    fn header_rows(app: &mut App, width: u16) -> [String; 2] {
+    /// The three header rows, one string each.
+    fn header_rows(app: &mut App, width: u16) -> [String; 3] {
         let buffer = header_buffer(app, width);
-        [0, 1].map(|y| {
+        [0, 1, 2].map(|y| {
             (0..width)
                 .map(|x| buffer[(x, y)].symbol().to_string())
                 .collect()
@@ -1475,7 +1475,7 @@ mod tests {
     }
 
     #[test]
-    fn the_header_shows_the_chips_the_context_and_the_tokens() {
+    fn the_header_shows_the_identity_the_status_and_the_chips() {
         use agent_client_protocol::v1::schema::{Cost, SessionUpdate, Usage, UsageUpdate};
 
         let mut app = with_settings();
@@ -1484,55 +1484,76 @@ mod tests {
         app.settings.apply(&SessionUpdate::UsageUpdate(update));
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
-        let [identity, chips] = header_rows(&mut app, 140);
+        let [identity, chips, rule] = header_rows(&mut app, 140);
+        assert!(identity.starts_with(" coax · claude"), "{identity}");
         assert!(
-            identity.starts_with("\u{e0b6} coax \u{e0b0} claude \u{e0b4}"),
+            identity.ends_with("ctx 28k/1.0M 3% · ↑28k ↓4 · $0.14 · idle "),
             "{identity}"
         );
-        assert!(identity.contains(" ctx 28k/1.0M 3% "), "{identity}");
-        assert!(identity.contains(" ↑28k ↓4 $0.14 "), "{identity}");
-        assert!(identity.contains(" idle "), "{identity}");
         assert!(!identity.contains("session"), "{identity}");
         for label in [" Auto ", " Opus ", " Effort Default ", " Fast off "] {
             assert!(chips.contains(label), "{chips}");
         }
+        assert!(chips.ends_with(" Fast off "), "{chips}");
+        assert_eq!(rule, "─".repeat(140));
         assert_eq!(app.chips.len(), 4);
+    }
+
+    #[test]
+    fn the_header_has_no_round_caps_and_no_background_on_its_first_line() {
+        let mut app = with_settings();
+        let buffer = header_buffer(&mut app, 100);
+        for y in 0..3 {
+            for x in 0..100 {
+                let symbol = buffer[(x, y)].symbol();
+                assert!(!symbol.contains(['\u{e0b4}', '\u{e0b6}']));
+            }
+        }
+        for x in 0..100 {
+            assert_eq!(buffer[(x, 0)].bg, ratatui::style::Color::Reset);
+        }
     }
 
     #[test]
     fn a_narrow_header_keeps_the_mode_chip_and_the_state() {
         let mut app = with_settings();
-        let [identity, chips] = header_rows(&mut app, 30);
+        let [identity, chips, _] = header_rows(&mut app, 30);
         assert!(chips.contains(" Auto "), "{chips}");
-        assert!(chips.contains(" ⋯ "), "{chips}");
-        assert!(identity.contains(" idle "), "{identity}");
+        assert!(chips.ends_with(" ⋯ "), "{chips}");
+        assert!(identity.contains("idle"), "{identity}");
         assert!(!identity.contains("ctx"), "{identity}");
     }
 
     #[test]
-    fn the_header_is_two_lines_with_no_rule_under_them() {
+    fn the_arrow_between_two_chips_on_screen_pairs_their_colours() {
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 100);
-        let third: String = (0..100)
-            .map(|x| buffer[(x, 2)].symbol().to_string())
-            .collect();
-        assert!(!third.contains('─'), "{third}");
+        let (mode, model) = (app.chips[0].area, app.chips[1].area);
+
+        // the arrow sits in the column before a chip's text
+        let arrow = &buffer[(model.x - 1, model.y)];
+        assert_eq!(arrow.symbol(), "\u{e0b2}");
+        assert_eq!(arrow.fg, buffer[(model.x, model.y)].bg);
+        assert_eq!(arrow.bg, buffer[(mode.x, mode.y)].bg);
+        assert_ne!(arrow.fg, arrow.bg);
+        let first = &buffer[(mode.x - 1, mode.y)];
+        assert_eq!(first.symbol(), "\u{e0b2}");
+        assert_eq!(first.fg, buffer[(mode.x, mode.y)].bg);
+        assert_eq!(first.bg, ratatui::style::Color::Reset);
     }
 
     #[test]
-    fn the_separators_on_screen_join_the_colours_of_their_neighbours() {
+    fn the_chip_strip_sits_against_the_right_edge() {
         let mut app = with_settings();
-        let buffer = header_buffer(&mut app, 100);
-        let join = &buffer[(7, 0)];
-        assert_eq!(join.symbol(), "\u{e0b0}");
-        assert_eq!(join.fg, buffer[(2, 0)].bg);
-        assert_eq!(join.bg, buffer[(8, 0)].bg);
+        header_buffer(&mut app, 100);
+        let last = app.chips.last().unwrap().area;
+        assert_eq!(last.right(), 100);
     }
 
     #[test]
     fn the_overflow_chip_replaces_the_chips_that_do_not_fit_on_the_second_line() {
         let mut app = with_settings();
-        let [_, chips] = header_rows(&mut app, 40);
+        let [_, chips, _] = header_rows(&mut app, 40);
         assert!(chips.contains(" ⋯ "), "{chips}");
         assert!(!chips.contains("Fast off"), "{chips}");
         assert_eq!(
@@ -1542,10 +1563,12 @@ mod tests {
     }
 
     #[test]
-    fn a_hovered_chip_turns_its_text_accent_without_an_underline() {
+    fn a_hovered_chips_text_turns_from_black_to_the_foreground_and_stays_bold() {
         let mut app = with_settings();
         header_buffer(&mut app, 140);
         let area = app.chips[1].area;
+        let before = header_buffer(&mut app, 140);
+        assert_eq!(before[(area.x + 1, area.y)].fg, crate::palette::INK);
         app.mouse(wheel(
             MouseEventKind::Moved,
             KeyModifiers::NONE,
@@ -1554,22 +1577,23 @@ mod tests {
         ));
         let buffer = header_buffer(&mut app, 140);
         let cell = &buffer[(area.x + 1, area.y)];
-        assert_eq!(cell.fg, crate::palette::get().accent);
-        assert!(!cell.modifier.contains(ratatui::style::Modifier::UNDERLINED));
+        assert_eq!(cell.fg, crate::palette::get().foreground);
+        assert!(cell.modifier.contains(ratatui::style::Modifier::BOLD));
+        assert_eq!(cell.bg, before[(area.x + 1, area.y)].bg);
         let other = &buffer[(app.chips[2].area.x + 1, area.y)];
-        assert_ne!(other.fg, crate::palette::get().accent);
+        assert_eq!(other.fg, crate::palette::INK);
     }
 
     #[test]
-    fn the_working_segment_shows_the_spinner_frame() {
+    fn the_working_state_shows_the_spinner_frame() {
         let mut app = with_settings();
         app.transcript.prompt("hi".to_string());
         let frame = |app: &mut App| header_rows(app, 100)[0].clone();
-        assert!(frame(&mut app).contains(" ◐ working "));
+        assert!(frame(&mut app).ends_with("◐ working "));
         app.spinner = 1;
-        assert!(frame(&mut app).contains(" ◓ working "));
+        assert!(frame(&mut app).ends_with("◓ working "));
         app.spinner = 5;
-        assert!(frame(&mut app).contains(" ◓ working "));
+        assert!(frame(&mut app).ends_with("◓ working "));
     }
 
     fn click(app: &mut App, column: u16, row: u16) -> Action {

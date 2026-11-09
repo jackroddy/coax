@@ -10,137 +10,99 @@ use crate::palette;
 use crate::settings;
 use crate::ui::dim;
 
-const CAP_LEFT: char = '\u{e0b6}';
-const CAP_RIGHT: char = '\u{e0b4}';
-const SOLID_RIGHT: char = '\u{e0b0}';
-const SOLID_LEFT: char = '\u{e0b2}';
-const THIN_RIGHT: char = '\u{e0b1}';
-const THIN_LEFT: char = '\u{e0b3}';
+/// The powerline arrow that points left.
+const ARROW: &str = "\u{e0b2}";
 
 const OVERFLOW_CHIP: &str = " ⋯ ";
+const SEPARATOR: &str = " · ";
 
 /// The frames of the working spinner.
 pub const SPINNER: [char; 4] = ['◐', '◓', '◑', '◒'];
 
-/// A block of text on a background that the header joins to its neighbours.
-pub struct Segment {
-    /// The text with its padding.
+/// A chip of the strip: a badge on `colour`, which an arrow in `colour`
+/// leads into.
+pub struct Chip {
+    /// The text with one space of padding each side.
     text: String,
+    colour: Color,
     style: Style,
 }
 
-impl Segment {
-    fn new(text: &str, style: Style) -> Segment {
-        Segment {
+impl Chip {
+    fn new(text: &str, colour: Color) -> Chip {
+        let style = Style::new()
+            .bg(colour)
+            .fg(palette::INK)
+            .add_modifier(Modifier::BOLD);
+        Chip {
             text: format!(" {text} "),
+            colour,
             style,
         }
     }
 
-    fn bg(&self) -> Color {
-        self.style.bg.unwrap_or(Color::Reset)
-    }
-
+    /// The columns the arrow and the badge take.
     fn width(&self) -> usize {
-        self.text.chars().count()
+        1 + self.text.chars().count()
     }
 }
 
-/// Which edge a group sits against, which sets the way its separators point.
-#[derive(Clone, Copy)]
-pub enum Edge {
-    Left,
-    Right,
-}
-
-/// The columns taken by a group of segments of these widths: a cap at each
-/// end and a separator between neighbours.
-fn group_width(widths: impl Iterator<Item = usize>) -> usize {
-    let (count, sum) = widths.fold((0, 0), |(count, sum), width| (count + 1, sum + width));
-    if count == 0 { 0 } else { sum + count + 1 }
-}
-
-/// The separator between two neighbours. Its two colours come from the
-/// neighbours, so the blocks meet without a gap. Neighbours on the same
-/// background get a thin line instead.
-fn separator(before: &Segment, after: &Segment, edge: Edge) -> Span<'static> {
-    let (solid, thin) = match edge {
-        Edge::Left => (SOLID_RIGHT, THIN_RIGHT),
-        Edge::Right => (SOLID_LEFT, THIN_LEFT),
-    };
-    if before.bg() == after.bg() {
-        return Span::styled(thin.to_string(), dim().bg(before.bg()));
-    }
-    let style = match edge {
-        Edge::Left => Style::new().fg(before.bg()).bg(after.bg()),
-        Edge::Right => Style::new().fg(after.bg()).bg(before.bg()),
-    };
-    Span::styled(solid.to_string(), style)
-}
-
-/// `segments` as spans: a round cap, the blocks and separators, a round cap.
-pub fn join(segments: &[Segment], edge: Edge) -> Vec<Span<'static>> {
-    let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
-        return Vec::new();
-    };
-    let mut spans = vec![Span::styled(
-        CAP_LEFT.to_string(),
-        Style::new().fg(first.bg()),
-    )];
-    for (n, segment) in segments.iter().enumerate() {
-        if n > 0 {
-            spans.push(separator(&segments[n - 1], segment, edge));
+/// `chips` flowing into one another: each arrow takes the chip's colour
+/// with the previous chip's colour behind it, and the terminal's own
+/// background behind the first.
+pub fn flow(chips: &[Chip]) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut previous = None;
+    for chip in chips {
+        let mut arrow = Style::new().fg(chip.colour);
+        if let Some(previous) = previous {
+            arrow = arrow.bg(previous);
         }
-        spans.push(Span::styled(segment.text.clone(), segment.style));
+        spans.push(Span::styled(ARROW, arrow));
+        spans.push(Span::styled(chip.text.clone(), chip.style));
+        previous = Some(chip.colour);
     }
-    spans.push(Span::styled(
-        CAP_RIGHT.to_string(),
-        Style::new().fg(last.bg()),
-    ));
     spans
 }
 
-fn badge() -> Segment {
-    let style = Style::new()
-        .fg(palette::INK)
-        .bg(palette::get().cyan)
-        .add_modifier(Modifier::BOLD);
-    Segment::new("coax", style)
-}
-
-fn title_segment(title: &str) -> Segment {
-    let style = Style::new()
-        .fg(palette::get().foreground)
-        .bg(palette::get().selection)
-        .add_modifier(Modifier::BOLD);
-    Segment::new(title, style)
-}
-
-/// The identity group: the coax badge and `title`.
-fn identity(title: &str) -> Vec<Segment> {
-    vec![badge(), title_segment(title)]
-}
-
-/// The first row of `area`: the identity group, for screens with no
-/// session status to show.
+/// The first row of `area` for screens with no session status: `coax`, a
+/// dot and `title`, then a dim rule under it.
 pub fn title_bar(frame: &mut Frame, area: Rect, title: &str) {
-    let spans = join(&identity(title), Edge::Left);
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    let [top, rule] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+    frame.render_widget(Paragraph::new(Line::from(identity(title))), top);
+    draw_rule(frame, rule);
+}
+
+fn draw_rule(frame: &mut Frame, area: Rect) {
+    frame.render_widget(
+        Paragraph::new("─".repeat(area.width as usize)).style(dim()),
+        area,
+    );
+}
+
+fn identity(title: &str) -> Vec<Span<'static>> {
+    vec![
+        Span::raw(" "),
+        Span::styled(
+            "coax",
+            Style::new()
+                .fg(palette::get().cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(SEPARATOR, dim()),
+        Span::raw(title.to_string()),
+    ]
 }
 
 /// The chips that fit in `room` columns and whether a `⋯` chip stands for
 /// the rest. The first chip stays.
 fn fit_chips(widths: &[usize], room: usize) -> (usize, bool) {
-    let overflow = OVERFLOW_CHIP.chars().count();
+    let overflow = 1 + OVERFLOW_CHIP.chars().count();
     let mut shown = widths.len();
     loop {
         let hidden = shown < widths.len();
-        let total = group_width(
-            widths[..shown]
-                .iter()
-                .copied()
-                .chain(hidden.then_some(overflow)),
-        );
+        let total: usize =
+            widths[..shown].iter().sum::<usize>() + if hidden { overflow } else { 0 };
         if total <= room || shown <= 1 {
             return (shown, hidden);
         }
@@ -148,27 +110,49 @@ fn fit_chips(widths: &[usize], room: usize) -> (usize, bool) {
     }
 }
 
-/// The status segments that fit in `room` columns. A segment with a rank is
-/// dropped when short of room, the highest rank first. Rank 0 stays.
-fn fit_status(mut items: Vec<(u8, Segment)>, room: usize) -> Vec<Segment> {
-    while group_width(items.iter().map(|(_, segment)| segment.width())) > room {
+/// One item of the status side of line 1.
+struct Item {
+    text: String,
+    style: Style,
+
+    /// 0 stays when short of room. Otherwise the highest rank goes first.
+    rank: u8,
+}
+
+impl Item {
+    fn new(text: String, style: Style, rank: u8) -> Item {
+        Item { text, style, rank }
+    }
+
+    fn width(&self) -> usize {
+        self.text.chars().count()
+    }
+}
+
+fn items_width(items: &[Item]) -> usize {
+    let sum: usize = items.iter().map(Item::width).sum();
+    sum + SEPARATOR.chars().count() * items.len().saturating_sub(1)
+}
+
+/// The items that fit in `room` columns.
+fn fit_status(mut items: Vec<Item>, room: usize) -> Vec<Item> {
+    while items_width(&items) > room {
         let droppable = items
             .iter()
             .enumerate()
-            .filter(|(_, (rank, _))| *rank > 0)
-            .max_by_key(|(_, (rank, _))| *rank)
+            .filter(|(_, item)| item.rank > 0)
+            .max_by_key(|(_, item)| item.rank)
             .map(|(index, _)| index);
         let Some(index) = droppable else {
             break;
         };
         items.remove(index);
     }
-    items.into_iter().map(|(_, segment)| segment).collect()
+    items
 }
 
-fn status(app: &App) -> Vec<(u8, Segment)> {
+fn status(app: &App) -> Vec<Item> {
     let palette = palette::get();
-    let quiet = dim().bg(palette.selection);
     let mut items = Vec::new();
 
     let plan = &app.transcript.plan;
@@ -177,10 +161,7 @@ fn status(app: &App) -> Vec<(u8, Segment)> {
             .iter()
             .filter(|entry| entry.status == PlanEntryStatus::Completed)
             .count();
-        items.push((
-            1,
-            Segment::new(&format!("plan {done}/{} done", plan.len()), quiet),
-        ));
+        items.push(Item::new(format!("plan {done}/{}", plan.len()), dim(), 1));
     }
     if let Some(context) = &app.settings.context {
         let percent = if context.size == 0 {
@@ -189,137 +170,156 @@ fn status(app: &App) -> Vec<(u8, Segment)> {
             (context.used as f64 * 100.0 / context.size as f64).round() as u64
         };
         let style = if percent > 95 {
-            Style::new().fg(palette.red).bg(palette.selection)
+            Style::new().fg(palette.red)
         } else if percent > 80 {
-            Style::new().fg(palette.yellow).bg(palette.selection)
+            Style::new().fg(palette.yellow)
         } else {
-            quiet
+            dim()
         };
         let text = format!(
             "ctx {}/{} {percent}%",
             settings::count(context.used),
             settings::count(context.size)
         );
-        items.push((2, Segment::new(&text, style)));
+        items.push(Item::new(text, style, 2));
     }
     if let Some(tokens) = &app.settings.tokens {
-        let mut text = format!(
+        let text = format!(
             "↑{} ↓{}",
             settings::count(tokens.up),
             settings::count(tokens.down)
         );
+        items.push(Item::new(text, dim(), 3));
         if let Some(cost) = &app.settings.cost {
-            text.push(' ');
-            text.push_str(&settings::money(cost));
+            items.push(Item::new(settings::money(cost), dim(), 3));
         }
-        items.push((3, Segment::new(&text, quiet)));
     }
     match &app.decade_pane {
-        Some(pane) if pane.is_empty() => items.push((0, Segment::new("decade", quiet))),
-        Some(pane) => items.push((0, Segment::new(&format!("decade pane {pane}"), quiet))),
+        Some(pane) if pane.is_empty() => items.push(Item::new("decade".to_string(), dim(), 0)),
+        Some(pane) => items.push(Item::new(format!("decade pane {pane}"), dim(), 0)),
         None => {}
     }
-    items.push((0, state(app)));
+    items.push(state(app));
     items
 }
 
-fn state(app: &App) -> Segment {
-    let palette = palette::get();
+fn state(app: &App) -> Item {
+    let yellow = Style::new().fg(palette::get().yellow);
     if app.transcript.in_flight {
         let spinner = SPINNER[app.spinner % SPINNER.len()];
-        let style = Style::new().fg(palette::INK).bg(palette.yellow);
-        return Segment::new(&format!("{spinner} working"), style);
+        return Item::new(format!("{spinner} working"), yellow, 0);
     }
     match &app.transcript.last_stop {
-        Some(stop) if *stop != StopReason::EndTurn => Segment::new(
-            &format!("idle, {stop:?}"),
-            Style::new().fg(palette.yellow).bg(palette.selection),
-        ),
-        _ => Segment::new("idle", dim().bg(palette.selection)),
+        Some(stop) if *stop != StopReason::EndTurn => {
+            Item::new(format!("idle, {stop:?}"), yellow, 0)
+        }
+        _ => Item::new("idle".to_string(), dim(), 0),
     }
 }
 
-/// The two header rows: identity and session status on the first, the
-/// setting chips on the second.
+/// The header's three rows: `coax`, the agent and the session status; the
+/// setting chips; a rule.
 pub fn draw_header(frame: &mut Frame, area: Rect, app: &mut App) {
-    let [top, bottom] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+    let [top, strip, rule] = Layout::vertical([Constraint::Length(1); 3]).areas(area);
     let width = area.width as usize;
 
-    let left = join(&identity(&app.agent), Edge::Left);
-    let left_width: usize = left.iter().map(Span::width).sum();
-    let right = fit_status(status(app), width.saturating_sub(left_width + 1));
-    let right = join(&right, Edge::Right);
-    let right_width: usize = right.iter().map(Span::width).sum();
-    let gap = width.saturating_sub(left_width + right_width);
-    let mut spans = left;
-    spans.push(Span::raw(" ".repeat(gap)));
-    spans.extend(right);
+    let mut spans = identity(&app.agent);
+    let left_width: usize = spans.iter().map(Span::width).sum();
+
+    // a column of padding after the status, as before it
+    let room = width.saturating_sub(left_width + 2);
+    let items = fit_status(status(app), room);
+    let right_width = items_width(&items) + 1;
+    spans.push(Span::raw(
+        " ".repeat(width.saturating_sub(left_width + right_width)),
+    ));
+    for (n, item) in items.into_iter().enumerate() {
+        if n > 0 {
+            spans.push(Span::styled(SEPARATOR, dim()));
+        }
+        spans.push(Span::styled(item.text, item.style));
+    }
+    spans.push(Span::raw(" "));
     frame.render_widget(Paragraph::new(Line::from(spans)), top);
 
-    draw_chips(frame, bottom, app);
+    draw_chips(frame, strip, app);
+    draw_rule(frame, rule);
+}
+
+/// The colour of the chip at `index` among the settings. The first three are
+/// the mode, the model and the thought level, and the rest cycle through
+/// three more.
+fn chip_colour(index: usize, unguarded: bool) -> Color {
+    let palette = palette::get();
+    match index {
+        0 if unguarded => palette.yellow,
+        0 => palette.green,
+        1 => palette.magenta,
+        2 => palette.blue,
+        _ => [
+            palette.cyan,
+            palette.orange,
+            palette.muted.unwrap_or(Color::DarkGray),
+        ][(index - 3) % 3],
+    }
 }
 
 fn draw_chips(frame: &mut Frame, area: Rect, app: &mut App) {
     let palette = palette::get();
     let settings = app.settings.settings();
-    let labels: Vec<Segment> = settings
+    let widths: Vec<usize> = settings
         .iter()
-        .map(|setting| Segment::new(&setting.label, Style::new()))
+        .map(|setting| Chip::new(&setting.label, Color::Reset).width())
         .collect();
-    let widths: Vec<usize> = labels.iter().map(Segment::width).collect();
     let (shown, hidden) = fit_chips(&widths, area.width as usize);
 
-    let base = Style::new().fg(palette.foreground).bg(palette.selection);
-    let mut segments: Vec<Segment> = Vec::new();
+    let mut chips: Vec<Chip> = Vec::new();
     let mut targets: Vec<ChipTarget> = Vec::new();
     for (index, setting) in settings.iter().enumerate().take(shown) {
-        let disabled = setting.model && app.transcript.in_flight;
         let target = ChipTarget::Setting(index);
-        let mut style = base;
-        if setting.unguarded {
-            style = Style::new()
-                .fg(palette::INK)
-                .bg(palette.yellow)
-                .add_modifier(Modifier::BOLD);
-        }
-        if disabled {
-            style = dim().bg(palette.selection);
+        let mut chip = Chip::new(&setting.label, chip_colour(index, setting.unguarded));
+        if setting.model && app.transcript.in_flight {
+            chip.style = chip
+                .style
+                .remove_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::DIM);
         } else if app.hover == Some(target) {
-            style = style.fg(palette.accent);
+            chip.style = chip.style.fg(palette.foreground);
         }
-        segments.push(Segment {
-            text: labels[index].text.clone(),
-            style,
-        });
+        chips.push(chip);
         targets.push(target);
     }
     if hidden {
         let target = ChipTarget::Overflow(shown);
-        let style = if app.hover == Some(target) {
-            base.fg(palette.accent)
-        } else {
-            base
-        };
-        segments.push(Segment {
-            text: OVERFLOW_CHIP.to_string(),
-            style,
-        });
+        let previous = chips.last().map(|chip| chip.colour);
+        let candidates = [palette.muted.unwrap_or(Color::DarkGray), palette.cyan];
+        let colour = candidates
+            .into_iter()
+            .find(|colour| Some(*colour) != previous)
+            .unwrap_or(Color::DarkGray);
+        let mut chip = Chip::new(OVERFLOW_CHIP.trim(), colour);
+        if app.hover == Some(target) {
+            chip.style = chip.style.fg(palette.foreground);
+        }
+        chips.push(chip);
         targets.push(target);
     }
 
+    // the strip sits against the right edge
+    let total: usize = chips.iter().map(Chip::width).sum();
+    let mut x = area.right().saturating_sub(total as u16);
     app.chips.clear();
-    let mut x = area.x + 1;
-    for (segment, target) in segments.iter().zip(targets) {
-        let chip_width = segment.width() as u16;
+    for (chip, target) in chips.iter().zip(targets) {
+        // the arrow is not part of the click area
+        let text_width = chip.width() as u16 - 1;
         app.chips.push(ChipArea {
-            area: Rect::new(x, area.y, chip_width, 1),
+            area: Rect::new(x + 1, area.y, text_width, 1),
             target,
         });
-        x += chip_width + 1;
+        x += chip.width() as u16;
     }
     frame.render_widget(
-        Paragraph::new(Line::from(join(&segments, Edge::Left))),
+        Paragraph::new(Line::from(flow(&chips))).right_aligned(),
         area,
     );
 }
@@ -328,112 +328,109 @@ fn draw_chips(frame: &mut Frame, area: Rect, app: &mut App) {
 mod tests {
     use super::*;
 
-    fn segment(text: &str, bg: Color) -> Segment {
-        Segment::new(text, Style::new().fg(Color::White).bg(bg))
+    fn chip(text: &str, colour: Color) -> Chip {
+        Chip::new(text, colour)
     }
 
     #[test]
-    fn a_group_is_capped_at_both_ends_in_the_colour_of_its_end_blocks() {
-        let spans = join(
-            &[segment("a", Color::Red), segment("b", Color::Blue)],
-            Edge::Left,
+    fn a_chip_is_black_bold_text_on_its_colour_with_a_space_each_side() {
+        let spans = flow(&[chip("Auto", Color::Red)]);
+        assert_eq!(spans[1].content, " Auto ");
+        assert_eq!(spans[1].style.bg, Some(Color::Red));
+        assert_eq!(spans[1].style.fg, Some(palette::INK));
+        assert!(spans[1].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn the_first_arrow_has_the_terminals_background_behind_it() {
+        let spans = flow(&[chip("a", Color::Red)]);
+        assert_eq!(spans[0].content, ARROW);
+        assert_eq!(spans[0].style, Style::new().fg(Color::Red));
+    }
+
+    #[test]
+    fn an_arrow_between_two_chips_is_the_second_colour_on_the_first() {
+        let spans = flow(&[chip("a", Color::Red), chip("b", Color::Blue)]);
+        assert_eq!(spans[2].content, ARROW);
+        assert_eq!(spans[2].style.fg, Some(Color::Blue));
+        assert_eq!(spans[2].style.bg, Some(Color::Red));
+    }
+
+    #[test]
+    fn no_round_cap_is_drawn() {
+        let spans = flow(&[chip("a", Color::Red), chip("b", Color::Blue)]);
+        assert!(
+            spans
+                .iter()
+                .all(|span| !span.content.contains(['\u{e0b4}', '\u{e0b6}']))
         );
-        let first = spans.first().unwrap();
-        let last = spans.last().unwrap();
-        assert_eq!(first.content, CAP_LEFT.to_string());
-        assert_eq!(first.style, Style::new().fg(Color::Red));
-        assert_eq!(last.content, CAP_RIGHT.to_string());
-        assert_eq!(last.style, Style::new().fg(Color::Blue));
     }
 
     #[test]
-    fn a_left_group_separator_takes_its_colours_from_the_neighbours() {
-        let spans = join(
-            &[segment("a", Color::Red), segment("b", Color::Blue)],
-            Edge::Left,
-        );
-        let between = &spans[2];
-        assert_eq!(between.content, SOLID_RIGHT.to_string());
-        assert_eq!(between.style.fg, Some(Color::Red));
-        assert_eq!(between.style.bg, Some(Color::Blue));
-    }
-
-    #[test]
-    fn a_right_group_separator_swaps_the_colours_to_face_the_other_way() {
-        let spans = join(
-            &[segment("a", Color::Red), segment("b", Color::Blue)],
-            Edge::Right,
-        );
-        let between = &spans[2];
-        assert_eq!(between.content, SOLID_LEFT.to_string());
-        assert_eq!(between.style.fg, Some(Color::Blue));
-        assert_eq!(between.style.bg, Some(Color::Red));
-    }
-
-    #[test]
-    fn neighbours_on_one_background_are_split_by_a_thin_line_on_that_background() {
-        let spans = join(
-            &[segment("a", Color::Red), segment("b", Color::Red)],
-            Edge::Left,
-        );
-        let between = &spans[2];
-        assert_eq!(between.content, THIN_RIGHT.to_string());
-        assert_eq!(between.style.bg, Some(Color::Red));
-    }
-
-    #[test]
-    fn a_group_is_as_wide_as_its_blocks_plus_caps_and_separators() {
-        let segments = [segment("a", Color::Red), segment("bb", Color::Blue)];
-        let spans = join(&segments, Edge::Left);
-        let drawn: usize = spans.iter().map(Span::width).sum();
-        assert_eq!(drawn, group_width(segments.iter().map(Segment::width)));
-        assert_eq!(drawn, 3 + 4 + 3);
-        assert_eq!(group_width(std::iter::empty()), 0);
+    fn the_strip_is_as_wide_as_its_chips_each_with_its_arrow() {
+        let chips = [chip("a", Color::Red), chip("bb", Color::Blue)];
+        let drawn: usize = flow(&chips).iter().map(Span::width).sum();
+        assert_eq!(drawn, 4 + 5);
+        assert_eq!(drawn, chips.iter().map(Chip::width).sum::<usize>());
     }
 
     #[test]
     fn every_chip_shows_when_there_is_room() {
-        assert_eq!(fit_chips(&[6, 8, 10, 9], 60), (4, false));
+        assert_eq!(fit_chips(&[7, 7, 17, 11], 60), (4, false));
     }
 
     #[test]
     fn chips_leave_from_the_right_into_the_overflow_chip() {
-        // 4 chips take 6 + 8 + 10 + 9 + 3 + 2 = 38 columns
-        assert_eq!(fit_chips(&[6, 8, 10, 9], 38), (4, false));
-        // three chips and the overflow chip take 6 + 8 + 10 + 3 + 3 + 2 = 32
-        assert_eq!(fit_chips(&[6, 8, 10, 9], 37), (3, true));
-        assert_eq!(fit_chips(&[6, 8, 10, 9], 32), (3, true));
-        assert_eq!(fit_chips(&[6, 8, 10, 9], 31), (2, true));
+        // four chips take 7 + 7 + 17 + 11 = 42 columns
+        assert_eq!(fit_chips(&[7, 7, 17, 11], 42), (4, false));
+        // three chips and the overflow chip take 31 + 4 = 35
+        assert_eq!(fit_chips(&[7, 7, 17, 11], 41), (3, true));
+        assert_eq!(fit_chips(&[7, 7, 17, 11], 35), (3, true));
+        assert_eq!(fit_chips(&[7, 7, 17, 11], 34), (2, true));
     }
 
     #[test]
     fn the_first_chip_stays_however_narrow_the_header_gets() {
-        assert_eq!(fit_chips(&[6, 8, 10, 9], 3), (1, true));
-    }
-
-    fn items() -> Vec<(u8, Segment)> {
-        vec![
-            (1, segment("plan", Color::Red)),
-            (2, segment("context", Color::Red)),
-            (3, segment("tokens", Color::Red)),
-            (0, segment("idle", Color::Red)),
-        ]
-    }
-
-    fn names(segments: &[Segment]) -> Vec<&str> {
-        segments.iter().map(|s| s.text.trim()).collect()
+        assert_eq!(fit_chips(&[7, 7, 17, 11], 3), (1, true));
     }
 
     #[test]
-    fn a_narrowing_status_group_drops_tokens_then_context_then_plan() {
-        // widths 6 + 9 + 8 + 6, three separators and two caps
+    fn neighbouring_chips_have_different_colours() {
+        let colours: Vec<Color> = (0..8).map(|index| chip_colour(index, false)).collect();
+        for pair in colours.windows(2) {
+            assert_ne!(pair[0], pair[1]);
+        }
+    }
+
+    #[test]
+    fn the_mode_chip_is_yellow_when_the_agent_does_not_ask_and_green_otherwise() {
+        assert_eq!(chip_colour(0, true), palette::get().yellow);
+        assert_eq!(chip_colour(0, false), palette::get().green);
+    }
+
+    fn items() -> Vec<Item> {
+        vec![
+            Item::new("plan".to_string(), dim(), 1),
+            Item::new("context".to_string(), dim(), 2),
+            Item::new("tokens".to_string(), dim(), 3),
+            Item::new("idle".to_string(), dim(), 0),
+        ]
+    }
+
+    fn names(items: &[Item]) -> Vec<&str> {
+        items.iter().map(|item| item.text.as_str()).collect()
+    }
+
+    #[test]
+    fn a_narrowing_status_drops_tokens_then_context_then_plan() {
+        // 4 + 7 + 6 + 4 columns and three separators of 3
         assert_eq!(
             names(&fit_status(items(), 100)),
             ["plan", "context", "tokens", "idle"]
         );
-        assert_eq!(names(&fit_status(items(), 28)), ["plan", "context", "idle"]);
-        assert_eq!(names(&fit_status(items(), 18)), ["plan", "idle"]);
-        assert_eq!(names(&fit_status(items(), 10)), ["idle"]);
+        assert_eq!(names(&fit_status(items(), 29)), ["plan", "context", "idle"]);
+        assert_eq!(names(&fit_status(items(), 17)), ["plan", "idle"]);
+        assert_eq!(names(&fit_status(items(), 8)), ["idle"]);
         assert_eq!(names(&fit_status(items(), 1)), ["idle"]);
     }
 }
