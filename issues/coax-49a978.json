@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T07:04:06.088488326Z",
-  "updated_at": "2026-11-09T07:04:06.088488326Z",
+  "updated_at": "2026-11-09T07:17:08.793135547Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "c176aa72",
+      "at": "2026-11-09T07:17:08.793134887Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Landed in 567afeb. `markdown` in `src/ui.rs` now parses with `cmr::parse` and lays out one block at a time. Prose goes at the box's layout width. A `Block::Code` is laid out at its longest line plus the two-column gutter, and a table at 1000 columns with trailing padding trimmed. A block that fits the width is laid out as before, so text with no wide block is identical to `cmr::render` (a test compares the two).\n\nA wide block is a `Part::Wide` in the `Rendered` cache. The cache key is still text length and layout width. The window, with `◂` and `▸` at the edges that have more, is cut at draw time. A box holding a wide block takes the full 90% width.\n\n`App::mouse` pans a block 4 columns per step on Shift+wheel or a horizontal wheel. It clamps to the block's natural width minus the visible width, and finds the block from the rects `draw_transcript` records each frame. Shift+wheel off any wide block does nothing.\n\nOpen items left as they were: a table always pans and never narrows or stacks, and there is no keyboard way to pan. Many terminals keep Shift+wheel for their own selection, so the horizontal wheel may be the only one that reaches coax.",
+      "commit": "567afeb",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "be5017b",
