@@ -1,0 +1,10 @@
+{
+  "slug": "claude-adapter-replays-no-subagent-children",
+  "text": "The Claude adapter v0.101.0 keeps a subagent's history in its own transcript file and replays it on `session/load` only to clients that speak its subagent-sessions protocol (the RFD or AIR forms), not to clients that declare only the `subagent-transcript` meta. coax declares only that meta, so a resumed session shows each subagent as a folded `agent` block with no children (46805c3). Source: `replaySessionHistory` in the adapter's `src/acp-agent.ts`.",
+  "created_at": "2026-11-09T20:32:49.225043707Z",
+  "updated_at": "2026-11-09T20:32:49.225043707Z",
+  "stamp": {
+    "commit": "95a68b4",
+    "branch": "dev"
+  }
+}
