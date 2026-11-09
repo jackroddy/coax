@@ -15,8 +15,11 @@ use agent_client_protocol::v1::schema::{
 use agent_client_protocol::{
     Agent, Client, ConnectTo, Error, on_receive_notification, on_receive_request,
 };
+use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
+
+use crate::log;
 
 pub enum Event {
     Update(Box<SessionUpdate>),
@@ -133,6 +136,10 @@ impl Link {
         let tx = self.tx.clone();
         match change {
             Change::Config { id, value } => {
+                log::info(
+                    "setting.change",
+                    json!({"id": id, "value": serde_json::to_value(&value).ok()}),
+                );
                 let sent = self.cx.send_request(SetSessionConfigOptionRequest::new(
                     session,
                     id.clone(),
@@ -143,17 +150,20 @@ impl Link {
                         .block_task()
                         .await
                         .map(|response| Applied::Options(response.config_options));
+                    log_setting(&id, &result);
                     let _ = tx.send(Event::Setting { id, result });
                     Ok(())
                 })
             }
             Change::Mode(id) => {
+                log::info("setting.change", json!({"id": "mode", "value": id}));
                 let sent = self.cx.send_request(SetSessionModeRequest::new(
                     session,
                     SessionModeId::new(id.clone()),
                 ));
                 self.cx.spawn(async move {
                     let result = sent.block_task().await.map(|_| Applied::Mode(id));
+                    log_setting("mode", &result);
                     let _ = tx.send(Event::Setting {
                         id: "mode".to_string(),
                         result,
@@ -166,6 +176,16 @@ impl Link {
 
     pub fn cancel(&self, session: SessionId) -> Result<(), Error> {
         self.cx.send_notification(CancelNotification::new(session))
+    }
+}
+
+fn log_setting(id: &str, result: &Result<Applied, Error>) {
+    match result {
+        Ok(_) => log::info("setting.result", json!({"id": id, "ok": true})),
+        Err(error) => log::info(
+            "setting.result",
+            json!({"id": id, "ok": false, "error": describe(error)}),
+        ),
     }
 }
 
@@ -193,6 +213,7 @@ pub async fn run(
     command: &str,
     app: impl AsyncFnOnce(Link) -> Result<(), Error>,
 ) -> Result<(), Error> {
+    log::info("agent.start", json!({"command": command}));
     let (tx, events) = mpsc::unbounded_channel();
     let updates = tx.clone();
     let permissions = tx.clone();
@@ -264,6 +285,7 @@ pub async fn run(
                     Ok(()) => "the agent closed the connection".to_string(),
                     Err(error) => describe(error),
                 };
+                log::info("agent.exit", json!({"command": command, "reason": error}));
                 let _ = exits.send(Event::Exited(error));
                 ended = Some(result);
             }

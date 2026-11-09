@@ -81,6 +81,9 @@ pub enum Kind {
 
     /// `/history`, which is not a setting.
     History,
+
+    /// `/log`, which is not a setting.
+    Log,
     Agent {
         name: String,
     },
@@ -91,6 +94,7 @@ fn builtins(typed: &str) -> impl Iterator<Item = Candidate> + '_ {
     [
         ("edit", Kind::Edit, "edit the prompt in $EDITOR"),
         ("history", Kind::History, "pick an earlier prompt"),
+        ("log", Kind::Log, "show this run's log file"),
     ]
     .into_iter()
     .filter(move |(name, ..)| name.starts_with(typed))
@@ -217,7 +221,7 @@ mod tests {
             .map(|candidate| candidate.fill)
             .collect();
         assert_eq!(names, ["/mode", "/model"]);
-        assert_eq!(matches("/", &settings, &[]).len(), 5);
+        assert_eq!(matches("/", &settings, &[]).len(), 6);
         assert!(matches("/x", &settings, &[]).is_empty());
         assert_eq!(matches("/MO", &settings, &[]).len(), 2);
     }
@@ -226,12 +230,14 @@ mod tests {
     fn edit_and_history_are_listed_after_the_settings_and_match_by_prefix() {
         let settings = [setting("Mode")];
         let found = matches("/", &settings, &[]);
-        assert_eq!(found.len(), 3);
+        assert_eq!(found.len(), 4);
         assert_eq!(found[1].fill, "/edit");
         assert_eq!(found[1].kind, Kind::Edit);
         assert_eq!(found[1].description, "edit the prompt in $EDITOR");
         assert_eq!(found[2].fill, "/history");
         assert_eq!(found[2].kind, Kind::History);
+        assert_eq!(found[3].fill, "/log");
+        assert_eq!(found[3].kind, Kind::Log);
         assert_eq!(matches("/h", &settings, &[]).len(), 1);
         assert_eq!(matches("/ed", &settings, &[]).len(), 1);
         assert!(

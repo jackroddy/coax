@@ -3,8 +3,10 @@ use std::path::Path;
 
 use agent_client_protocol::v1::schema::{StopReason, ToolCallStatus};
 use decade_channel::{Agent, AgentState, AgentUpdate, Channel, Context, Message, Tokens};
+use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
+use crate::log;
 use crate::session::{Entry, Transcript};
 use crate::settings::Settings;
 
@@ -110,15 +112,33 @@ pub fn connect(
     pane: Option<&str>,
     agent: &Agent,
 ) -> io::Result<(Reporter, UnboundedReceiver<Message>)> {
-    let (channel, messages) = Channel::connect(path, "coax", &[], &[], pane, Some(agent))?;
+    let joined = Channel::connect(path, "coax", &[], &[], pane, Some(agent));
+    let (channel, messages) = match joined {
+        Ok(joined) => joined,
+        Err(error) => {
+            log::info(
+                "decade.connect_failed",
+                json!({"socket": path, "error": error.to_string()}),
+            );
+            return Err(error);
+        }
+    };
+    log::info(
+        "decade.connect",
+        json!({
+            "socket": path,
+            "pane": pane,
+            "agent": {"name": agent.name, "version": agent.version, "session": agent.session},
+        }),
+    );
     Ok(reporter(channel, messages))
 }
 
 /// Join decade by the environment's socket, if there is one.
 pub fn connect_env(agent: &Agent) -> Option<(Reporter, UnboundedReceiver<Message>)> {
-    let joined = Channel::from_env("coax", &[], &[], Some(agent))?;
-    let (channel, messages) = joined.ok()?;
-    Some(reporter(channel, messages))
+    let path = std::env::var_os("DECADE_SOCKET")?;
+    let pane = std::env::var("DECADE_PANE").ok();
+    connect(Path::new(&path), pane.as_deref(), agent).ok()
 }
 
 fn reporter(
@@ -146,6 +166,10 @@ impl Reporter {
     /// Send what changed since the last call.
     pub fn send(&mut self, now: Snapshot) -> io::Result<()> {
         if let Some(update) = changes(&self.sent, &now) {
+            log::info(
+                "decade.send",
+                json!({"line": json!({"agent": update}).to_string()}),
+            );
             self.channel.agent(&update)?;
         }
         self.sent = now;
@@ -153,7 +177,9 @@ impl Reporter {
     }
 
     pub fn end(mut self) {
+        log::info("decade.send", json!({"line": r#"{"ended":{}}"#}));
         let _ = self.channel.ended();
+        log::info("decade.disconnect", json!({"reason": "ended"}));
     }
 }
 

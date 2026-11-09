@@ -1,6 +1,9 @@
 type Meta = serde_json::Map<String, serde_json::Value>;
 
+use serde_json::json;
+
 use crate::diff;
+use crate::log;
 use agent_client_protocol::v1::schema::{
     ContentBlock, ContentChunk, MessageId, PlanEntry, SessionUpdate, StopReason, ToolCall,
     ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolKind,
@@ -146,6 +149,7 @@ impl Transcript {
     }
 
     pub fn notice(&mut self, text: String) {
+        log::info("notice", json!({"text": text}));
         self.entries.push(Entry::Notice(text));
     }
 
@@ -166,6 +170,7 @@ impl Transcript {
                     text.push_str(": ");
                     text.push_str(&description);
                 }
+                log::info("notice", json!({"text": text}));
                 self.entries.push(Entry::Notice(text));
             }
             _ => {}

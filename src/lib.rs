@@ -8,6 +8,7 @@ pub mod diff;
 pub mod editor;
 pub mod fake;
 pub mod header;
+pub mod log;
 pub mod palette;
 pub mod picker;
 pub mod prompt;

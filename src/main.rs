@@ -1,11 +1,14 @@
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use agent_client_protocol::{AcpAgent, Error};
 use coax::agents::Agents;
 use coax::app::{Opening, Start};
 use coax::config::Config;
+use coax::log;
 use coax::picker::Choice;
 use coax::{acp, app, picker};
+use serde_json::json;
 use tokio::task::LocalSet;
 
 const USAGE: &str =
@@ -66,6 +69,7 @@ fn load_config() -> (Config, PathBuf) {
     };
     match Config::load(&path) {
         Ok(config) => {
+            coax::log::info("config", json!({"path": path}));
             coax::palette::init(config.palette.resolve());
             (config, path)
         }
@@ -73,13 +77,41 @@ fn load_config() -> (Config, PathBuf) {
     }
 }
 
+/// The launch arguments, with the text after `--prompt` left out: a prompt
+/// is logged only as the message that sends it.
+fn logged_args(mut args: Vec<String>) -> Vec<String> {
+    let mut at = 0;
+    while at < args.len() {
+        match args[at].as_str() {
+            "--prompt" if at + 1 < args.len() => {
+                args[at + 1] = "<prompt>".to_string();
+                at += 2;
+            }
+            "--agent" => at += 2,
+            "--allow" => at += 1,
+            _ => break,
+        }
+    }
+    args
+}
+
 fn fail(code: i32, message: &str) -> ! {
+    coax::log::info("error", json!({"text": message}));
     eprintln!("coax: {message}");
     std::process::exit(code);
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    coax::log::init();
+    coax::log::info(
+        "launch",
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "args": logged_args(std::env::args().skip(1).collect()),
+            "cwd": std::env::current_dir().ok(),
+        }),
+    );
     let Some(options) = parse(std::env::args().skip(1).collect()) else {
         eprintln!("{USAGE}");
         std::process::exit(2);
@@ -91,14 +123,20 @@ async fn main() {
         keys: app::key_thread(),
     };
     let result = match options.launch {
-        Launch::Command(words) => match AcpAgent::from_args(words) {
-            Ok(agent) => open(agent, None, opening).await,
+        Launch::Command(words) => match AcpAgent::from_args(words.clone()) {
+            Ok(agent) => {
+                log::info("agent.chosen", json!({"command": words}));
+                open(agent, None, opening).await
+            }
             Err(error) => fail(2, &error.to_string()),
         },
         Launch::Named(name) => {
             let (config, path) = load_config();
             match config.agents.get(&name) {
-                Some(agent) => open(AcpAgent::new(agent.clone()), Some(name), opening).await,
+                Some(agent) => {
+                    log::info("agent.chosen", json!({"name": name}));
+                    open(AcpAgent::new(agent.clone()), Some(name), opening).await
+                }
                 None => fail(2, &format!("no agent named {name} in {}", path.display())),
             }
         }
@@ -116,8 +154,14 @@ async fn main() {
 
 async fn open(agent: AcpAgent, name: Option<String>, opening: Opening) -> Result<(), Error> {
     let command = agent.config().command().display().to_string();
+    let agent = log::tap(agent, name.as_deref().unwrap_or(&command));
     acp::run(agent, &command, async |link| {
+        let began = Instant::now();
         let init = link.initialize().await?;
+        log::info(
+            "agent.initialized",
+            json!({"ms": began.elapsed().as_millis() as u64}),
+        );
         app::run(link, init, name, opening).await
     })
     .await
@@ -131,6 +175,14 @@ async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), 
     let choice = picker::pick(config, path, &mut agents.listings, &mut opening.keys)
         .await
         .map_err(Error::into_internal_error)?;
+    match &choice {
+        Choice::Quit => log::info("picker", json!({"choice": "quit"})),
+        Choice::Agent(name) => log::info("picker", json!({"choice": "new", "agent": name})),
+        Choice::Session { agent, id } => log::info(
+            "picker",
+            json!({"choice": "load", "agent": agent, "session": id.0}),
+        ),
+    }
     match choice {
         Choice::Quit => Ok(()),
         Choice::Agent(name) => agents.open(name, opening).await,

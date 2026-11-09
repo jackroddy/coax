@@ -17,6 +17,7 @@ use crossterm::event::{
 };
 use decade_channel::Message;
 use ratatui::layout::{Position, Rect};
+use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 
@@ -25,6 +26,7 @@ use crate::clipboard;
 use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
+use crate::log;
 use crate::prompt;
 use crate::report::{self, Reporter, Snapshot};
 use crate::session::{Entry, Transcript};
@@ -124,8 +126,8 @@ pub struct App {
     /// How far each wide block is panned, by entry and block.
     pub pans: HashMap<(usize, usize), usize>,
 
-    /// What the prompt's text names that is not a command, shown until the
-    /// next key.
+    /// A line shown on the prompt's rule until the next key: what the
+    /// prompt's text names that is not a command, or the answer to `/log`.
     pub unknown: Option<String>,
 
     /// The conversation's scroll bar, set by the last draw when it shows.
@@ -303,6 +305,7 @@ impl App {
                 if self.menu_asked(&id)
                     && let Some(menu) = &mut self.menu
                 {
+                    log::info("error", json!({"text": error.to_string()}));
                     menu.error = Some(error.to_string());
                 } else {
                     self.transcript.notice(format!("setting failed: {error}"));
@@ -379,10 +382,12 @@ impl App {
     }
 
     pub fn decade(&mut self, message: Message) {
+        log::info("decade.recv", json!({"message": format!("{message:?}")}));
         match message {
             Message::Welcome { pane, .. } => self.decade_pane = pane.or(Some(String::new())),
             Message::Error { reason, .. } => self.transcript.notice(format!("decade: {reason}")),
             Message::Closed => {
+                log::info("decade.disconnect", json!({"reason": "closed by decade"}));
                 self.decade_pane = None;
                 self.transcript.notice("decade went away".to_string());
             }
@@ -694,9 +699,21 @@ impl App {
         };
         let Some(entry) = entry else {
             self.unknown = command::unknown(&self.input);
+            if let Some(text) = &self.unknown {
+                log::info("notice", json!({"text": text}));
+            }
             return Action::None;
         };
+        log::info("command", json!({"name": entry.fill}));
         match entry.kind {
+            Kind::Log => {
+                self.clear_input();
+                self.unknown = Some(match log::path() {
+                    Some(path) => format!("log: {}", path.display()),
+                    None => "no log file".to_string(),
+                });
+                Action::None
+            }
             Kind::Coax(index) => {
                 self.clear_input();
                 let anchor = self
@@ -1211,6 +1228,11 @@ async fn session(
         Start::New => format!("starting {agent}…"),
         Start::Load(_) => "loading session…".to_string(),
     };
+    let kind = match &start {
+        Start::New => "new",
+        Start::Load(_) => "load",
+    };
+    let opening_began = Instant::now();
     let session = {
         let opened = open_session(&link, start, &cwd, &mut settings);
         tokio::pin!(opened);
@@ -1235,6 +1257,14 @@ async fn session(
         }
     };
 
+    log::info(
+        "session.open",
+        json!({
+            "kind": kind,
+            "session": session.0,
+            "ms": opening_began.elapsed().as_millis() as u64,
+        }),
+    );
     let identity = decade_channel::Agent {
         name: agent.clone(),
         version,
@@ -1289,6 +1319,9 @@ async fn session(
         auto_allow,
         exited: false,
     };
+    if let Some(problem) = log::problem() {
+        app.transcript.notice(problem.to_string());
+    }
     // a loaded session's history arrives before its load response
     while let Ok(event) = link.events.try_recv() {
         app.event(event);
@@ -1399,7 +1432,8 @@ fn report_to_decade(reporter: &mut Option<Reporter>, app: &mut App) {
     };
     let question = app.permission.as_ref().map(|p| p.title.as_str());
     let now = Snapshot::of(&app.transcript, question, &app.settings);
-    if open.send(now).is_err() {
+    if let Err(error) = open.send(now) {
+        log::info("decade.disconnect", json!({"reason": error.to_string()}));
         *reporter = None;
         app.decade_pane = None;
         app.transcript.notice("decade went away".to_string());
@@ -3044,6 +3078,26 @@ mod tests {
             app.transcript.entries.last(),
             Some(Entry::Notice(text)) if text.contains("prompt unchanged")
         ));
+    }
+
+    #[test]
+    fn log_shows_the_log_files_path_on_the_rule_and_says_so_when_there_is_none() {
+        let mut app = app();
+        type_text(&mut app, "/log");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.unknown.as_deref(), Some("no log file"));
+        assert_eq!(app.input, "");
+
+        let dir = std::env::temp_dir().join(format!("coax-log-command-{}", std::process::id()));
+        log::open(&dir, log::Level::Info, 0, 1);
+        let path = log::path().unwrap().to_path_buf();
+        type_text(&mut app, "/log");
+        press(&mut app, KeyCode::Enter);
+        let line = format!("log: {}", path.display());
+        assert_eq!(app.unknown.as_deref(), Some(line.as_str()));
+        assert!(header_rows_all(&mut app, 200).contains(&line));
+        assert!(app.transcript.entries.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn send(app: &mut App, text: &str) {

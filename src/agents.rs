@@ -9,6 +9,7 @@ use tokio::task::{JoinHandle, spawn_local};
 use crate::acp::{self, Link};
 use crate::app::{self, Opening};
 use crate::config::Config;
+use crate::log;
 
 /// The sessions one agent reported for the folder, or none when it failed
 /// to start, to initialize or to list.
@@ -51,7 +52,7 @@ impl Agents {
                 let (opening, waiting) = oneshot::channel();
                 let done = spawn_local(connect(
                     name.clone(),
-                    AcpAgent::new(agent.clone()),
+                    log::tap(AcpAgent::new(agent.clone()), name),
                     cwd.to_path_buf(),
                     listings_tx.clone(),
                     waiting,

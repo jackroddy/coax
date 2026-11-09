@@ -32,6 +32,17 @@ command line, the keys, and the scenario format the fake agent reads.
   cancel. The activity is the title of the running tool call. The model,
   context use, session tokens and cost go along when they change. coax sends
   `ended` when it quits or the agent exits.
+- A log of each run, one JSON Lines file in `$XDG_STATE_HOME/coax/logs`
+  (`~/.local/state/coax/logs` when it is unset). The file is named by the
+  start time and the process id and is readable by its owner only. coax keeps
+  the newest 20 files. `COAX_LOG` sets how much is written: `off`, `info`
+  (the default) or `debug`. `info` records the launch, the chosen agent and
+  session, setting changes, slash commands run, the decade traffic, the
+  agent's stderr and exit, every notice and error, panics with a backtrace,
+  and how long the session took to open. `debug` adds every JSON-RPC line
+  between coax and the agent. Keystrokes are never logged. If the file cannot
+  be made, coax shows one notice and runs without a log.
+- `/log` shows the path of the run's log file under the prompt.
 - Permission requests from the agent open a box over the conversation, with
   the options numbered; a digit answers, Esc cancels. The answer stays in
   the conversation as a dim `⎿` line. `--allow` answers every
