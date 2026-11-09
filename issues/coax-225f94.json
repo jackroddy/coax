@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T06:11:13.774421647Z",
-  "updated_at": "2026-11-09T06:11:13.774421647Z",
+  "updated_at": "2026-11-09T08:14:59.759372071Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "b0456fd8",
+      "at": "2026-11-09T08:14:59.759371601Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "The model, context, token and cost fields this needs are collected by coax-3ca4b5. Build on what that issue stores in `App`.",
+      "commit": "f8a9596",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "f348667",
