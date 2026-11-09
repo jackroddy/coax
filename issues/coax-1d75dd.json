@@ -1,0 +1,28 @@
+{
+  "id": "coax-1d75dd",
+  "title": "coax warns when the ACP registry has a newer version of the agent",
+  "body": "When coax connects, `app::run` calls `link.initialize()` and keeps only `agent_info.name` from the `InitializeResponse`, for the status line. `agent_info` is ACP's `Implementation`, which also carries a required `version: String`. Claude Code's adapter reports the name `@agentclientprotocol/claude-agent-acp`.\n\nThe ACP registry (`agentclientprotocol/registry` on GitHub) holds one `<id>/agent.json` per agent, with the latest `version` and how the agent is distributed. Claude's entry has the id `claude-acp` and stood at 0.101.0 on 2026-11-08. An agent installed from a release download does not update itself, so today nothing tells Jack when one falls behind.\n\n## Proposal\n\n- An agent entry in `config.toml` takes an optional `registry = \"<id>\"`.\n- After `initialize`, coax fetches that id's `agent.json` and compares its `version` with `agent_info.version`. When the registry is ahead, the status line shows `<version> available`.\n- coax caches the fetched version for a day under `$XDG_CACHE_HOME/coax/`, or `~/.cache/coax/`.\n- A failed fetch shows nothing and does not delay the session.\n\n## Rejected\n\n- A shim around the adapter that checks versions. Its warning would go to stderr, under coax's screen. To be seen it would have to sit in the ACP stream and rewrite messages.\n- Matching `agent_info.name` against the registry with no configured id. The adapter's name is not its registry id. The name appears only inside the `npx` package string in `agent.json`.\n\n## Cost\n\n- A new optional config key. It ships in the same minor release as coax-2e4b33.\n- `AcpAgentConfig` denies unknown fields, so an entry can no longer deserialize straight into it. `Config` needs its own entry type that builds an `AcpAgentConfig`.\n- coax makes a network request it does not make today, only for entries that set `registry`.\n\n## Open\n\n- How coax fetches: an HTTP crate such as `ureq`, or a `curl` subprocess.\n- Whether the registry publishes a single index file that is a better fetch target than one `agent.json` per agent. Nobody has checked.\n- How preview versions such as `0.101.1-preview.7` compare. The guess is that coax compares only the stable `version` field.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T04:38:05.879468285Z",
+  "updated_at": "2026-11-09T04:38:05.879468285Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e9ae3c8",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
