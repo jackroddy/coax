@@ -230,6 +230,9 @@ command line, the keys, and the scenario format the fake agent reads.
 - The copy glyph is `⧉` (U+29C9) in place of a Nerd Font private-use
   character. Some fonts drew that wider than one column and pushed the box's
   right border out of line.
+- Panning a code block or table counts display columns. A wide character cut
+  by the window's edge shows as a space, where before the rows came out a
+  column or more off.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

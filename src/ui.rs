@@ -308,16 +308,41 @@ fn window(row: &Line<'static>, offset: usize, visible: usize) -> Line<'static> {
     cells_line(window_cells(row, offset, visible))
 }
 
+/// The cell after a wide character's first, so a row has one cell per column.
+const WIDE_TAIL: char = '\0';
+
 fn window_cells(row: &Line<'static>, offset: usize, visible: usize) -> Vec<(char, Style)> {
-    let mut cells: Vec<(char, Style)> = row
-        .spans
-        .iter()
-        .flat_map(|span| span.content.chars().map(|ch| (ch, span.style)))
-        .skip(offset)
-        .take(visible)
-        .collect();
+    let mut columns: Vec<(char, Style)> = Vec::new();
+    for span in &row.spans {
+        for ch in span.content.chars() {
+            match ch.width() {
+                Some(1) => columns.push((ch, span.style)),
+                Some(2) => columns.extend([(ch, span.style), (WIDE_TAIL, span.style)]),
+                _ => {}
+            }
+        }
+    }
+    let mut cells: Vec<(char, Style)> = columns.into_iter().skip(offset).take(visible).collect();
     cells.resize(visible, (' ', Style::default()));
+
+    // a wide character cut by either edge shows as a space
+    if let Some(first) = cells.first_mut()
+        && first.0 == WIDE_TAIL
+    {
+        first.0 = ' ';
+    }
+    blank_cut_head(&mut cells);
     cells
+}
+
+/// Replace the last cell with a space when it is a wide character's first
+/// column, since its second column is outside the window.
+fn blank_cut_head(cells: &mut [(char, Style)]) {
+    if let Some(last) = cells.last_mut()
+        && last.0.width() == Some(2)
+    {
+        last.0 = ' ';
+    }
 }
 
 /// `window` with `label` in the last columns.
@@ -330,9 +355,11 @@ fn window_with_corner(
 ) -> Line<'static> {
     let mut cells = window_cells(row, offset, visible);
     let label: Vec<char> = label.chars().take(visible).collect();
+    let start = visible - label.len();
     for (n, ch) in label.iter().enumerate() {
-        cells[visible - label.len() + n] = (*ch, style);
+        cells[start + n] = (*ch, style);
     }
+    blank_cut_head(&mut cells[..start]);
     cells_line(cells)
 }
 
@@ -379,6 +406,9 @@ fn scroll_bar(visible: usize, max: usize, offset: usize, hot: bool) -> Line<'sta
 fn cells_line(cells: Vec<(char, Style)>) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (ch, style) in cells {
+        if ch == WIDE_TAIL {
+            continue;
+        }
         match spans.last_mut() {
             Some(last) if last.style == style => last.content.to_mut().push(ch),
             _ => spans.push(Span::styled(ch.to_string(), style)),
@@ -2040,6 +2070,28 @@ mod tests {
                 .chars()
                 .all(|ch| !('\u{e000}'..='\u{f8ff}').contains(&ch))
         );
+    }
+
+    #[test]
+    fn a_window_over_wide_characters_is_as_many_columns_as_asked_and_never_cuts_one() {
+        let row = Line::from("日本語 ab");
+        for offset in 0..12 {
+            for visible in 1..10 {
+                let shown = window(&row, offset, visible);
+                assert_eq!(shown.width(), visible, "offset {offset} visible {visible}");
+            }
+        }
+        assert_eq!(window(&row, 1, 4).to_string(), " 本 ");
+        assert_eq!(window(&row, 2, 4).to_string(), "本語");
+        assert_eq!(window(&row, 6, 3).to_string(), " ab");
+    }
+
+    #[test]
+    fn a_corner_label_over_a_wide_character_blanks_the_character_it_cuts() {
+        let row = Line::from("日本語日本語");
+        let shown = window_with_corner(&row, 0, 6, "⧉", Style::default());
+        assert_eq!(shown.width(), 6);
+        assert_eq!(shown.to_string(), "日本 ⧉");
     }
 
     #[test]
