@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:28:08.26836425Z",
-  "updated_at": "2026-11-09T06:02:45.092161078Z",
+  "updated_at": "2026-11-09T09:02:28.042832175Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -40,6 +40,14 @@
       "author": "Jack Roddy/4d38e22a",
       "text": "Steps d3 and d4 landed on dev: prompt and thought styling, tool runs under \"✦ N tools\", the permission box and the plan pane. The four-step redesign is complete; further changes come from Jack using it.",
       "commit": "1ee873c",
+      "branch": "dev"
+    },
+    {
+      "id": "98e248af",
+      "at": "2026-11-09T09:02:28.042831435Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Landed on dev since the four-step redesign: the borderless layout (81c6809), the message thread (ee203c6), bordered boxes and the palette (be5017b, c0adfe2), panning (567afeb), the picker look (a8a85f2, f8a9596), header chips (4a2d95f), and the two-line Powerline header with drag, copy, expandable diffs and output (fb5026f, 8517a80, 1fd2c24). In progress: hover text on coloured chips uses the foreground colour, and clickable blocks get a fold marker.",
+      "commit": "1fd2c24",
       "branch": "dev"
     }
   ],
