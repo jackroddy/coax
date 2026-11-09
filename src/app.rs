@@ -42,6 +42,9 @@ pub struct Guard {
     pub key: ExitKey,
     pub until: Instant,
 }
+/// How often the working spinner steps.
+const SPIN_INTERVAL: Duration = Duration::from_millis(150);
+
 const PAN_COLUMNS: isize = 4;
 
 pub struct App {
@@ -69,6 +72,9 @@ pub struct App {
     /// The header chips on screen, set by the last draw.
     pub chips: Vec<ChipArea>,
     pub hover: Option<ChipTarget>,
+
+    /// The working spinner's frame, stepped while the agent works.
+    pub spinner: usize,
     pub menu: Option<Menu>,
 
     /// Where the open menu was drawn and the first of its rows shown, set by
@@ -741,6 +747,7 @@ pub async fn run(
         settings,
         chips: Vec::new(),
         hover: None,
+        spinner: 0,
         menu: None,
         menu_area: None,
         menu_first: 0,
@@ -772,6 +779,8 @@ pub async fn run(
         let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
         restore_terminal(info);
     }));
+    let mut spin = tokio::time::interval(SPIN_INTERVAL);
+    spin.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let result = loop {
         if let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
             break Err(Error::into_internal_error(error));
@@ -796,6 +805,10 @@ pub async fn run(
             },
             () = async { tokio::time::sleep_until(expiry.unwrap().into()).await }, if expiry.is_some() => {
                 app.guard = None;
+                Action::None
+            },
+            _ = spin.tick(), if app.transcript.in_flight => {
+                app.spinner = app.spinner.wrapping_add(1);
                 Action::None
             },
             message = decade_messages.recv() => {
@@ -879,6 +892,7 @@ mod tests {
             settings: Settings::default(),
             chips: Vec::new(),
             hover: None,
+            spinner: 0,
             menu: None,
             menu_area: None,
             menu_first: 0,
@@ -1062,13 +1076,24 @@ mod tests {
         app
     }
 
-    fn header(app: &mut App, width: u16) -> String {
+    fn header_buffer(app: &mut App, width: u16) -> ratatui::buffer::Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
         terminal.draw(|frame| ui::draw(frame, app)).unwrap();
-        let buffer = terminal.backend().buffer().clone();
-        (0..width)
-            .map(|x| buffer[(x, 0)].symbol().to_string())
-            .collect()
+        terminal.backend().buffer().clone()
+    }
+
+    /// The two header rows, one string each.
+    fn header_rows(app: &mut App, width: u16) -> [String; 2] {
+        let buffer = header_buffer(app, width);
+        [0, 1].map(|y| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect()
+        })
+    }
+
+    fn header(app: &mut App, width: u16) -> String {
+        header_rows(app, width).join("\n")
     }
 
     #[test]
@@ -1076,29 +1101,97 @@ mod tests {
         use agent_client_protocol::v1::schema::{Cost, SessionUpdate, Usage, UsageUpdate};
 
         let mut app = with_settings();
+        app.agent = "claude".to_string();
         let update = UsageUpdate::new(28_481, 1_000_000).cost(Cost::new(0.136, "USD"));
         app.settings.apply(&SessionUpdate::UsageUpdate(update));
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
-        let text = header(&mut app, 140);
+        let [identity, chips] = header_rows(&mut app, 140);
         assert!(
-            text.contains(" Auto   Opus   Effort Default   Fast off "),
-            "{text}"
+            identity.starts_with("\u{e0b6} coax \u{e0b0} claude \u{e0b4}"),
+            "{identity}"
         );
-        assert!(text.contains("ctx 28k/1.0M 3%"), "{text}");
-        assert!(text.contains("↑28k ↓4 $0.14"), "{text}");
-        assert!(text.contains("idle"), "{text}");
+        assert!(identity.contains(" ctx 28k/1.0M 3% "), "{identity}");
+        assert!(identity.contains(" ↑28k ↓4 $0.14 "), "{identity}");
+        assert!(identity.contains(" idle "), "{identity}");
+        assert!(!identity.contains("session"), "{identity}");
+        for label in [" Auto ", " Opus ", " Effort Default ", " Fast off "] {
+            assert!(chips.contains(label), "{chips}");
+        }
         assert_eq!(app.chips.len(), 4);
     }
 
     #[test]
     fn a_narrow_header_keeps_the_mode_chip_and_the_state() {
         let mut app = with_settings();
-        let text = header(&mut app, 50);
-        assert!(text.contains(" Auto "), "{text}");
-        assert!(text.contains(" ⋯ "), "{text}");
-        assert!(text.contains("idle"), "{text}");
-        assert!(!text.contains("session"), "{text}");
+        let [identity, chips] = header_rows(&mut app, 30);
+        assert!(chips.contains(" Auto "), "{chips}");
+        assert!(chips.contains(" ⋯ "), "{chips}");
+        assert!(identity.contains(" idle "), "{identity}");
+        assert!(!identity.contains("ctx"), "{identity}");
+    }
+
+    #[test]
+    fn the_header_is_two_lines_with_no_rule_under_them() {
+        let mut app = with_settings();
+        let buffer = header_buffer(&mut app, 100);
+        let third: String = (0..100)
+            .map(|x| buffer[(x, 2)].symbol().to_string())
+            .collect();
+        assert!(!third.contains('─'), "{third}");
+    }
+
+    #[test]
+    fn the_separators_on_screen_join_the_colours_of_their_neighbours() {
+        let mut app = with_settings();
+        let buffer = header_buffer(&mut app, 100);
+        let join = &buffer[(7, 0)];
+        assert_eq!(join.symbol(), "\u{e0b0}");
+        assert_eq!(join.fg, buffer[(2, 0)].bg);
+        assert_eq!(join.bg, buffer[(8, 0)].bg);
+    }
+
+    #[test]
+    fn the_overflow_chip_replaces_the_chips_that_do_not_fit_on_the_second_line() {
+        let mut app = with_settings();
+        let [_, chips] = header_rows(&mut app, 40);
+        assert!(chips.contains(" ⋯ "), "{chips}");
+        assert!(!chips.contains("Fast off"), "{chips}");
+        assert_eq!(
+            app.chips.last().unwrap().target,
+            ChipTarget::Overflow(app.chips.len() - 1)
+        );
+    }
+
+    #[test]
+    fn a_hovered_chip_turns_its_text_accent_without_an_underline() {
+        let mut app = with_settings();
+        header_buffer(&mut app, 140);
+        let area = app.chips[1].area;
+        app.mouse(wheel(
+            MouseEventKind::Moved,
+            KeyModifiers::NONE,
+            area.x + 1,
+            area.y,
+        ));
+        let buffer = header_buffer(&mut app, 140);
+        let cell = &buffer[(area.x + 1, area.y)];
+        assert_eq!(cell.fg, crate::palette::get().accent);
+        assert!(!cell.modifier.contains(ratatui::style::Modifier::UNDERLINED));
+        let other = &buffer[(app.chips[2].area.x + 1, area.y)];
+        assert_ne!(other.fg, crate::palette::get().accent);
+    }
+
+    #[test]
+    fn the_working_segment_shows_the_spinner_frame() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        let frame = |app: &mut App| header_rows(app, 100)[0].clone();
+        assert!(frame(&mut app).contains(" ◐ working "));
+        app.spinner = 1;
+        assert!(frame(&mut app).contains(" ◓ working "));
+        app.spinner = 5;
+        assert!(frame(&mut app).contains(" ◓ working "));
     }
 
     fn click(app: &mut App, column: u16, row: u16) -> Action {

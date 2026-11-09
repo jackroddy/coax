@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use agent_client_protocol::v1::schema::{
-    PlanEntryStatus, StopReason, ToolCallContent, ToolCallId, ToolCallStatus, ToolKind,
+    PlanEntryStatus, ToolCallContent, ToolCallId, ToolCallStatus, ToolKind,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -9,8 +9,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
-use crate::app::{App, ChipArea, ChipTarget, ExitKey, MenuTarget};
+use crate::app::{App, ExitKey, MenuTarget};
 use crate::command;
+use crate::header;
 use crate::palette;
 use crate::session::{Child, Entry, Tool};
 use crate::settings::{self, Control};
@@ -48,7 +49,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(area);
 
-    draw_header(frame, header_area, app);
+    header::draw_header(frame, header_area, app);
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
     draw_menu(frame, app);
@@ -101,275 +102,6 @@ pub fn pane(title: &str, focused: bool) -> Block<'static> {
             .title(Span::styled(format!(" {title} "), dim()))
             .border_style(dim())
     }
-}
-
-/// The two header rows: the coax badge and `title` on the left, `right`
-/// against the right edge, and a dim rule below.
-pub fn title_bar(frame: &mut Frame, area: Rect, title: &str, right: Line) {
-    title_bar_with(frame, area, Line::from(badge(title)), right);
-}
-
-fn badge(title: &str) -> Vec<Span<'static>> {
-    let badge = Style::new()
-        .fg(palette::INK)
-        .bg(palette::get().cyan)
-        .add_modifier(Modifier::BOLD);
-    vec![
-        Span::styled(" coax ", badge),
-        Span::raw("  "),
-        Span::styled(title.to_string(), bold()),
-    ]
-}
-
-/// Like `title_bar`, with the left side given as a line.
-fn title_bar_with(frame: &mut Frame, area: Rect, left: Line<'static>, right: Line) {
-    let [top, rule] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
-    let gap = (area.width as usize)
-        .saturating_sub(left.width() + right.width())
-        .max(1);
-    let mut spans = left.spans;
-    spans.push(Span::raw(" ".repeat(gap)));
-    spans.extend(right.spans);
-    frame.render_widget(Paragraph::new(Line::from(spans)), top);
-    frame.render_widget(
-        Paragraph::new("─".repeat(area.width as usize)).style(dim()),
-        rule,
-    );
-}
-
-/// What fits in the header at a width: how many chips, whether a `⋯` chip
-/// stands for the rest, and which of the right-hand items are shown.
-#[derive(Debug, PartialEq, Eq)]
-struct Fit {
-    chips: usize,
-    hidden: bool,
-    session: bool,
-    tokens: bool,
-    context: bool,
-    plan: bool,
-}
-
-/// Widths of the header's parts, 0 for a part that is absent.
-struct HeaderParts {
-    left: usize,
-    chips: Vec<usize>,
-    plan: usize,
-    context: usize,
-    tokens: usize,
-    session: usize,
-
-    /// The decade and state items, which always show.
-    rest: usize,
-}
-
-const OVERFLOW_CHIP: &str = " ⋯ ";
-
-impl HeaderParts {
-    fn total(&self, fit: &Fit) -> usize {
-        let mut total = self.left;
-        if fit.chips > 0 {
-            total += 2 + self.chips[..fit.chips].iter().sum::<usize>() + fit.chips - 1;
-            if fit.hidden {
-                total += 1 + OVERFLOW_CHIP.chars().count();
-            }
-        }
-        let items: Vec<usize> = [
-            (fit.plan, self.plan),
-            (fit.context, self.context),
-            (fit.tokens, self.tokens),
-            (true, self.rest),
-            (fit.session, self.session),
-        ]
-        .into_iter()
-        .filter(|(shown, width)| *shown && *width > 0)
-        .map(|(_, width)| width)
-        .collect();
-
-        // a gap before the right side, three columns between its items and
-        // a column after them
-        total + 1 + items.iter().sum::<usize>() + 3 * items.len().saturating_sub(1) + 1
-    }
-
-    /// Drop what does not fit in `width`: the session id, then the tokens and
-    /// cost, the context, the plan, and then chips from the right into `⋯`.
-    /// The first chip, the mode, stays.
-    fn fit(&self, width: usize) -> Fit {
-        let mut fit = Fit {
-            chips: self.chips.len(),
-            hidden: false,
-            session: self.session > 0,
-            tokens: self.tokens > 0,
-            context: self.context > 0,
-            plan: self.plan > 0,
-        };
-        while self.total(&fit) > width {
-            if fit.session {
-                fit.session = false;
-            } else if fit.tokens {
-                fit.tokens = false;
-            } else if fit.context {
-                fit.context = false;
-            } else if fit.plan {
-                fit.plan = false;
-            } else if fit.chips > 1 {
-                fit.chips -= 1;
-                fit.hidden = true;
-            } else {
-                break;
-            }
-        }
-        fit
-    }
-}
-
-fn draw_header(frame: &mut Frame, area: Rect, app: &mut App) {
-    let palette = palette::get();
-    let state = if app.transcript.in_flight {
-        Span::styled("◐ working", Style::new().fg(palette.yellow))
-    } else {
-        match &app.transcript.last_stop {
-            Some(stop) if *stop != StopReason::EndTurn => {
-                Span::styled(format!("idle, {stop:?}"), Style::new().fg(palette.yellow))
-            }
-            _ => Span::styled("idle", dim()),
-        }
-    };
-    let mut rest = Vec::new();
-    match &app.decade_pane {
-        Some(pane) if pane.is_empty() => rest.push(Span::styled("decade   ", dim())),
-        Some(pane) => rest.push(Span::styled(format!("decade pane {pane}   "), dim())),
-        None => {}
-    }
-    rest.push(state);
-
-    let plan = &app.transcript.plan;
-    let plan_item = (!plan.is_empty()).then(|| {
-        let done = plan
-            .iter()
-            .filter(|entry| entry.status == PlanEntryStatus::Completed)
-            .count();
-        vec![Span::styled(
-            format!("plan {done}/{} done", plan.len()),
-            dim(),
-        )]
-    });
-    let context_item = app.settings.context.as_ref().map(|context| {
-        let percent = if context.size == 0 {
-            0
-        } else {
-            (context.used as f64 * 100.0 / context.size as f64).round() as u64
-        };
-        let style = if percent > 95 {
-            Style::new().fg(palette.red)
-        } else if percent > 80 {
-            Style::new().fg(palette.yellow)
-        } else {
-            dim()
-        };
-        vec![Span::styled(
-            format!(
-                "ctx {}/{} {percent}%",
-                settings::count(context.used),
-                settings::count(context.size)
-            ),
-            style,
-        )]
-    });
-    let tokens_item = app.settings.tokens.as_ref().map(|tokens| {
-        let mut text = format!(
-            "↑{} ↓{}",
-            settings::count(tokens.up),
-            settings::count(tokens.down)
-        );
-        if let Some(cost) = &app.settings.cost {
-            text.push(' ');
-            text.push_str(&settings::money(cost));
-        }
-        vec![Span::styled(text, dim())]
-    });
-    let session: String = app.session.to_string().chars().take(8).collect();
-    let session_item = vec![Span::styled(format!("session {session}"), dim())];
-
-    let settings = app.settings.settings();
-    let chip_texts: Vec<String> = settings
-        .iter()
-        .map(|setting| format!(" {} ", setting.label))
-        .collect();
-    let left_width = badge(&app.agent).iter().map(Span::width).sum::<usize>();
-    let width_of = |item: &Option<Vec<Span>>| {
-        item.as_ref()
-            .map_or(0, |spans| spans.iter().map(Span::width).sum())
-    };
-    let parts = HeaderParts {
-        left: left_width,
-        chips: chip_texts.iter().map(|text| text.chars().count()).collect(),
-        plan: width_of(&plan_item),
-        context: width_of(&context_item),
-        tokens: width_of(&tokens_item),
-        session: session_item.iter().map(Span::width).sum(),
-        rest: rest.iter().map(Span::width).sum(),
-    };
-    let fit = parts.fit(area.width as usize);
-
-    let mut chips: Vec<(String, Style, ChipTarget)> = Vec::new();
-    for (index, setting) in settings.iter().enumerate().take(fit.chips) {
-        let mut style = Style::new().bg(palette.selection);
-        if setting.unguarded {
-            style = style.fg(palette.yellow);
-        }
-        if setting.model && app.transcript.in_flight {
-            style = dim().bg(palette.selection);
-        }
-        chips.push((chip_texts[index].clone(), style, ChipTarget::Setting(index)));
-    }
-    if fit.hidden {
-        chips.push((
-            OVERFLOW_CHIP.to_string(),
-            Style::new().bg(palette.selection),
-            ChipTarget::Overflow(fit.chips),
-        ));
-    }
-    let mut left = badge(&app.agent);
-    app.chips.clear();
-    let mut x = area.x + left_width as u16;
-    for (n, (text, style, target)) in chips.into_iter().enumerate() {
-        let gap = if n == 0 { "  " } else { " " };
-        left.push(Span::raw(gap));
-        x += gap.len() as u16;
-        let width = text.chars().count() as u16;
-        let disabled = matches!(target, ChipTarget::Setting(index)
-            if settings[index].model && app.transcript.in_flight);
-        let style = if app.hover == Some(target) && !disabled {
-            style.add_modifier(Modifier::UNDERLINED)
-        } else {
-            style
-        };
-        left.push(Span::styled(text, style));
-        app.chips.push(ChipArea {
-            area: Rect::new(x, area.y, width, 1),
-            target,
-        });
-        x += width;
-    }
-
-    let mut right = Vec::new();
-    let items = [
-        (fit.plan, plan_item),
-        (fit.context, context_item),
-        (fit.tokens, tokens_item),
-        (true, Some(rest)),
-        (fit.session, Some(session_item)),
-    ];
-    for (shown, item) in items {
-        if let (true, Some(spans)) = (shown, item) {
-            if !right.is_empty() {
-                right.push(Span::raw("   "));
-            }
-            right.extend(spans);
-        }
-    }
-    right.push(Span::raw(" "));
-    title_bar_with(frame, area, Line::from(left), Line::from(right));
 }
 
 fn draw_plan(frame: &mut Frame, area: Rect, app: &App) {
@@ -1599,59 +1331,6 @@ mod tests {
             assert!(matches!(&parts[..], [Part::Flow(_)]));
             assert_eq!(flat(&parts), whole);
         }
-    }
-
-    fn parts() -> HeaderParts {
-        HeaderParts {
-            left: 20,
-            chips: vec![6, 8, 10, 9],
-            plan: 13,
-            context: 15,
-            tokens: 13,
-            session: 16,
-            rest: 6,
-        }
-    }
-
-    #[test]
-    fn a_wide_header_shows_every_part() {
-        let fit = parts().fit(135);
-        assert_eq!(
-            fit,
-            Fit {
-                chips: 4,
-                hidden: false,
-                session: true,
-                tokens: true,
-                context: true,
-                plan: true
-            }
-        );
-    }
-
-    #[test]
-    fn a_narrowing_header_drops_the_session_then_tokens_then_context_then_plan() {
-        let session = parts().fit(134);
-        assert!(!session.session && session.tokens && session.context && session.plan);
-        let tokens = parts().fit(100);
-        assert!(!tokens.tokens && tokens.context && tokens.chips == 4);
-        let context = parts().fit(85);
-        assert!(!context.context && context.plan && context.chips == 4);
-        let plan = parts().fit(66);
-        assert!(!plan.plan && plan.chips == 4 && !plan.hidden);
-    }
-
-    #[test]
-    fn a_narrower_header_moves_chips_from_the_right_into_the_overflow_chip() {
-        let fit = parts().fit(60);
-        assert_eq!((fit.chips, fit.hidden), (3, true));
-        assert!(!fit.plan && !fit.context && !fit.tokens && !fit.session);
-    }
-
-    #[test]
-    fn the_mode_chip_stays_however_narrow_the_header_gets() {
-        let fit = parts().fit(30);
-        assert_eq!((fit.chips, fit.hidden), (1, true));
     }
 
     fn task() -> Tool {

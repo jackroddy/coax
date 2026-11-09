@@ -19,8 +19,9 @@ command line, the keys, and the scenario format the fake agent reads.
   and no command. Up and Down (or `k` and `j`) move, Enter starts the
   highlighted agent, and Esc or Ctrl+c quits. `default = "<name>"` in the
   config sets which agent starts highlighted. With no agents configured, the
-  picker names the file to create. The picker shares the session screen's header
-  and marks the chosen row with `›` and a shaded background.
+  picker names the file to create. The picker opens with the same badge and
+  title segments as the session header and marks the chosen row with `›` and a
+  shaded background.
 - Started inside a decade pane, coax joins the decade socket. The status
   line says when it is connected.
 - Permission requests from the agent open a box over the conversation, with
@@ -52,21 +53,21 @@ command line, the keys, and the scenario format the fake agent reads.
   `update` steps. With it, the fake agent advertises `session/list` and
   `session/load`, lists the sessions and replays a session's history when it
   is loaded. `scenarios/resume.json` is an example.
-- The header shows the session's settings as chips after the agent's name, in
-  the order mode, model, thought level, other model settings, then the rest.
+- The header's second line shows the session's settings as chips, in the order
+  mode, model, thought level, other model settings, then the rest.
   A click on a chip opens a box under it that lists the choices with their
   descriptions and marks the current one. A click or the arrow keys with Enter
   applies the choice through `session/set_config_option`, Esc or a click
   elsewhere closes the box, and an error from the agent shows in the box. A
   yes or no setting flips on a click. The mode chip turns yellow in `auto` and
-  `bypassPermissions`, where the agent does not ask. A chip is underlined
-  under the pointer. When the chips do not fit, they move from the right into
+  `bypassPermissions`, where the agent does not ask. A chip's text turns the
+  accent colour under the pointer. When the chips do not fit, they move from the right into
   a `⋯` chip that lists them. An agent with no config options but with modes
   gets a mode chip through `session/set_mode`.
 - The header also shows the context as `ctx 28k/1.0M 3%`, yellow past 80% and
   red past 95%, and the session's tokens as `↑28k ↓4` with the cost after
   them, such as `$0.14`, when the agent sends one. On a narrow screen the
-  session id goes first, then the tokens, the context and the plan summary.
+  tokens go first, then the context and the plan summary.
 - The scenario format gains an optional top-level `config_options` array (the
   settings the agent offers, as ACP config options) and `modes`, and an
   optional `usage` on an act, which the prompt response reports. The fake
@@ -114,9 +115,13 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
-- The session has no panes and reads like a messaging thread. A header names
-  the agent (by its config entry when it has one), whether it is working,
-  decade when connected and the session. Your messages sit in a rounded box
+- The session has no panes and reads like a messaging thread. The header is
+  two lines with no rule under them. The first has the coax badge and the
+  agent's name (by its config entry when it has one) on the left, and the
+  plan summary, context, tokens, decade when connected and whether the agent
+  is working on the right. The second has the setting chips. Each is a
+  coloured block, joined to its neighbours with Powerline separators and
+  capped with round ends, and the working block animates `◐◓◑◒`. Your messages sit in a rounded box
   in the accent colour against the right edge, at most 70% of the width. The
   agent's text sits in a blue rounded box on the left, at most 90% of the
   width. Thoughts start with a dim `✻` and stay unboxed with a 10% margin on

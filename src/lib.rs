@@ -4,6 +4,7 @@ pub mod app;
 pub mod command;
 pub mod config;
 pub mod fake;
+pub mod header;
 pub mod palette;
 pub mod picker;
 pub mod scenario;

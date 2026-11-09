@@ -16,6 +16,7 @@ use tokio::time::{Instant, timeout_at};
 use crate::agents::Listing;
 use crate::app::Keys;
 use crate::config::Config;
+use crate::header;
 use crate::palette;
 use crate::ui;
 
@@ -189,7 +190,7 @@ impl<'a> Picker<'a> {
         } else {
             "pick an agent"
         };
-        ui::title_bar(frame, header_area, title, Line::default());
+        header::title_bar(frame, header_area, title);
         let on_session = matches!(self.selected, Selected::Session(..));
         if sessions {
             self.draw_sessions(frame, sessions_area, on_session, now);
