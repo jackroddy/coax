@@ -1,0 +1,28 @@
+{
+  "id": "coax-1d80ae",
+  "title": "A prompt that starts with a path cannot be sent",
+  "body": "A prompt whose first character is `/` is read as a coax command (`src/command.rs`). An unknown command shows `no command /name` in the rule under the prompt and sends nothing. So a message like `/home/jack/x is broken` can never be sent. coax treats `/home/jack/x` as an unknown command, and Jack's rule is that a single-slash command never sends.\n\n## Options\n\n- Send the text as an ordinary prompt when its first word contains a second `/`, since that marks a path. Every other unknown `/name` keeps the unknown-command line. Lean: this one, because a path is the usual way a message starts with a slash, and no coax command name contains a slash.\n- An escape: a leading space, or `\\/`, sends the text as typed.\n- Leave it. The user rephrases so the message does not start with the path.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T10:11:37.96931637Z",
+  "updated_at": "2026-11-09T10:11:37.96931637Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "27bed5d",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
