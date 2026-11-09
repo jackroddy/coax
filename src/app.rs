@@ -19,7 +19,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 
 use crate::acp::{Applied, Change, Event, Link};
-use crate::session::Transcript;
+use crate::session::{Entry, Transcript};
 use crate::settings::{Control, Settings};
 use crate::ui;
 
@@ -119,6 +119,9 @@ pub struct Menu {
     /// The column of the chip the box hangs from.
     pub anchor: u16,
     pub error: Option<String>,
+
+    /// The value of a model choice waiting for a second choice to confirm it.
+    pub confirm: Option<String>,
 }
 
 pub enum MenuTarget {
@@ -297,12 +300,16 @@ impl App {
                 };
                 match &setting.control {
                     Control::Flip(on) => Action::Change(flip(&setting.id, *on)),
+                    Control::Choose(_) if setting.model && self.transcript.in_flight => {
+                        Action::None
+                    }
                     Control::Choose(choices) => {
                         self.menu = Some(Menu {
                             target: MenuTarget::Setting(setting.id.clone()),
                             cursor: choices.iter().position(|c| c.current).unwrap_or(0),
                             anchor,
                             error: None,
+                            confirm: None,
                         });
                         Action::None
                     }
@@ -314,10 +321,19 @@ impl App {
                     cursor: 0,
                     anchor,
                     error: None,
+                    confirm: None,
                 });
                 Action::None
             }
         }
+    }
+
+    /// Whether a turn has been played, so a model change costs a reread.
+    fn has_conversation(&self) -> bool {
+        self.transcript
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, Entry::User(_) | Entry::Agent(_)))
     }
 
     /// How many rows the open menu has.
@@ -372,14 +388,27 @@ impl App {
                 let Some(choice) = choices.get(menu.cursor) else {
                     return Action::None;
                 };
-                Action::Change(if setting.from_modes {
+                let change = if setting.from_modes {
                     Change::Mode(choice.value.clone())
                 } else {
                     Change::Config {
                         id: setting.id.clone(),
                         value: SessionConfigOptionValue::value_id(choice.value.clone()),
                     }
-                })
+                };
+                if !(setting.model && self.has_conversation()) {
+                    return Action::Change(change);
+                }
+                // a model change in a conversation waits for a second choice
+                // of the same model
+                if choice.current {
+                    self.menu = None;
+                } else if menu.confirm.as_deref() == Some(choice.value.as_str()) {
+                    return Action::Change(change);
+                } else if let Some(menu) = &mut self.menu {
+                    menu.confirm = Some(choice.value.clone());
+                }
+                Action::None
             }
             MenuTarget::Overflow(first) => {
                 let Some(setting) = settings.get(first + menu.cursor) else {
@@ -387,12 +416,16 @@ impl App {
                 };
                 match &setting.control {
                     Control::Flip(on) => Action::Change(flip(&setting.id, *on)),
+                    Control::Choose(_) if setting.model && self.transcript.in_flight => {
+                        Action::None
+                    }
                     Control::Choose(choices) => {
                         self.menu = Some(Menu {
                             target: MenuTarget::Setting(setting.id.clone()),
                             cursor: choices.iter().position(|c| c.current).unwrap_or(0),
                             anchor: menu.anchor,
                             error: None,
+                            confirm: None,
                         });
                         Action::None
                     }
@@ -1006,5 +1039,145 @@ mod tests {
         assert!(app.expanded.is_empty());
         click(&mut app, 3, 9);
         assert!(app.expanded.is_empty());
+    }
+
+    fn enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    fn down() -> KeyEvent {
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
+    }
+
+    /// An app past its first turn with the model menu open on `Opus`.
+    fn in_a_conversation_with_the_model_menu_open() -> App {
+        let mut app = with_settings();
+        app.transcript.prompt("hello".to_string());
+        app.transcript
+            .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
+        header(&mut app, 140);
+        let model = app.chips[1].area;
+        click(&mut app, model.x, model.y);
+        assert!(app.menu.is_some());
+        app
+    }
+
+    #[test]
+    fn choosing_another_model_in_a_conversation_asks_for_the_same_choice_again() {
+        let mut app = in_a_conversation_with_the_model_menu_open();
+        app.key(down(), Instant::now());
+        assert!(matches!(app.key(enter(), Instant::now()), Action::None));
+        assert_eq!(
+            app.menu.as_ref().unwrap().confirm.as_deref(),
+            Some("sonnet")
+        );
+        let action = app.key(enter(), Instant::now());
+        let Action::Change(Change::Config { id, value }) = action else {
+            panic!("expected a config change");
+        };
+        assert_eq!(id, "model");
+        assert_eq!(value.as_value_id().map(|id| &*id.0), Some("sonnet"));
+    }
+
+    #[test]
+    fn choosing_a_different_model_than_the_one_waiting_moves_the_warning() {
+        let mut app = in_a_conversation_with_the_model_menu_open();
+        app.key(down(), Instant::now());
+        app.key(enter(), Instant::now());
+        app.key(down(), Instant::now());
+        assert!(matches!(app.key(enter(), Instant::now()), Action::None));
+        assert_eq!(app.menu.as_ref().unwrap().confirm.as_deref(), Some("haiku"));
+    }
+
+    #[test]
+    fn choosing_the_current_model_or_escape_backs_out_of_the_warning() {
+        let mut app = in_a_conversation_with_the_model_menu_open();
+        app.key(down(), Instant::now());
+        app.key(enter(), Instant::now());
+        app.key(
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            Instant::now(),
+        );
+        assert!(matches!(app.key(enter(), Instant::now()), Action::None));
+        assert!(app.menu.is_none());
+
+        let mut app = in_a_conversation_with_the_model_menu_open();
+        app.key(down(), Instant::now());
+        app.key(enter(), Instant::now());
+        app.key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            Instant::now(),
+        );
+        assert!(app.menu.is_none());
+    }
+
+    #[test]
+    fn a_model_choice_before_the_first_turn_applies_at_once() {
+        let mut app = with_settings();
+        header(&mut app, 140);
+        let model = app.chips[1].area;
+        click(&mut app, model.x, model.y);
+        app.key(down(), Instant::now());
+        assert!(matches!(
+            app.key(enter(), Instant::now()),
+            Action::Change(_)
+        ));
+    }
+
+    #[test]
+    fn other_settings_switch_at_once_in_a_conversation() {
+        let mut app = with_settings();
+        app.transcript.prompt("hello".to_string());
+        app.transcript
+            .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
+        header(&mut app, 140);
+        let effort = app.chips[2].area;
+        click(&mut app, effort.x, effort.y);
+        app.key(down(), Instant::now());
+        assert!(matches!(
+            app.key(enter(), Instant::now()),
+            Action::Change(_)
+        ));
+    }
+
+    #[test]
+    fn the_model_chip_does_nothing_while_the_agent_is_working() {
+        let mut app = with_settings();
+        app.transcript.prompt("hello".to_string());
+        header(&mut app, 140);
+        let model = app.chips[1].area;
+        assert!(matches!(click(&mut app, model.x, model.y), Action::None));
+        assert!(app.menu.is_none());
+        let mode = app.chips[0].area;
+        click(&mut app, mode.x, mode.y);
+        assert!(app.menu.is_some());
+    }
+
+    #[test]
+    fn the_warning_shows_under_the_choices_with_the_context_size() {
+        use agent_client_protocol::v1::schema::{SessionUpdate, UsageUpdate};
+
+        let mut app = in_a_conversation_with_the_model_menu_open();
+        app.settings
+            .apply(&SessionUpdate::UsageUpdate(UsageUpdate::new(
+                412_000, 1_000_000,
+            )));
+        app.key(down(), Instant::now());
+        app.key(enter(), Instant::now());
+        let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
+        terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let screen: String = (0..30)
+            .map(|y| {
+                (0..140)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            screen.contains("rereads the conversation (412k tokens) through"),
+            "{screen}"
+        );
     }
 }

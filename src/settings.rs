@@ -44,6 +44,9 @@ pub struct Setting {
 
     /// Whether a change goes through `session/set_mode`.
     pub from_modes: bool,
+
+    /// Whether the setting picks the model.
+    pub model: bool,
 }
 
 pub enum Control {
@@ -186,6 +189,7 @@ fn setting(option: &SessionConfigOption) -> Setting {
         control,
         unguarded: is_mode && is_unguarded(&current),
         from_modes: false,
+        model: matches!(option.category, Some(SessionConfigOptionCategory::Model)),
     }
 }
 
@@ -212,6 +216,7 @@ fn mode_setting(modes: &SessionModeState) -> Setting {
         control: Control::Choose(choices),
         unguarded: is_unguarded(&current),
         from_modes: true,
+        model: false,
     }
 }
 
@@ -229,6 +234,13 @@ fn flatten(
             .flatten()
             .flat_map(|group| &group.options),
     )
+}
+
+/// The warning shown before the model changes in a conversation: the new
+/// model has to read it again, and its cache is empty.
+pub fn rereads(model: &str, used: Option<u64>) -> String {
+    let size = used.map_or(String::new(), |used| format!(" ({} tokens)", count(used)));
+    format!("rereads the conversation{size} through {model} on the next turn, without the cache")
 }
 
 /// A count of tokens as `4`, `28k` or `1.0M`.
@@ -263,6 +275,18 @@ mod tests {
         assert_eq!(count(200_000), "200k");
         assert_eq!(count(1_000_000), "1.0M");
         assert_eq!(count(2_450_000), "2.5M");
+    }
+
+    #[test]
+    fn the_rereading_warning_names_the_model_and_the_context_when_it_is_known() {
+        assert_eq!(
+            rereads("Sonnet", Some(412_000)),
+            "rereads the conversation (412k tokens) through Sonnet on the next turn, without the cache"
+        );
+        assert_eq!(
+            rereads("Sonnet", None),
+            "rereads the conversation through Sonnet on the next turn, without the cache"
+        );
     }
 
     #[test]

@@ -314,6 +314,9 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &mut App) {
         if setting.unguarded {
             style = style.fg(palette.yellow);
         }
+        if setting.model && app.transcript.in_flight {
+            style = dim().bg(palette.selection);
+        }
         chips.push((chip_texts[index].clone(), style, ChipTarget::Setting(index)));
     }
     if fit.hidden {
@@ -331,7 +334,9 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &mut App) {
         left.push(Span::raw(gap));
         x += gap.len() as u16;
         let width = text.chars().count() as u16;
-        let style = if app.hover == Some(target) {
+        let disabled = matches!(target, ChipTarget::Setting(index)
+            if settings[index].model && app.transcript.in_flight);
+        let style = if app.hover == Some(target) && !disabled {
             style.add_modifier(Modifier::UNDERLINED)
         } else {
             style
@@ -1148,7 +1153,32 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
         .max(title.chars().count() + 2)
         + 4;
     let width = (wanted as u16).min(60).min(screen.width);
-    let error = usize::from(menu.error.is_some());
+    let warning = menu.confirm.as_ref().and_then(|value| match &menu.target {
+        MenuTarget::Setting(id) => {
+            let setting = settings.iter().find(|setting| setting.id == *id)?;
+            let Control::Choose(choices) = &setting.control else {
+                return None;
+            };
+            let choice = choices.iter().find(|choice| choice.value == *value)?;
+            Some(settings::rereads(
+                &choice.name,
+                app.settings.context.as_ref().map(|c| c.used),
+            ))
+        }
+        MenuTarget::Overflow(_) => None,
+    });
+    let width = if warning.is_some() {
+        width.max(60.min(screen.width))
+    } else {
+        width
+    };
+    let inner = (width as usize).saturating_sub(4);
+    let warning_rows: Vec<String> = warning
+        .iter()
+        .flat_map(|text| textwrap::wrap(text, inner.max(1)))
+        .map(|row| row.into_owned())
+        .collect();
+    let error = usize::from(menu.error.is_some()) + warning_rows.len();
     let visible = rows
         .len()
         .min((screen.height as usize).saturating_sub(4 + error))
@@ -1160,7 +1190,6 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
         width,
         height: (visible + error) as u16 + 2,
     };
-    let inner = (width as usize).saturating_sub(4);
     let mut lines: Vec<Line> = rows
         .iter()
         .enumerate()
@@ -1181,6 +1210,9 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
             }
         })
         .collect();
+    for row in warning_rows {
+        lines.push(Line::styled(row, Style::new().fg(palette::get().yellow)));
+    }
     if let Some(message) = &menu.error {
         lines.push(Line::styled(cut(message, inner), dim()));
     }

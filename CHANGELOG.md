@@ -80,6 +80,13 @@ command line, the keys, and the scenario format the fake agent reads.
   subagent's output belongs to. The scenario format is unchanged: an `update`
   step already carries `_meta` as it does on the wire, and
   `scenarios/subagents.json` shows two parallel subagents.
+- Choosing a different model after the first turn does not apply it at once.
+  The model box shows, in yellow, that the next turn rereads the conversation
+  through the new model, with its size when the agent has reported one, and
+  without the cache. Choosing the same model again applies it. Choosing the
+  current model or pressing Esc backs out. While the agent is working, the
+  model chip is dim and a click on it does nothing. Other settings still
+  switch at once.
 - Ctrl+t shows or hides the plan, as a list above the prompt. It is hidden
   until then.
 - `--prompt <text>` sends a first prompt as soon as the session opens.
