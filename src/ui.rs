@@ -705,7 +705,12 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     };
     let title = cut(&permission.title, (width as usize).saturating_sub(4));
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(pane(&title, true)), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            pane(&title, true).title_bottom(Line::styled("esc cancel", dim()).right_aligned()),
+        ),
+        area,
+    );
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, input: &InputView) {

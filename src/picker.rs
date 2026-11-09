@@ -184,7 +184,12 @@ impl<'a> Picker<'a> {
             Constraint::Length(1),
         ])
         .areas(frame.area());
-        ui::title_bar(frame, header_area, "pick an agent", Line::default());
+        let title = if sessions {
+            "pick a session or an agent"
+        } else {
+            "pick an agent"
+        };
+        ui::title_bar(frame, header_area, title, Line::default());
         let on_session = matches!(self.selected, Selected::Session(..));
         if sessions {
             self.draw_sessions(frame, sessions_area, on_session, now);
@@ -219,21 +224,40 @@ impl<'a> Picker<'a> {
         let row = &self.sessions[index];
         let chosen = self.position() == index;
         let gutter = if chosen { "› " } else { "  " };
-        let agent = self.names[row.agent];
-        let age = row
-            .updated
-            .as_ref()
-            .map(|at| age(at, now))
-            .unwrap_or_default();
-        let room = width.saturating_sub(2 + 2 + agent.chars().count() + 1 + age.chars().count());
-        let title = ui::cut(&row.title, room);
-        let used = 2 + title.chars().count() + 2 + agent.chars().count() + age.chars().count();
+        let agent_width = self
+            .names
+            .iter()
+            .map(|name| name.chars().count())
+            .max()
+            .unwrap_or(0);
+        let ages: Vec<String> = self
+            .sessions
+            .iter()
+            .map(|row| {
+                row.updated
+                    .as_ref()
+                    .map(|at| age(at, now))
+                    .unwrap_or_default()
+            })
+            .collect();
+        let age_width = ages
+            .iter()
+            .map(|age| age.chars().count())
+            .max()
+            .unwrap_or(0);
+        let title_width = width.saturating_sub(2 + 2 + agent_width + 2 + age_width);
+        let title = ui::cut(&row.title, title_width);
         let line = Line::from(vec![
             Span::raw(gutter),
-            Span::styled(title, Style::new().fg(palette::get().cyan)),
-            Span::styled(format!("  {agent}"), ui::dim()),
-            Span::raw(" ".repeat(width.saturating_sub(used))),
-            Span::styled(age, ui::dim()),
+            Span::styled(
+                format!("{title:<title_width$}  "),
+                Style::new().fg(palette::get().cyan),
+            ),
+            Span::styled(
+                format!("{:<agent_width$}  ", self.names[row.agent]),
+                ui::dim(),
+            ),
+            Span::styled(format!("{:>age_width$}", ages[index]), ui::dim()),
         ]);
         if chosen {
             line.style(Style::new().bg(palette::get().selection))
