@@ -129,6 +129,7 @@ mod tests {
             id: name.to_string(),
             name: name.to_string(),
             label: "value".to_string(),
+            value: "value".to_string(),
             description: None,
             control: Control::Flip(false),
             unguarded: false,

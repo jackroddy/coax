@@ -36,10 +36,13 @@ command line, the keys, and the scenario format the fake agent reads.
   naming the file.
 - Wide code blocks and tables in the agent's text keep their full width, where
   before a code line was cut with `…` and a table was squeezed or stacked. A
-  block wider than the box shows a window onto it, with a dim `◂` or `▸` at
-  the edge that has more. Shift with the wheel, or a horizontal wheel, over
-  the block pans it four columns at a time. Pressing on a block and dragging
-  sideways pans it column for column with the pointer.
+  block wider than the box shows a window onto it, with a scroll bar row
+  under it. The bar is a dim `─` track and a `━` thumb whose length and place
+  follow the visible share and the pan, in the accent colour while the
+  pointer is over it or dragging it. Dragging the thumb sideways pans the
+  block with the pointer, and a click on the track moves the thumb there.
+  Shift with the wheel, or a horizontal wheel, over the block pans it four
+  columns at a time.
 - A bare `coax` starts every configured agent at once and lists their earlier
   sessions for the current folder in a `sessions` pane above the agents,
   newest first, each with its title, its agent and its age. j and k move
@@ -54,19 +57,18 @@ command line, the keys, and the scenario format the fake agent reads.
   `update` steps. With it, the fake agent advertises `session/list` and
   `session/load`, lists the sessions and replays a session's history when it
   is loaded. `scenarios/resume.json` is an example.
-- The header's second line shows the session's settings as a strip of
-  coloured chips against the right edge, in the order mode, model, thought
-  level, other model settings, then the rest. Each chip is black bold text on
-  its own colour, and a powerline arrow in that colour leads into it from the
-  chip before. The arrows need a Nerd or Powerline font.
+- The header's second line shows the session's settings as plain text, such
+  as `mode auto   model opus   effort default`, in the order mode, model,
+  thought level, other model settings, then the rest. The name is dim and the
+  value is in the normal colour.
   A click on a chip opens a box under it that lists the choices with their
   descriptions and marks the current one. A click or the arrow keys with Enter
   applies the choice through `session/set_config_option`, Esc or a click
   elsewhere closes the box, and an error from the agent shows in the box. A
-  yes or no setting flips on a click. The mode chip is yellow in `auto` and
-  `bypassPermissions`, where the agent does not ask, and green otherwise. A
-  chip's text turns the foreground colour under the pointer. When the chips do
-  not fit, they move from the right into a `⋯` chip that lists them. An agent with no config options but with modes
+  yes or no setting flips on a click. The mode value is yellow in `auto` and
+  `bypassPermissions`, where the agent does not ask. A
+  value turns the accent colour under the pointer. When the settings do not
+  fit, they move from the right into a dim `⋯` that lists them. An agent with no config options but with modes
   gets a mode chip through `session/set_mode`.
 - The header's first line also shows the context as `ctx 28k/1.0M 3%`, yellow past 80% and
   red past 95%, and the session's tokens as `↑28k ↓4` with the cost after
@@ -145,7 +147,7 @@ command line, the keys, and the scenario format the fake agent reads.
   when it has one) on the left. On the right it has the plan summary, context,
   tokens, cost and decade when connected, dim and joined by `·`, and then
   whether the agent is working, with a spinner stepping through `◐◓◑◒`. The
-  second is the chip strip and the third a dim rule. Your messages sit in a rounded box
+  second is the settings and the third a dim rule. Your messages sit in a rounded box
   in the accent colour against the right edge, at most 70% of the width. The
   agent's text sits in a blue rounded box on the left, at most 90% of the
   width. Thoughts start with a dim `✻` and stay unboxed with a 10% margin on

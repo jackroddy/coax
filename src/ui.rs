@@ -282,19 +282,12 @@ fn kept_whole(
     }
 }
 
-/// `row` cut to the `visible` columns from `offset`, with a dim `◂` in the
-/// first column when there is more to the left and a dim `▸` in the last when
-/// there is more to the right of a row `natural` columns wide.
-fn window(row: &Line<'static>, offset: usize, visible: usize, natural: usize) -> Line<'static> {
-    cells_line(window_cells(row, offset, visible, natural))
+/// `row` cut to the `visible` columns from `offset`.
+fn window(row: &Line<'static>, offset: usize, visible: usize) -> Line<'static> {
+    cells_line(window_cells(row, offset, visible))
 }
 
-fn window_cells(
-    row: &Line<'static>,
-    offset: usize,
-    visible: usize,
-    natural: usize,
-) -> Vec<(char, Style)> {
+fn window_cells(row: &Line<'static>, offset: usize, visible: usize) -> Vec<(char, Style)> {
     let mut cells: Vec<(char, Style)> = row
         .spans
         .iter()
@@ -303,33 +296,63 @@ fn window_cells(
         .take(visible)
         .collect();
     cells.resize(visible, (' ', Style::default()));
-    if offset > 0 {
-        cells[0] = ('◂', dim());
-    }
-    if offset + visible < natural {
-        cells[visible - 1] = ('▸', dim());
-    }
     cells
 }
 
-/// `window` with `label` in the last columns, and the `▸` moved left of it.
+/// `window` with `label` in the last columns.
 fn window_with_corner(
     row: &Line<'static>,
     offset: usize,
     visible: usize,
-    natural: usize,
     label: &str,
     style: Style,
 ) -> Line<'static> {
-    let mut cells = window_cells(row, offset, visible, natural);
+    let mut cells = window_cells(row, offset, visible);
     let label: Vec<char> = label.chars().take(visible).collect();
-    if offset + visible < natural && visible > label.len() {
-        cells[visible - label.len() - 1] = ('▸', dim());
-    }
     for (n, ch) in label.iter().enumerate() {
         cells[visible - label.len() + n] = (*ch, style);
     }
     cells_line(cells)
+}
+
+/// The thumb of a scroll bar `visible` columns wide over a block that pans
+/// `max` columns, at pan `offset`: its first column and its length. The
+/// length is the visible share of the block, at least 2.
+pub fn thumb(visible: usize, max: usize, offset: usize) -> (usize, usize) {
+    let natural = visible + max;
+    let len = ((visible * visible + natural / 2) / natural).clamp(2.min(visible), visible);
+    let free = visible - len;
+    let start = (offset.min(max) * free + max / 2)
+        .checked_div(max)
+        .unwrap_or(0);
+    (start, len)
+}
+
+/// The pan that puts the thumb's first column at `start`, which may lie
+/// outside the bar: the inverse of `thumb`.
+pub fn pan_for_thumb(visible: usize, max: usize, start: isize) -> usize {
+    let free = visible - thumb(visible, max, 0).1;
+    if free == 0 {
+        return 0;
+    }
+    let start = start.clamp(0, free as isize) as usize;
+    (start * max + free / 2) / free
+}
+
+/// The scroll bar row under a wide block: a dim track with a thumb on it,
+/// in the accent colour while `hot`.
+fn scroll_bar(visible: usize, max: usize, offset: usize, hot: bool) -> Line<'static> {
+    let (start, len) = thumb(visible, max, offset);
+    let colour = if hot {
+        palette::get().accent
+    } else {
+        palette::get().foreground
+    };
+    Line::from(vec![
+        Span::styled("─".repeat(start), dim()),
+        Span::styled("━".repeat(len), Style::new().fg(colour)),
+        Span::styled("─".repeat(visible - start - len), dim()),
+    ])
 }
 
 fn cells_line(cells: Vec<(char, Style)>) -> Line<'static> {
@@ -413,6 +436,8 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
 
                             // one row for the border above the box's rows
                             let first = lines.len() + 1 + rows.len();
+                            let hot = app.hover_bar == Some(key)
+                                || app.drag.is_some_and(|drag| drag.key == key);
                             if max > 0 {
                                 wides.push(Wide {
                                     key,
@@ -431,7 +456,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                             }
                             for (n, row) in block_rows.iter().enumerate() {
                                 if n > 0 || copy.is_none() {
-                                    rows.push(window(row, offset, shown, *natural));
+                                    rows.push(window(row, offset, shown));
                                     continue;
                                 }
                                 let (label, style) = if copied == Some(key) {
@@ -441,9 +466,10 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                                 } else {
                                     (COPY_GLYPH, dim())
                                 };
-                                rows.push(window_with_corner(
-                                    row, offset, shown, *natural, label, style,
-                                ));
+                                rows.push(window_with_corner(row, offset, shown, label, style));
+                            }
+                            if max > 0 {
+                                rows.push(scroll_bar(shown, max, offset, hot));
                             }
                         }
                     }
@@ -520,6 +546,20 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
             key: copy.key,
         })
         .collect();
+    app.bars = wides
+        .iter()
+        .filter(|wide| (start..end).contains(&(wide.first + wide.height)))
+        .map(|wide| ScrollBar {
+            area: Rect::new(
+                area.x + 2,
+                area.y + (wide.first + wide.height - start) as u16,
+                wide.width as u16,
+                1,
+            ),
+            key: wide.key,
+            max: wide.max,
+        })
+        .collect();
     app.wide = wides
         .iter()
         .filter_map(|wide| {
@@ -589,6 +629,17 @@ struct Wide {
     height: usize,
     width: usize,
     max: usize,
+}
+
+/// A scroll bar row on screen, found by the mouse to drag its thumb.
+pub struct ScrollBar {
+    pub area: Rect,
+
+    /// The entry and the block within it.
+    pub key: (usize, usize),
+
+    /// The furthest the block pans, in columns.
+    pub max: usize,
 }
 
 /// A wide block on screen, found by the mouse to pan it.
@@ -1708,28 +1759,68 @@ mod tests {
     }
 
     #[test]
-    fn the_copy_glyph_takes_the_last_column_of_the_first_row_and_pushes_the_arrow_left() {
+    fn the_copy_glyph_takes_the_last_column_of_the_first_row() {
         let row = Line::from("0123456789");
-        let at =
-            |offset| window_with_corner(&row, offset, 6, 10, "#", Style::default()).to_string();
-        assert_eq!(at(0), "0123▸#");
-        assert_eq!(at(4), "◂5678#");
+        let at = |offset| window_with_corner(&row, offset, 6, "#", Style::default()).to_string();
+        assert_eq!(at(0), "01234#");
+        assert_eq!(at(4), "45678#");
     }
 
     #[test]
-    fn a_window_marks_the_edges_that_have_more_beyond_them() {
+    fn a_window_shows_the_columns_from_the_offset_with_no_edge_markers() {
         let row = Line::from("0123456789");
-        let at = |offset| window(&row, offset, 5, 10).to_string();
-        assert_eq!(at(0), "0123▸");
-        assert_eq!(at(2), "◂345▸");
-        assert_eq!(at(5), "◂6789");
+        assert_eq!(window(&row, 0, 5).to_string(), "01234");
+        assert_eq!(window(&row, 5, 5).to_string(), "56789");
     }
 
     #[test]
     fn a_window_pads_a_row_shorter_than_the_block() {
         let row = Line::from("01");
-        assert_eq!(window(&row, 0, 5, 10).to_string(), "01  ▸");
-        assert_eq!(window(&row, 3, 5, 10).to_string(), "◂   ▸");
+        assert_eq!(window(&row, 0, 5).to_string(), "01   ");
+        assert_eq!(window(&row, 3, 5).to_string(), "     ");
+    }
+
+    #[test]
+    fn the_thumb_is_the_visible_share_of_the_block_and_moves_with_the_pan() {
+        // half the block is visible
+        assert_eq!(thumb(20, 20, 0), (0, 10));
+        assert_eq!(thumb(20, 20, 10), (5, 10));
+        assert_eq!(thumb(20, 20, 20), (10, 10));
+        // a tenth is visible, so the thumb stays at its minimum of 2
+        assert_eq!(thumb(20, 180, 0), (0, 2));
+        assert_eq!(thumb(20, 180, 90), (9, 2));
+        assert_eq!(thumb(20, 180, 180), (18, 2));
+        // nearly all of it is visible
+        assert_eq!(thumb(20, 2, 0), (0, 18));
+        assert_eq!(thumb(20, 2, 2), (2, 18));
+    }
+
+    #[test]
+    fn the_thumb_never_leaves_a_one_column_bar() {
+        assert_eq!(thumb(1, 5, 3), (0, 1));
+        assert_eq!(thumb(2, 5, 5), (0, 2));
+    }
+
+    #[test]
+    fn the_pan_for_a_thumb_position_inverts_the_thumb_and_stops_at_the_ends() {
+        for offset in 0..=4 {
+            let (start, _) = thumb(40, 4, offset);
+            assert_eq!(pan_for_thumb(40, 4, start as isize), offset);
+        }
+        assert_eq!(pan_for_thumb(20, 20, 5), 10);
+        assert_eq!(pan_for_thumb(20, 20, -7), 0);
+        assert_eq!(pan_for_thumb(20, 20, 99), 20);
+    }
+
+    #[test]
+    fn the_scroll_bar_row_is_a_dim_track_with_a_thumb_of_the_foreground_colour() {
+        let bar = scroll_bar(10, 10, 5, false);
+        assert_eq!(bar.to_string(), "───━━━━━──");
+        assert_eq!(bar.width(), 10);
+        assert_eq!(bar.spans[1].style.fg, Some(palette::get().foreground));
+        assert_eq!(bar.spans[0].style, dim());
+        let hot = scroll_bar(10, 10, 5, true);
+        assert_eq!(hot.spans[1].style.fg, Some(palette::get().accent));
     }
 
     #[test]

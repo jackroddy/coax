@@ -51,23 +51,26 @@ const PAN_COLUMNS: isize = 4;
 /// How long a block's copy glyph says `copied`.
 const COPIED_FOR: Duration = Duration::from_secs(1);
 
-/// A block being panned by the pointer.
+/// A scroll bar thumb being dragged by the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Drag {
-    key: (usize, usize),
+    pub key: (usize, usize),
 
-    /// The column the button went down on.
-    from: u16,
+    /// How far into the thumb the pointer took hold.
+    grab: isize,
 
-    /// How far the block was panned then.
-    offset: usize,
+    /// The bar's first column, its width and how far its block pans.
+    bar_x: u16,
+    visible: usize,
     max: usize,
 }
 
-/// The offset of a block dragged from column `from` to column `to`: the
-/// block follows the pointer, so dragging right shows what is to the left.
-fn dragged(offset: usize, from: u16, to: u16, max: usize) -> usize {
-    (offset as isize - (to as isize - from as isize)).clamp(0, max as isize) as usize
+impl Drag {
+    /// The pan that keeps the thumb under the pointer at `column`.
+    fn pan_at(&self, column: u16) -> usize {
+        let start = column as isize - self.bar_x as isize - self.grab;
+        ui::pan_for_thumb(self.visible, self.max, start)
+    }
 }
 
 pub struct App {
@@ -119,8 +122,14 @@ pub struct App {
     /// The wide blocks on screen, set by the last draw.
     pub wide: Vec<ui::WideBlock>,
 
-    /// The block the pointer is panning, from a press until the release.
+    /// The thumb the pointer is dragging, from a press until the release.
     pub drag: Option<Drag>,
+
+    /// The scroll bars under wide blocks on screen, set by the last draw.
+    pub bars: Vec<ui::ScrollBar>,
+
+    /// The block whose thumb the pointer is over.
+    pub hover_bar: Option<(usize, usize)>,
 
     /// The copy glyphs on screen, set by the last draw.
     pub copies: Vec<ui::CopyArea>,
@@ -315,6 +324,10 @@ impl App {
             MouseEventKind::Moved => {
                 self.hover = self.chip_at(position);
                 self.hover_copy = self.copy_at(position);
+                self.hover_bar = self
+                    .bar_at(position)
+                    .filter(|(_, grab)| grab.is_some())
+                    .map(|(bar, _)| bar.key);
                 self.hover_fold = self
                     .folds
                     .iter()
@@ -325,8 +338,7 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => return self.click(position),
             MouseEventKind::Drag(MouseButton::Left) => {
                 if let Some(drag) = self.drag {
-                    let offset = dragged(drag.offset, drag.from, position.x, drag.max);
-                    self.pans.insert(drag.key, offset);
+                    self.pans.insert(drag.key, drag.pan_at(position.x));
                 }
                 return Action::None;
             }
@@ -354,6 +366,38 @@ impl App {
             self.pans.insert(block.key, offset);
         }
         Action::None
+    }
+
+    /// The scroll bar under `position`, and how far into its thumb that is
+    /// when it is on the thumb.
+    fn bar_at(&self, position: Position) -> Option<(&ui::ScrollBar, Option<isize>)> {
+        let bar = self.bars.iter().find(|bar| bar.area.contains(position))?;
+        let offset = self.pans.get(&bar.key).copied().unwrap_or(0);
+        let (start, len) = ui::thumb(bar.area.width as usize, bar.max, offset);
+        let column = (position.x - bar.area.x) as usize;
+        let on_thumb = (start..start + len).contains(&column);
+        Some((bar, on_thumb.then(|| (column - start) as isize)))
+    }
+
+    /// Take hold of the thumb under a press, or move it to the press first
+    /// when the press is on the track.
+    fn press_bar(&mut self, position: Position) -> bool {
+        let Some((bar, grab)) = self.bar_at(position) else {
+            return false;
+        };
+        let len = ui::thumb(bar.area.width as usize, bar.max, 0).1;
+        let drag = Drag {
+            key: bar.key,
+            grab: grab.unwrap_or(len as isize / 2),
+            bar_x: bar.area.x,
+            visible: bar.area.width as usize,
+            max: bar.max,
+        };
+        if grab.is_none() {
+            self.pans.insert(drag.key, drag.pan_at(position.x));
+        }
+        self.drag = Some(drag);
+        true
     }
 
     fn copy_at(&self, position: Position) -> Option<(usize, usize)> {
@@ -408,14 +452,7 @@ impl App {
                 }
                 return Action::None;
             }
-            if let Some(block) = self.wide.iter().find(|block| block.area.contains(position)) {
-                self.drag = Some(Drag {
-                    key: block.key,
-                    from: position.x,
-                    offset: self.pans.get(&block.key).copied().unwrap_or(0),
-                    max: block.max,
-                });
-            }
+            self.press_bar(position);
             return Action::None;
         };
         let anchor = chip.area.x;
@@ -852,6 +889,8 @@ pub async fn run(
         unknown: None,
         more_below: None,
         drag: None,
+        bars: Vec::new(),
+        hover_bar: None,
         copies: Vec::new(),
         hover_copy: None,
         hover_fold: None,
@@ -1014,6 +1053,8 @@ mod tests {
             unknown: None,
             more_below: None,
             drag: None,
+            bars: Vec::new(),
+            hover_bar: None,
             copies: Vec::new(),
             hover_copy: None,
             hover_fold: None,
@@ -1080,61 +1121,106 @@ mod tests {
         assert!(app.pans.is_empty());
     }
 
-    #[test]
-    fn dragging_a_block_pans_it_column_for_column_against_the_pointer() {
-        assert_eq!(dragged(10, 50, 47, 40), 13);
-        assert_eq!(dragged(10, 50, 54, 40), 6);
-        assert_eq!(dragged(10, 50, 50, 40), 10);
-    }
-
-    #[test]
-    fn a_drag_stops_at_the_ends_of_the_block() {
-        assert_eq!(dragged(2, 50, 60, 40), 0);
-        assert_eq!(dragged(30, 50, 20, 40), 40);
-    }
-
-    fn drag_event(kind: MouseEventKind, column: u16, row: u16) -> Action {
+    /// An app with a scroll bar 20 columns wide at column 2 of row 8, under
+    /// a block that pans 20 columns. The thumb is 10 columns long.
+    fn with_a_scroll_bar() -> App {
         let mut app = app();
-        app.mouse(wheel(kind, KeyModifiers::NONE, column, row))
+        app.bars = vec![ui::ScrollBar {
+            area: Rect::new(2, 8, 20, 1),
+            key: (1, 0),
+            max: 20,
+        }];
+        app
+    }
+
+    fn mouse_at(app: &mut App, kind: MouseEventKind, column: u16) {
+        app.mouse(wheel(kind, KeyModifiers::NONE, column, 8));
     }
 
     #[test]
-    fn pressing_on_a_wide_block_and_dragging_pans_it_until_the_release() {
-        let mut app = app();
-        let at = |app: &mut App, kind, column| {
-            app.mouse(wheel(kind, KeyModifiers::NONE, column, 6));
-        };
-        at(&mut app, MouseEventKind::Down(MouseButton::Left), 10);
-        at(&mut app, MouseEventKind::Drag(MouseButton::Left), 8);
-        assert_eq!(app.pans[&(1, 0)], 2);
-        at(&mut app, MouseEventKind::Drag(MouseButton::Left), 5);
-        assert_eq!(app.pans[&(1, 0)], 5);
-        at(&mut app, MouseEventKind::Up(MouseButton::Left), 5);
-        at(&mut app, MouseEventKind::Drag(MouseButton::Left), 0);
-        assert_eq!(app.pans[&(1, 0)], 5);
+    fn pressing_on_the_thumb_and_dragging_moves_the_thumb_with_the_pointer() {
+        let mut app = with_a_scroll_bar();
+        let down = MouseEventKind::Down(MouseButton::Left);
+        let drag = MouseEventKind::Drag(MouseButton::Left);
+
+        // the thumb covers columns 0..10 of the bar, so column 5 is on it
+        mouse_at(&mut app, down, 7);
+        assert!(app.drag.is_some());
+        assert!(!app.pans.contains_key(&(1, 0)));
+        mouse_at(&mut app, drag, 12);
+        assert_eq!(app.pans[&(1, 0)], 10);
+        assert_eq!(ui::thumb(20, 20, 10).0, 5);
+        mouse_at(&mut app, drag, 17);
+        assert_eq!(app.pans[&(1, 0)], 20);
+        mouse_at(&mut app, drag, 40);
+        assert_eq!(app.pans[&(1, 0)], 20);
+        mouse_at(&mut app, drag, 0);
+        assert_eq!(app.pans[&(1, 0)], 0);
+    }
+
+    #[test]
+    fn a_drag_ends_at_the_release() {
+        let mut app = with_a_scroll_bar();
+        mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), 7);
+        mouse_at(&mut app, MouseEventKind::Drag(MouseButton::Left), 12);
+        mouse_at(&mut app, MouseEventKind::Up(MouseButton::Left), 12);
+        mouse_at(&mut app, MouseEventKind::Drag(MouseButton::Left), 20);
+        assert_eq!(app.pans[&(1, 0)], 10);
         assert!(app.drag.is_none());
     }
 
     #[test]
-    fn dragging_with_no_press_on_a_block_pans_nothing() {
-        let mut app = app();
+    fn a_click_on_the_track_centres_the_thumb_there() {
+        let mut app = with_a_scroll_bar();
+        mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), 12);
+
+        // column 10 of the bar, a thumb 10 long: it starts at column 5
+        let offset = app.pans[&(1, 0)];
+        assert_eq!(ui::thumb(20, 20, offset).0, 5);
+        mouse_at(&mut app, MouseEventKind::Up(MouseButton::Left), 12);
+        mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), 2);
+        assert_eq!(app.pans[&(1, 0)], 0);
+        mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), 21);
+        assert_eq!(app.pans[&(1, 0)], 20);
+    }
+
+    #[test]
+    fn a_press_beside_the_bar_pans_nothing() {
+        let mut app = with_a_scroll_bar();
         app.mouse(wheel(
             MouseEventKind::Down(MouseButton::Left),
             KeyModifiers::NONE,
-            40,
-            20,
+            12,
+            9,
         ));
-        app.mouse(wheel(
-            MouseEventKind::Drag(MouseButton::Left),
-            KeyModifiers::NONE,
-            30,
-            20,
-        ));
+        assert!(app.drag.is_none());
         assert!(app.pans.is_empty());
-        assert!(matches!(
-            drag_event(MouseEventKind::Up(MouseButton::Left), 1, 1),
-            Action::None
-        ));
+    }
+
+    #[test]
+    fn the_pointer_is_over_the_thumb_only_on_the_thumb() {
+        let mut app = with_a_scroll_bar();
+        mouse_at(&mut app, MouseEventKind::Moved, 4);
+        assert_eq!(app.hover_bar, Some((1, 0)));
+        mouse_at(&mut app, MouseEventKind::Moved, 18);
+        assert_eq!(app.hover_bar, None);
+    }
+
+    #[test]
+    fn a_wide_block_gets_a_scroll_bar_row_under_it_the_width_it_shows() {
+        let mut app = app();
+        app.wide.clear();
+        let line = "x".repeat(80);
+        app.transcript
+            .entries
+            .push(Entry::Agent(format!("```\n{line}\n```")));
+        let screen = header_rows_all(&mut app, 40);
+        assert_eq!(app.bars.len(), 1);
+        let bar = &app.bars[0];
+        assert_eq!(bar.area.x, 2);
+        let row: &str = screen.lines().nth(bar.area.y as usize).unwrap();
+        assert!(row.contains('━'), "{row}");
+        assert!(!screen.contains('◂') && !screen.contains('▸'), "{screen}");
     }
 
     /// An app whose first entry is agent text with one code block, drawn
@@ -1475,7 +1561,7 @@ mod tests {
     }
 
     #[test]
-    fn the_header_shows_the_identity_the_status_and_the_chips() {
+    fn the_header_shows_the_identity_the_status_and_the_settings() {
         use agent_client_protocol::v1::schema::{Cost, SessionUpdate, Usage, UsageUpdate};
 
         let mut app = with_settings();
@@ -1484,70 +1570,76 @@ mod tests {
         app.settings.apply(&SessionUpdate::UsageUpdate(update));
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
-        let [identity, chips, rule] = header_rows(&mut app, 140);
+        let [identity, settings, rule] = header_rows(&mut app, 140);
         assert!(identity.starts_with(" coax · claude"), "{identity}");
         assert!(
             identity.ends_with("ctx 28k/1.0M 3% · ↑28k ↓4 · $0.14 · idle "),
             "{identity}"
         );
         assert!(!identity.contains("session"), "{identity}");
-        for label in [" Auto ", " Opus ", " Effort Default ", " Fast off "] {
-            assert!(chips.contains(label), "{chips}");
-        }
-        assert!(chips.ends_with(" Fast off "), "{chips}");
+        assert_eq!(
+            settings.trim_end(),
+            " mode auto   model opus   effort default   fast off"
+        );
         assert_eq!(rule, "─".repeat(140));
         assert_eq!(app.chips.len(), 4);
     }
 
     #[test]
-    fn the_header_has_no_round_caps_and_no_background_on_its_first_line() {
+    fn the_header_draws_no_powerline_glyph_and_no_background() {
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 100);
         for y in 0..3 {
             for x in 0..100 {
-                let symbol = buffer[(x, y)].symbol();
-                assert!(!symbol.contains(['\u{e0b4}', '\u{e0b6}']));
+                let cell = &buffer[(x, y)];
+                assert!(
+                    !cell
+                        .symbol()
+                        .chars()
+                        .any(|ch| ('\u{e0b0}'..='\u{e0bf}').contains(&ch)),
+                    "({x}, {y})"
+                );
+                assert_eq!(cell.bg, ratatui::style::Color::Reset);
             }
-        }
-        for x in 0..100 {
-            assert_eq!(buffer[(x, 0)].bg, ratatui::style::Color::Reset);
         }
     }
 
     #[test]
-    fn a_narrow_header_keeps_the_mode_chip_and_the_state() {
+    fn a_setting_has_its_name_dim_its_value_normal_and_the_mode_value_yellow() {
+        use ratatui::style::{Color, Modifier};
+
         let mut app = with_settings();
-        let [identity, chips, _] = header_rows(&mut app, 30);
-        assert!(chips.contains(" Auto "), "{chips}");
-        assert!(chips.ends_with(" ⋯ "), "{chips}");
+        let buffer = header_buffer(&mut app, 140);
+        let mode = app.chips[0].area;
+        let model = app.chips[1].area;
+        assert_eq!(mode.x, 1);
+        assert_eq!(model.x, 1 + "mode auto".len() as u16 + 3);
+
+        // the name is dim, the value starts after the name and a space
+        let name = &buffer[(model.x, 1)];
+        let value = &buffer[(model.x + 6, 1)];
+        assert_eq!((name.symbol(), value.symbol()), ("m", "o"));
+        assert!(name.modifier.contains(Modifier::DIM));
+        assert!(!value.modifier.contains(Modifier::DIM));
+        assert_eq!(value.fg, Color::Reset);
+        assert_eq!(buffer[(mode.x + 5, 1)].fg, crate::palette::get().yellow);
+    }
+
+    #[test]
+    fn a_narrow_header_keeps_the_first_setting_and_ends_in_the_overflow_mark() {
+        let mut app = with_settings();
+        let [identity, settings, _] = header_rows(&mut app, 30);
+        assert!(settings.starts_with(" mode auto"), "{settings}");
+        assert!(settings.trim_end().ends_with('⋯'), "{settings}");
         assert!(identity.contains("idle"), "{identity}");
         assert!(!identity.contains("ctx"), "{identity}");
     }
 
     #[test]
-    fn the_arrow_between_two_chips_on_screen_pairs_their_colours() {
-        let mut app = with_settings();
-        let buffer = header_buffer(&mut app, 100);
-        let (mode, model) = (app.chips[0].area, app.chips[1].area);
-
-        // the arrow sits in the column before a chip's text
-        let arrow = &buffer[(model.x - 1, model.y)];
-        assert_eq!(arrow.symbol(), "\u{e0b2}");
-        assert_eq!(arrow.fg, buffer[(model.x, model.y)].bg);
-        assert_eq!(arrow.bg, buffer[(mode.x, mode.y)].bg);
-        assert_ne!(arrow.fg, arrow.bg);
-        let first = &buffer[(mode.x - 1, mode.y)];
-        assert_eq!(first.symbol(), "\u{e0b2}");
-        assert_eq!(first.fg, buffer[(mode.x, mode.y)].bg);
-        assert_eq!(first.bg, ratatui::style::Color::Reset);
-    }
-
-    #[test]
-    fn the_chip_strip_sits_against_the_right_edge() {
+    fn the_settings_sit_against_the_left_edge_under_the_identity() {
         let mut app = with_settings();
         header_buffer(&mut app, 100);
-        let last = app.chips.last().unwrap().area;
-        assert_eq!(last.right(), 100);
+        assert_eq!(app.chips[0].area.x, 1);
     }
 
     #[test]
@@ -1563,12 +1655,13 @@ mod tests {
     }
 
     #[test]
-    fn a_hovered_chips_text_turns_from_black_to_the_foreground_and_stays_bold() {
+    fn a_hovered_settings_value_turns_accent_and_nothing_else_changes() {
         let mut app = with_settings();
         header_buffer(&mut app, 140);
         let area = app.chips[1].area;
+        let value_x = area.x + 6;
         let before = header_buffer(&mut app, 140);
-        assert_eq!(before[(area.x + 1, area.y)].fg, crate::palette::INK);
+        assert_ne!(before[(value_x, 1)].fg, crate::palette::get().accent);
         app.mouse(wheel(
             MouseEventKind::Moved,
             KeyModifiers::NONE,
@@ -1576,12 +1669,15 @@ mod tests {
             area.y,
         ));
         let buffer = header_buffer(&mut app, 140);
-        let cell = &buffer[(area.x + 1, area.y)];
-        assert_eq!(cell.fg, crate::palette::get().foreground);
-        assert!(cell.modifier.contains(ratatui::style::Modifier::BOLD));
-        assert_eq!(cell.bg, before[(area.x + 1, area.y)].bg);
-        let other = &buffer[(app.chips[2].area.x + 1, area.y)];
-        assert_eq!(other.fg, crate::palette::INK);
+        assert_eq!(buffer[(value_x, 1)].fg, crate::palette::get().accent);
+        assert!(
+            !buffer[(value_x, 1)]
+                .modifier
+                .contains(ratatui::style::Modifier::UNDERLINED)
+        );
+        assert_eq!(buffer[(area.x, 1)], before[(area.x, 1)]);
+        let other = app.chips[2].area;
+        assert_eq!(buffer[(other.x + 8, 1)], before[(other.x + 8, 1)]);
     }
 
     #[test]
