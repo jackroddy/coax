@@ -126,6 +126,12 @@ command line, the keys, and the scenario format the fake agent reads.
 - `scenarios/blocks.json` plays an agent message with code blocks, an edit and
   a command with output, for the fake agent.
 
+- The `⋯ N more below` row under a scrolled conversation is a button. A click
+  on it jumps to the bottom.
+- Enter on a `/name` or `//name` that matches no command leaves the text in the
+  prompt and shows a dim `no command /name` (or `no agent command //name`)
+  in the rule under the prompt until the next key.
+
 ### Changed
 
 - The session has no panes and reads like a messaging thread. The header is

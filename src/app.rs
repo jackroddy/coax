@@ -109,6 +109,13 @@ pub struct App {
     /// How far each wide block is panned, by entry and block.
     pub pans: HashMap<(usize, usize), usize>,
 
+    /// What the prompt's text names that is not a command, shown until the
+    /// next key.
+    pub unknown: Option<String>,
+
+    /// The `⋯ N more below` row on screen, set by the last draw.
+    pub more_below: Option<Rect>,
+
     /// The wide blocks on screen, set by the last draw.
     pub wide: Vec<ui::WideBlock>,
 
@@ -373,6 +380,10 @@ impl App {
             }
             return Action::None;
         }
+        if self.more_below.is_some_and(|row| row.contains(position)) {
+            self.scroll = 0;
+            return Action::None;
+        }
         let Some(chip) = self.chips.iter().find(|chip| chip.area.contains(position)) else {
             if let Some(key) = self.copy_at(position) {
                 let Some(text) = self.rendered.copy_text(key) else {
@@ -476,6 +487,7 @@ impl App {
             None => self.exact(&settings),
         };
         let Some(entry) = entry else {
+            self.unknown = command::unknown(&self.input);
             return Action::None;
         };
         match entry.kind {
@@ -644,6 +656,7 @@ impl App {
     /// the exit guard disarms it.
     pub fn key(&mut self, key: KeyEvent, now: Instant) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        self.unknown = None;
         let armed = self.guard.take().filter(|guard| guard.until > now);
         let exit = match key.code {
             KeyCode::Char('c') if ctrl => Some(ExitKey::CtrlC),
@@ -828,6 +841,8 @@ pub async fn run(
         guard: None,
         pans: HashMap::new(),
         wide: Vec::new(),
+        unknown: None,
+        more_below: None,
         drag: None,
         copies: Vec::new(),
         hover_copy: None,
@@ -987,6 +1002,8 @@ mod tests {
             menu_first: 0,
             guard: None,
             pans: HashMap::new(),
+            unknown: None,
+            more_below: None,
             drag: None,
             copies: Vec::new(),
             hover_copy: None,
@@ -1202,6 +1219,87 @@ mod tests {
         assert!(rows(&mut app).contains("- old line"));
         click(&mut app, x, y);
         assert!(!rows(&mut app).contains("old line"));
+    }
+
+    fn typed(app: &mut App, text: &str) {
+        for ch in text.chars() {
+            app.key(
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+                Instant::now(),
+            );
+        }
+    }
+
+    #[test]
+    fn enter_on_an_unknown_command_names_it_and_keeps_the_text() {
+        let mut app = with_settings();
+        typed(&mut app, "/nope");
+        app.key(enter(), Instant::now());
+        assert_eq!(app.unknown.as_deref(), Some("no command /nope"));
+        assert_eq!(app.input, "/nope");
+        assert!(app.menu.is_none());
+    }
+
+    #[test]
+    fn enter_on_an_unknown_agent_command_names_it() {
+        let mut app = with_settings();
+        typed(&mut app, "//nope");
+        app.key(enter(), Instant::now());
+        assert_eq!(app.unknown.as_deref(), Some("no agent command //nope"));
+        assert_eq!(app.input, "//nope");
+    }
+
+    #[test]
+    fn the_unknown_command_line_shows_under_the_prompt_until_the_next_key() {
+        let mut app = with_settings();
+        typed(&mut app, "/nope");
+        app.key(enter(), Instant::now());
+        let rows = header_rows_all(&mut app, 60);
+        let last = rows.lines().last().unwrap();
+        assert!(last.starts_with("── no command /nope ─"), "{last}");
+        typed(&mut app, "x");
+        assert!(app.unknown.is_none());
+        let rows = header_rows_all(&mut app, 60);
+        assert!(!rows.contains("no command"), "{rows}");
+    }
+
+    #[test]
+    fn a_known_command_names_nothing_unknown() {
+        let mut app = with_settings();
+        typed(&mut app, "/fast");
+        app.key(enter(), Instant::now());
+        assert!(app.unknown.is_none());
+    }
+
+    #[test]
+    fn a_click_on_the_more_below_row_jumps_to_the_bottom() {
+        let mut app = with_settings();
+        for n in 0..40 {
+            app.transcript.notice(format!("notice {n}"));
+        }
+        header(&mut app, 60);
+        app.scroll = 12;
+        header(&mut app, 60);
+        let row = app.more_below.expect("the indicator is on screen");
+        assert_eq!(row.width, 60);
+        click(&mut app, 3, row.y);
+        assert_eq!(app.scroll, 0);
+        header(&mut app, 60);
+        assert!(app.more_below.is_none());
+    }
+
+    #[test]
+    fn a_click_just_above_the_more_below_row_leaves_the_scroll_alone() {
+        let mut app = with_settings();
+        for n in 0..40 {
+            app.transcript.notice(format!("notice {n}"));
+        }
+        header(&mut app, 60);
+        app.scroll = 12;
+        header(&mut app, 60);
+        let row = app.more_below.unwrap();
+        click(&mut app, 3, row.y - 1);
+        assert_eq!(app.scroll, 12);
     }
 
     fn ctrl(ch: char) -> KeyEvent {

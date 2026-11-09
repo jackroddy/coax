@@ -65,7 +65,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 /// The rule under the prompt, carrying the exit guard's message while armed.
 fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
     let Some(guard) = app.guard else {
-        return draw_rule(frame, area);
+        return match &app.unknown {
+            Some(message) => draw_notice_rule(frame, area, message),
+            None => draw_rule(frame, area),
+        };
     };
     let message = match guard.key {
         ExitKey::CtrlC => "press ^c again to quit",
@@ -78,6 +81,15 @@ fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(message, Style::new().fg(palette::get().yellow)),
             Span::styled(format!(" {}", "─".repeat(rest)), dim()),
         ])),
+        area,
+    );
+}
+
+/// The rule under the prompt, carrying a dim `message`.
+fn draw_notice_rule(frame: &mut Frame, area: Rect, message: &str) {
+    let rest = (area.width as usize).saturating_sub(message.chars().count() + 4);
+    frame.render_widget(
+        Paragraph::new(format!("── {message} {}", "─".repeat(rest))).style(dim()),
         area,
     );
 }
@@ -525,7 +537,14 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
     let mut visible: Vec<Line> = lines.into_iter().take(end).skip(start).collect();
+    app.more_below = None;
     if app.scroll > 0 {
+        app.more_below = Some(Rect::new(
+            area.x,
+            area.y + visible.len() as u16,
+            area.width,
+            1,
+        ));
         visible.push(Line::styled(format!("⋯ {} more below", app.scroll), dim()));
     }
     frame.render_widget(Paragraph::new(visible), area);

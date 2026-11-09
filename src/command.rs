@@ -39,6 +39,15 @@ fn split_name(rest: &str) -> (&str, &str) {
     }
 }
 
+/// What to say when `text` names no command, or `None` for plain text.
+pub fn unknown(text: &str) -> Option<String> {
+    match parse(text) {
+        Typed::Plain => None,
+        Typed::Coax { name } => Some(format!("no command /{name}")),
+        Typed::Agent { name, .. } => Some(format!("no agent command //{name}")),
+    }
+}
+
 /// Whether the cursor is still inside the command's name, so a list of
 /// matches makes sense.
 pub fn naming(text: &str) -> bool {
@@ -211,5 +220,15 @@ mod tests {
         assert!(!naming("/mode "));
         assert!(!naming("//review the parser"));
         assert!(!naming("hello"));
+    }
+
+    #[test]
+    fn a_slash_name_is_unknown_in_the_words_of_its_kind() {
+        assert_eq!(unknown("/nope").as_deref(), Some("no command /nope"));
+        assert_eq!(
+            unknown("//nope with input").as_deref(),
+            Some("no agent command //nope")
+        );
+        assert_eq!(unknown("hello"), None);
     }
 }
