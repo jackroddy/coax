@@ -6,7 +6,10 @@ use agent_client_protocol::v1::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome,
     SessionId, ToolCallUpdate,
 };
-use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event as TermEvent, KeyCode, KeyEvent, KeyModifiers,
+    MouseEvent, MouseEventKind,
+};
 use decade_channel::{Channel, Message};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
@@ -15,10 +18,18 @@ use crate::acp::{Event, Link};
 use crate::session::Transcript;
 use crate::ui;
 
+const WHEEL_LINES: usize = 3;
+
 pub struct App {
     pub transcript: Transcript,
     pub input: String,
     pub scroll: usize,
+
+    /// Rows a page scroll moves, set by the last draw.
+    pub page: usize,
+
+    /// Transcript lines at the last draw.
+    pub lines_seen: usize,
     pub agent: String,
     pub session: SessionId,
     pub decade_pane: Option<String>,
@@ -113,6 +124,14 @@ impl App {
         self.transcript.permission(*permission.update, choice);
     }
 
+    pub fn mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.scroll += WHEEL_LINES,
+            MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_sub(WHEEL_LINES),
+            _ => {}
+        }
+    }
+
     pub fn key(&mut self, key: KeyEvent) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if let Some(permission) = &self.permission {
@@ -150,11 +169,15 @@ impl App {
                 Action::None
             }
             KeyCode::PageUp => {
-                self.scroll += 10;
+                self.scroll += self.page;
                 Action::None
             }
             KeyCode::PageDown => {
-                self.scroll = self.scroll.saturating_sub(10);
+                self.scroll = self.scroll.saturating_sub(self.page);
+                Action::None
+            }
+            KeyCode::End => {
+                self.scroll = 0;
                 Action::None
             }
             KeyCode::Char(ch) if !ctrl => {
@@ -184,6 +207,8 @@ pub async fn run(
         transcript: Transcript::default(),
         input: String::new(),
         scroll: 0,
+        page: 1,
+        lines_seen: 0,
         agent,
         session,
         decade_pane: decade.as_ref().map(|_| String::new()),
@@ -198,6 +223,7 @@ pub async fn run(
     }
     let mut keys = key_thread();
     let mut terminal = ratatui::init();
+    let _ = crossterm::execute!(io::stdout(), EnableMouseCapture);
     let result = loop {
         if let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
             break Err(Error::into_internal_error(error));
@@ -212,6 +238,10 @@ pub async fn run(
             },
             key = keys.recv() => match key {
                 Some(Ok(TermEvent::Key(key))) => app.key(key),
+                Some(Ok(TermEvent::Mouse(mouse))) => {
+                    app.mouse(mouse);
+                    Action::None
+                }
                 Some(Ok(_)) => Action::None,
                 Some(Err(error)) => break Err(Error::into_internal_error(error)),
                 None => break Ok(()),
@@ -234,8 +264,13 @@ pub async fn run(
             break Err(error);
         }
     };
-    ratatui::restore();
+    restore();
     result
+}
+
+pub fn restore() {
+    let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+    ratatui::restore();
 }
 
 fn connect_decade() -> (Option<Channel>, UnboundedReceiver<Message>) {

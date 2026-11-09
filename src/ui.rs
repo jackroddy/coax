@@ -263,10 +263,23 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
         index += 1;
     }
     let height = area.height as usize;
-    let max_scroll = lines.len().saturating_sub(height);
-    app.scroll = app.scroll.min(max_scroll);
-    let start = max_scroll - app.scroll;
-    let visible: Vec<Line> = lines.into_iter().skip(start).take(height).collect();
+    let rows = height.saturating_sub(1).max(1);
+    app.page = rows;
+    if app.scroll > 0 {
+        app.scroll += lines.len().saturating_sub(app.lines_seen);
+    }
+    app.lines_seen = lines.len();
+    app.scroll = app.scroll.min(lines.len().saturating_sub(rows));
+    let rows = if app.scroll > 0 { rows } else { height };
+    let end = lines.len() - app.scroll;
+    let mut visible: Vec<Line> = lines
+        .into_iter()
+        .take(end)
+        .skip(end.saturating_sub(rows))
+        .collect();
+    if app.scroll > 0 {
+        visible.push(Line::styled(format!("⋯ {} more below", app.scroll), dim()));
+    }
     frame.render_widget(Paragraph::new(visible), area);
 }
 

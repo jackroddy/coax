@@ -105,7 +105,7 @@ async fn main() {
     })
     .await
     {
-        ratatui::restore();
+        app::restore();
         fail(1, &error.to_string());
     }
 }
