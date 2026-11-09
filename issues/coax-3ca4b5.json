@@ -1,0 +1,28 @@
+{
+  "id": "coax-3ca4b5",
+  "title": "The header shows the session's settings as chips that open their pickers, with context and tokens beside them",
+  "body": "coax's header (`draw_header` and `title_bar` in `src/ui.rs`) shows the agent's name, the plan summary, whether the agent is working, decade when connected, and the session. It shows none of the session's settings, and coax has no way to change them. That is how coax-419109 surprised us: the Claude adapter starts sessions in Claude Code's `auto` mode, where the agent never asks permission, and nothing on screen said so.\n\nACP carries all of it, and `src/session.rs` drops it today:\n\n- Settings: `SessionConfigOption { id, name, description, category, kind }` arrives with `session/new` and `session/load`. `kind` is `Select { current_value, options }` or `Boolean { current_value }`. `category` is `mode`, `model`, `model_config`, `thought_level` or another name. `session/set_config_option` changes one and answers with the updated set. `config_option_update` arrives when the agent changes one itself. An agent with no config options may offer the older modes API (`session/set_mode`), which coax shows as a mode setting.\n- Context: the `usage_update` session update, `UsageUpdate { used, size, cost }`.\n- Tokens: `Usage` on the response to `session/prompt`, totaled across the session.\n\nThe Claude adapter v0.101.0 offers five settings: mode, model, effort (`thought_level`), and two of its own named ultracode and agent.\n\n## Proposal\n\n- Every setting gets a chip in the header showing its current value, in category order: mode, model, thought level, then the rest. A click on a chip opens a small picker box under it. A select lists its choices with each one's description and marks the current one. A boolean flips in place. A click or the arrows plus Enter applies, and Esc or a click elsewhere closes.\n- coax sends `session/set_config_option` and redraws from the set the agent returns. An error shows as a dim line in the picker.\n- When the chips do not fit, they drop from the right. A `⋯` chip then lists the hidden settings in the same kind of box, so every setting stays reachable.\n- The mode chip turns yellow for `auto` and `bypassPermissions`, the modes in which the agent does not ask.\n- A chip is underlined while the pointer is over it.\n- Context shows as `ctx 81k/200k 41%`, yellow past 80% and red past 95%. Session tokens show as `↑120k ↓9k` when there is room. Cost shows only when the agent sends one.\n- Mouse capture is already on, so clicks and the pointer position reach coax.\n\n## Rejected\n\n- Keyboard shortcuts for settings. Jack does not want hidden key actions in TUIs.\n- A separate settings pane opened from a button or `/settings`. The chips show the values and open their own pickers.\n\n## Open\n\n- Nobody has checked whether the Claude adapter fills `Usage` on the prompt response, or sends a cost on a subscription. One small prompt to the real agent answers both.\n- coax-225f94 needs the same model, context, token and cost fields for decade's agent report. The two should share one place in `App` that holds them.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T08:14:59.733252049Z",
+  "updated_at": "2026-11-09T08:14:59.733252049Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f8a9596",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
