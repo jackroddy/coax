@@ -23,11 +23,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         rows if !wide => rows + 2,
         _ => 0,
     };
+    let area = frame.area();
+    let input = input_view(
+        &app.input,
+        (area.width as usize).saturating_sub(4 + PROMPT_LEAD.len()),
+        (area.height / 2) as usize,
+    );
     let [header_area, plan_area, body_area, prompt_area, footer_area] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(plan_rows),
         Constraint::Min(3),
-        Constraint::Length(3),
+        Constraint::Length(input.height() as u16 + 2),
         Constraint::Length(1),
     ])
     .areas(frame.area());
@@ -47,7 +53,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(session, session_area);
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, session_area, app);
-    draw_input(frame, prompt_area, app);
+    draw_input(frame, prompt_area, &input);
     draw_footer(frame, footer_area, app);
 }
 
@@ -461,14 +467,94 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(pane(&title, true)), area);
 }
 
-fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_input(frame: &mut Frame, area: Rect, input: &InputView) {
     let block = pane("prompt", true);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(app.input.as_str()), inner);
-    let typed = app.input.chars().count() as u16;
-    let column = inner.x + typed.min(inner.width.saturating_sub(1));
-    frame.set_cursor_position((column, inner.y));
+    let lines: Vec<Line> = input
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(n, row)| {
+            let lead = if n == 0 && input.starts_here {
+                Span::styled(PROMPT_FIRST, bold())
+            } else {
+                Span::raw(PROMPT_LEAD)
+            };
+            Line::from(vec![lead, Span::raw(row.clone())])
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), inner);
+    let (column, row) = input.cursor;
+    frame.set_cursor_position((inner.x + column, inner.y + row));
+}
+
+/// The prompt rows that fit on screen and where the cursor sits among them.
+struct InputView {
+    rows: Vec<String>,
+
+    /// Whether `rows` begins at the start of the text, so the first row
+    /// carries the `> ` prefix.
+    starts_here: bool,
+
+    /// Column and row of the cursor within the prompt rows, prefix included.
+    cursor: (u16, u16),
+}
+
+const PROMPT_FIRST: &str = "> ";
+const PROMPT_LEAD: &str = "  ";
+const PROMPT_ROWS: usize = 3;
+
+impl InputView {
+    fn height(&self) -> usize {
+        self.rows.len().max(PROMPT_ROWS)
+    }
+}
+
+fn input_view(text: &str, width: usize, max_rows: usize) -> InputView {
+    let all = wrap_input(text, width);
+    let shown = max_rows.max(PROMPT_ROWS);
+    let skipped = all.len().saturating_sub(shown);
+    let rows = all[skipped..].to_vec();
+    let last = rows.last().map_or(0, |row| row.chars().count());
+    let cursor = (
+        (PROMPT_LEAD.len() + last) as u16,
+        rows.len().saturating_sub(1) as u16,
+    );
+    InputView {
+        rows,
+        starts_here: skipped == 0,
+        cursor,
+    }
+}
+
+/// Break `text` into rows of at most `width` characters at word breaks.
+/// A word longer than a row is split, and the last row is never full, so the
+/// cursor always has a column after the last character.
+fn wrap_input(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let chars: Vec<char> = text.chars().collect();
+    let mut rows = vec![String::new()];
+    let mut used = 0;
+    for token in chars.chunk_by(|a, b| (*a == ' ') == (*b == ' ')) {
+        let is_space = token[0] == ' ';
+        if used + token.len() > width && !is_space && used > 0 {
+            rows.push(String::new());
+            used = 0;
+        }
+        for &ch in token {
+            if used == width {
+                rows.push(String::new());
+                used = 0;
+            }
+            rows.last_mut().unwrap().push(ch);
+            used += 1;
+        }
+    }
+    if used == width {
+        rows.push(String::new());
+    }
+    rows
 }
 
 pub fn dim() -> Style {
@@ -559,5 +645,47 @@ mod tests {
             .find(|span| span.content == "code")
             .unwrap();
         assert_eq!(code.style.fg, Some(Color::Cyan));
+    }
+
+    #[test]
+    fn input_wraps_at_word_breaks() {
+        assert_eq!(
+            wrap_input("one two three four", 9),
+            ["one two ", "three ", "four"]
+        );
+    }
+
+    #[test]
+    fn a_word_longer_than_the_row_is_split() {
+        assert_eq!(wrap_input("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn the_cursor_follows_trailing_spaces() {
+        let view = input_view("hi   ", 20, 10);
+        assert_eq!(view.cursor, (2 + 5, 0));
+    }
+
+    #[test]
+    fn a_row_filled_to_the_edge_puts_the_cursor_on_a_new_row() {
+        let view = input_view("abcd", 4, 10);
+        assert_eq!(view.rows, ["abcd", ""]);
+        assert_eq!(view.cursor, (2, 1));
+    }
+
+    #[test]
+    fn the_prompt_shows_three_rows_for_short_text_and_grows_with_long_text() {
+        assert_eq!(input_view("", 20, 10).height(), 3);
+        let long = "word ".repeat(12);
+        assert_eq!(input_view(&long, 20, 10).height(), 4);
+    }
+
+    #[test]
+    fn past_the_limit_the_prompt_shows_the_last_rows() {
+        let text = "a ".repeat(30);
+        let view = input_view(&text, 4, 5);
+        assert_eq!(view.rows.len(), 5);
+        assert!(!view.starts_here);
+        assert_eq!(view.cursor.1, 4);
     }
 }
