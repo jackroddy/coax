@@ -836,7 +836,12 @@ fn wrapped(
 }
 
 fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> Vec<Line<'static>> {
-    tool_rows(tool, cwd, width, kind_word(tool.kind), "")
+    let word = if tool.agent {
+        "agent"
+    } else {
+        kind_word(tool.kind)
+    };
+    tool_rows(tool, cwd, width, word, "")
 }
 
 /// A tool call's head: the dot row, and a row under it unless the call is
@@ -1713,6 +1718,7 @@ mod tests {
             locations: vec![location],
             content: Vec::new(),
             cancelled: false,
+            agent: false,
             children: Vec::new(),
         }
     }
@@ -2339,5 +2345,23 @@ mod tests {
         assert_eq!(prompt_colour("//"), Some(palette.green));
         assert_eq!(prompt_colour("hello /mode"), None);
         assert_eq!(prompt_colour(""), None);
+    }
+
+    #[test]
+    fn a_task_call_without_children_reads_as_an_agent_block_with_no_marker() {
+        let mut replayed = task();
+        replayed.children.clear();
+        replayed.agent = true;
+        replayed.status = ToolCallStatus::Completed;
+        let (lines, head) = tool_view(&replayed, Path::new("/work"), 60, false, false);
+        let text = plain(&lines);
+        assert!(text[0].starts_with("● agent"), "{text:?}");
+        assert!(!text[0].contains('▸'), "{text:?}");
+        assert_eq!(head, lines.len());
+        assert!(!expandable(&replayed));
+
+        replayed.agent = false;
+        let (lines, _) = tool_view(&replayed, Path::new("/work"), 60, false, false);
+        assert!(plain(&lines)[0].starts_with("● think"));
     }
 }

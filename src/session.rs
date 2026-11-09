@@ -16,6 +16,10 @@ pub struct Tool {
     /// Whether the turn ended or the agent exited before the call finished.
     pub cancelled: bool,
 
+    /// Whether the call starts a subagent, though it may have no children
+    /// yet, or none at all after a replay.
+    pub agent: bool,
+
     /// What a subagent started by this call did, in arrival order.
     pub children: Vec<Child>,
 }
@@ -220,6 +224,7 @@ impl Transcript {
         let Some(tool) = find_tool(&mut self.entries, &tool_call_id) else {
             let mut call = ToolCall::new(tool_call_id, fields.title.clone().unwrap_or_default());
             call.update(fields);
+            call.meta = meta.clone();
             match self.parent(meta.as_ref()) {
                 Some(parent) => parent.children.push(Child::Tool(tool(call))),
                 None => self.entries.push(Entry::Tool(tool(call))),
@@ -289,8 +294,16 @@ fn tool(call: ToolCall) -> Tool {
         locations: call.locations,
         content: call.content,
         cancelled: false,
+        agent: starts_subagent(call.meta.as_ref()),
         children: Vec::new(),
     }
+}
+
+/// Whether the adapter's `_meta.claudeCode.toolName` names the Agent or Task
+/// tool, whose calls start subagents.
+fn starts_subagent(meta: Option<&Meta>) -> bool {
+    let name = meta.and_then(|meta| meta.get("claudeCode")?.get("toolName")?.as_str());
+    matches!(name, Some("Agent" | "Task"))
 }
 
 pub fn content_text(block: &ContentBlock) -> String {
@@ -502,5 +515,23 @@ mod tests {
             unreachable!()
         };
         assert!(matches!(&task.children[0], Child::User(text) if text == "find the bug"));
+    }
+
+    #[test]
+    fn the_adapters_tool_name_marks_an_agent_or_task_call_before_it_has_children() {
+        let mut meta = Meta::new();
+        meta.insert(
+            "claudeCode".to_string(),
+            serde_json::json!({ "toolName": "Task" }),
+        );
+        let mut call = ToolCall::new("t1", "Survey").kind(ToolKind::Think);
+        call.meta = Some(meta);
+        let mut transcript = Transcript::default();
+        transcript.apply(SessionUpdate::ToolCall(call));
+        transcript.apply(SessionUpdate::ToolCall(
+            ToolCall::new("t2", "Plan").kind(ToolKind::Think),
+        ));
+        assert!(matches!(&transcript.entries[0], Entry::Tool(tool) if tool.agent));
+        assert!(matches!(&transcript.entries[1], Entry::Tool(tool) if !tool.agent));
     }
 }

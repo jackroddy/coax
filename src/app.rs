@@ -1734,6 +1734,7 @@ mod tests {
             locations: Vec::new(),
             content: vec![ToolCallContent::Diff(diff)],
             cancelled: false,
+            agent: false,
             children: Vec::new(),
         };
         app.transcript.entries.push(Entry::Tool(tool));

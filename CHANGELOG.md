@@ -216,6 +216,11 @@ command line, the keys, and the scenario format the fake agent reads.
   entry when the message id changes, so two replayed messages in a row stay
   two bubbles. A message sent to a subagent shows under its call, dim and
   marked `>`, where it used to show as your own message.
+- A subagent's call shows as `agent` from the start, and still does after a
+  session is loaded. The Claude adapter keeps a subagent's history in its own
+  transcript and replays it only to clients that speak the subagent sessions
+  protocol, so a loaded session shows the call with no children, folded and
+  with no marker.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The
