@@ -31,6 +31,11 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- The screen has a header and a footer in place of the reverse-video status
+  bar. The header names the agent by its config entry when it has one. It
+  also shows whether the agent is working, decade when connected, and the
+  session. The conversation and the prompt sit in rounded panes. The footer
+  lists the keys that work in the current state.
 - Agent text is drawn as markdown: headings, lists, tables, rules, inline
   code and fenced code with highlighting.
 - A bare `coax` opens the agent picker in place of printing usage. A flag

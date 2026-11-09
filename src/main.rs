@@ -77,22 +77,22 @@ async fn main() {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
-    let agent = match options.launch {
+    let (agent, name) = match options.launch {
         Launch::Command(words) => match AcpAgent::from_args(words) {
-            Ok(agent) => agent,
+            Ok(agent) => (agent, None),
             Err(error) => fail(2, &error.to_string()),
         },
         Launch::Named(name) => {
             let (config, path) = load_config();
             match config.agents.get(&name) {
-                Some(agent) => AcpAgent::new(agent.clone()),
+                Some(agent) => (AcpAgent::new(agent.clone()), Some(name)),
                 None => fail(2, &format!("no agent named {name} in {}", path.display())),
             }
         }
         Launch::Pick => {
             let (config, path) = load_config();
             match picker::pick(&config, &path) {
-                Ok(Some(name)) => AcpAgent::new(config.agents[&name].clone()),
+                Ok(Some(name)) => (AcpAgent::new(config.agents[&name].clone()), Some(name)),
                 Ok(None) => return,
                 Err(error) => fail(1, &error.to_string()),
             }
@@ -101,7 +101,7 @@ async fn main() {
     let first_prompt = options.first_prompt;
     let auto_allow = options.auto_allow;
     if let Err(error) = acp::run(agent, async |link| {
-        app::run(link, first_prompt, auto_allow).await
+        app::run(link, name, first_prompt, auto_allow).await
     })
     .await
     {

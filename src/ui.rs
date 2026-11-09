@@ -1,38 +1,115 @@
 use agent_client_protocol::v1::schema::{
-    PlanEntryStatus, ToolCallContent, ToolCallStatus, ToolKind,
+    PlanEntryStatus, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, BorderType, Padding, Paragraph};
 
 use crate::app::App;
+use crate::palette;
 use crate::session::{Entry, Tool};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let plan_rows = app.transcript.plan.len().min(6) as u16;
     let permission_rows = if app.permission.is_some() { 2 } else { 0 };
     let [
+        header_area,
         plan_area,
-        transcript_area,
+        session_area,
         permission_area,
-        status_area,
-        input_area,
+        prompt_area,
+        footer_area,
     ] = Layout::vertical([
+        Constraint::Length(2),
         Constraint::Length(plan_rows),
-        Constraint::Min(1),
+        Constraint::Min(3),
         Constraint::Length(permission_rows),
-        Constraint::Length(1),
+        Constraint::Length(3),
         Constraint::Length(1),
     ])
     .areas(frame.area());
 
+    draw_header(frame, header_area, app);
     draw_plan(frame, plan_area, app);
+    let session = pane("session", false);
+    let transcript_area = session.inner(session_area);
+    frame.render_widget(session, session_area);
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, permission_area, app);
-    draw_status(frame, status_area, app);
-    draw_input(frame, input_area, app);
+    draw_input(frame, prompt_area, app);
+    draw_footer(frame, footer_area, app);
+}
+
+fn pane(title: &str, focused: bool) -> Block<'static> {
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .padding(Padding::horizontal(1));
+    if focused {
+        let title_style = Style::new().fg(palette::FOCUS).add_modifier(Modifier::BOLD);
+        block.title(Span::styled(format!(" {title} "), title_style))
+    } else {
+        block
+            .title(Span::styled(format!(" {title} "), dim()))
+            .border_style(dim())
+    }
+}
+
+fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
+    let [top, rule] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+    let badge = Style::new()
+        .fg(palette::INK)
+        .bg(palette::REF)
+        .add_modifier(Modifier::BOLD);
+    let left = Line::from(vec![
+        Span::styled(" coax ", badge),
+        Span::raw("  "),
+        Span::styled(app.agent.clone(), bold()),
+    ]);
+
+    let state = if app.transcript.in_flight {
+        Span::styled("◐ working", Style::new().fg(palette::WORKING))
+    } else {
+        match &app.transcript.last_stop {
+            Some(stop) if *stop != StopReason::EndTurn => {
+                Span::styled(format!("idle, {stop:?}"), Style::new().fg(palette::WORKING))
+            }
+            _ => Span::styled("idle", dim()),
+        }
+    };
+    let mut right = vec![state];
+    match &app.decade_pane {
+        Some(pane) if pane.is_empty() => right.push(Span::styled("   decade", dim())),
+        Some(pane) => right.push(Span::styled(format!("   decade pane {pane}"), dim())),
+        None => {}
+    }
+    let session: String = app.session.to_string().chars().take(8).collect();
+    right.push(Span::styled(format!("   session {session} "), dim()));
+    let right = Line::from(right);
+
+    let gap = (area.width as usize)
+        .saturating_sub(left.width() + right.width())
+        .max(1);
+    let mut spans = left.spans;
+    spans.push(Span::raw(" ".repeat(gap)));
+    spans.extend(right.spans);
+    frame.render_widget(Paragraph::new(Line::from(spans)), top);
+    frame.render_widget(
+        Paragraph::new("─".repeat(area.width as usize)).style(dim()),
+        rule,
+    );
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
+    let hints = if app.permission.is_some() {
+        "1-9 choose   esc cancel   ^c quit"
+    } else if app.transcript.in_flight {
+        "esc cancel   pgup/pgdn scroll   ^c quit"
+    } else {
+        "enter send   pgup/pgdn scroll   ^u clear   ^c quit"
+    };
+    frame.render_widget(Paragraph::new(hints), area);
 }
 
 fn draw_plan(frame: &mut Frame, area: Rect, app: &App) {
@@ -246,32 +323,14 @@ fn draw_permission(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
-    let state = if app.transcript.in_flight {
-        "working".to_string()
-    } else {
-        match &app.transcript.last_stop {
-            Some(stop) => format!("idle, last stop {stop:?}"),
-            None => "idle".to_string(),
-        }
-    };
-    let decade = match &app.decade_pane {
-        Some(pane) if pane.is_empty() => "  decade".to_string(),
-        Some(pane) => format!("  decade pane {pane}"),
-        None => String::new(),
-    };
-    let text = format!(" {}  session {}  {state}{decade}", app.agent, app.session);
-    frame.render_widget(
-        Paragraph::new(text).style(Style::default().add_modifier(Modifier::REVERSED)),
-        area,
-    );
-}
-
 fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
-    let text = format!("> {}", app.input);
-    frame.render_widget(Paragraph::new(text.clone()), area);
-    let column = area.x + (text.chars().count() as u16).min(area.width.saturating_sub(1));
-    frame.set_cursor_position((column, area.y));
+    let block = pane("prompt", true);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(app.input.as_str()), inner);
+    let typed = app.input.chars().count() as u16;
+    let column = inner.x + typed.min(inner.width.saturating_sub(1));
+    frame.set_cursor_position((column, inner.y));
 }
 
 fn dim() -> Style {

@@ -166,13 +166,13 @@ impl App {
 
 pub async fn run(
     mut link: Link,
+    name: Option<String>,
     first_prompt: Option<String>,
     auto_allow: bool,
 ) -> Result<(), Error> {
     let init = link.initialize().await?;
-    let agent = init
-        .agent_info
-        .map(|info| info.name)
+    let agent = name
+        .or(init.agent_info.map(|info| info.name))
         .unwrap_or_else(|| "agent".to_string());
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
     let session = link.new_session(cwd).await?.session_id;
