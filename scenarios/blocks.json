@@ -1,0 +1,16 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Here is the entry point:\n\n```rust\nfn main() {\n    println!(\"hello\");\n}\n```\n\nAnd a long line that needs panning:\n\n```sh\ncargo run --release -- --agent claude --resume 0123456789abcdef0123456789abcdef --allow --verbose --log-level trace --output /tmp/a/very/long/path/to/a/file.log\n```\n\nI will change it and run it."}}},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "e1", "title": "Edit src/main.rs", "kind": "edit", "status": "in_progress", "locations": [{"path": "src/main.rs", "line": 1}]}},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "e1", "status": "completed", "content": [{"type": "diff", "path": "src/main.rs", "oldText": "fn main() {\n    println!(\"hello\");\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let e = 5;\n}\n", "newText": "fn main() {\n    println!(\"hello, world\");\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let e = 5;\n    run();\n}\n"}]}},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "r1", "title": "cargo run", "kind": "execute", "status": "in_progress"}},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "r1", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "```console\n$ cargo run\n   Compiling hello v0.1.0\nhello, world\n```"}}]}},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "r2", "title": "Read src/lib.rs", "kind": "read", "status": "completed"}},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Done."}}},
+        {"stop": "end_turn"}
+      ]
+    }
+  ]
+}

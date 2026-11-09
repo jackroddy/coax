@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -19,6 +19,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 
 use crate::acp::{Applied, Change, Event, Link};
+use crate::clipboard;
 use crate::command::{self, Candidate, Kind};
 use crate::session::{Entry, Transcript};
 use crate::settings::{Control, Setting, Settings};
@@ -46,6 +47,28 @@ pub struct Guard {
 const SPIN_INTERVAL: Duration = Duration::from_millis(150);
 
 const PAN_COLUMNS: isize = 4;
+
+/// How long a block's copy glyph says `copied`.
+const COPIED_FOR: Duration = Duration::from_secs(1);
+
+/// A block being panned by the pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Drag {
+    key: (usize, usize),
+
+    /// The column the button went down on.
+    from: u16,
+
+    /// How far the block was panned then.
+    offset: usize,
+    max: usize,
+}
+
+/// The offset of a block dragged from column `from` to column `to`: the
+/// block follows the pointer, so dragging right shows what is to the left.
+fn dragged(offset: usize, from: u16, to: u16, max: usize) -> usize {
+    (offset as isize - (to as isize - from as isize)).clamp(0, max as isize) as usize
+}
 
 pub struct App {
     pub transcript: Transcript,
@@ -88,6 +111,18 @@ pub struct App {
 
     /// The wide blocks on screen, set by the last draw.
     pub wide: Vec<ui::WideBlock>,
+
+    /// The block the pointer is panning, from a press until the release.
+    pub drag: Option<Drag>,
+
+    /// The copy glyphs on screen, set by the last draw.
+    pub copies: Vec<ui::CopyArea>,
+
+    /// The block whose copy glyph the pointer is over.
+    pub hover_copy: Option<(usize, usize)>,
+
+    /// The block just copied and when its glyph stops saying so.
+    pub copied: Option<((usize, usize), Instant)>,
 
     /// Rows a page scroll moves, set by the last draw.
     pub page: usize,
@@ -168,6 +203,9 @@ pub enum MenuTarget {
 
 pub enum Action {
     None,
+
+    /// Put this text on the system clipboard.
+    Copy(String),
     Change(Change),
     Prompt(String),
     Cancel,
@@ -266,9 +304,21 @@ impl App {
         let pan = match mouse.kind {
             MouseEventKind::Moved => {
                 self.hover = self.chip_at(position);
+                self.hover_copy = self.copy_at(position);
                 return Action::None;
             }
             MouseEventKind::Down(MouseButton::Left) => return self.click(position),
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(drag) = self.drag {
+                    let offset = dragged(drag.offset, drag.from, position.x, drag.max);
+                    self.pans.insert(drag.key, offset);
+                }
+                return Action::None;
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.drag = None;
+                return Action::None;
+            }
             MouseEventKind::ScrollLeft => -PAN_COLUMNS,
             MouseEventKind::ScrollUp if shift => -PAN_COLUMNS,
             MouseEventKind::ScrollRight => PAN_COLUMNS,
@@ -289,6 +339,13 @@ impl App {
             self.pans.insert(block.key, offset);
         }
         Action::None
+    }
+
+    fn copy_at(&self, position: Position) -> Option<(usize, usize)> {
+        self.copies
+            .iter()
+            .find(|copy| copy.area.contains(position))
+            .map(|copy| copy.key)
     }
 
     fn chip_at(&self, position: Position) -> Option<ChipTarget> {
@@ -317,11 +374,28 @@ impl App {
             return Action::None;
         }
         let Some(chip) = self.chips.iter().find(|chip| chip.area.contains(position)) else {
+            if let Some(key) = self.copy_at(position) {
+                let Some(text) = self.rendered.copy_text(key) else {
+                    return Action::None;
+                };
+                let text = text.to_string();
+                self.copied = Some((key, Instant::now() + COPIED_FOR));
+                return Action::Copy(text);
+            }
             if let Some(fold) = self.folds.iter().find(|fold| fold.area.contains(position)) {
                 let id = fold.id.clone();
                 if !self.expanded.remove(&id) {
                     self.expanded.insert(id);
                 }
+                return Action::None;
+            }
+            if let Some(block) = self.wide.iter().find(|block| block.area.contains(position)) {
+                self.drag = Some(Drag {
+                    key: block.key,
+                    from: position.x,
+                    offset: self.pans.get(&block.key).copied().unwrap_or(0),
+                    max: block.max,
+                });
             }
             return Action::None;
         };
@@ -754,6 +828,10 @@ pub async fn run(
         guard: None,
         pans: HashMap::new(),
         wide: Vec::new(),
+        drag: None,
+        copies: Vec::new(),
+        hover_copy: None,
+        copied: None,
         page: 1,
         lines_seen: 0,
         agent,
@@ -786,6 +864,7 @@ pub async fn run(
             break Err(Error::into_internal_error(error));
         }
         let expiry = app.guard.map(|guard| guard.until);
+        let copied_until = app.copied.map(|(_, until)| until);
         let action = tokio::select! {
             event = link.events.recv() => match event {
                 Some(event) => {
@@ -811,6 +890,10 @@ pub async fn run(
                 app.spinner = app.spinner.wrapping_add(1);
                 Action::None
             },
+            () = async { tokio::time::sleep_until(copied_until.unwrap().into()).await }, if copied_until.is_some() => {
+                app.copied = None;
+                Action::None
+            },
             message = decade_messages.recv() => {
                 match message {
                     Some(message) => app.decade(message),
@@ -821,6 +904,12 @@ pub async fn run(
         };
         let outcome = match action {
             Action::None => Ok(()),
+            Action::Copy(text) => {
+                let mut out = io::stdout();
+                out.write_all(clipboard::osc52(&text).as_bytes())
+                    .and_then(|()| out.flush())
+                    .map_err(Error::into_internal_error)
+            }
             Action::Quit => break Ok(()),
             Action::Prompt(text) => link.prompt(app.session.clone(), text),
             Action::Cancel => link.cancel(app.session.clone()),
@@ -898,6 +987,10 @@ mod tests {
             menu_first: 0,
             guard: None,
             pans: HashMap::new(),
+            drag: None,
+            copies: Vec::new(),
+            hover_copy: None,
+            copied: None,
             wide: vec![WideBlock {
                 area: Rect::new(2, 5, 20, 3),
                 key: (1, 0),
@@ -958,6 +1051,157 @@ mod tests {
             20,
         ));
         assert!(app.pans.is_empty());
+    }
+
+    #[test]
+    fn dragging_a_block_pans_it_column_for_column_against_the_pointer() {
+        assert_eq!(dragged(10, 50, 47, 40), 13);
+        assert_eq!(dragged(10, 50, 54, 40), 6);
+        assert_eq!(dragged(10, 50, 50, 40), 10);
+    }
+
+    #[test]
+    fn a_drag_stops_at_the_ends_of_the_block() {
+        assert_eq!(dragged(2, 50, 60, 40), 0);
+        assert_eq!(dragged(30, 50, 20, 40), 40);
+    }
+
+    fn drag_event(kind: MouseEventKind, column: u16, row: u16) -> Action {
+        let mut app = app();
+        app.mouse(wheel(kind, KeyModifiers::NONE, column, row))
+    }
+
+    #[test]
+    fn pressing_on_a_wide_block_and_dragging_pans_it_until_the_release() {
+        let mut app = app();
+        let at = |app: &mut App, kind, column| {
+            app.mouse(wheel(kind, KeyModifiers::NONE, column, 6));
+        };
+        at(&mut app, MouseEventKind::Down(MouseButton::Left), 10);
+        at(&mut app, MouseEventKind::Drag(MouseButton::Left), 8);
+        assert_eq!(app.pans[&(1, 0)], 2);
+        at(&mut app, MouseEventKind::Drag(MouseButton::Left), 5);
+        assert_eq!(app.pans[&(1, 0)], 5);
+        at(&mut app, MouseEventKind::Up(MouseButton::Left), 5);
+        at(&mut app, MouseEventKind::Drag(MouseButton::Left), 0);
+        assert_eq!(app.pans[&(1, 0)], 5);
+        assert!(app.drag.is_none());
+    }
+
+    #[test]
+    fn dragging_with_no_press_on_a_block_pans_nothing() {
+        let mut app = app();
+        app.mouse(wheel(
+            MouseEventKind::Down(MouseButton::Left),
+            KeyModifiers::NONE,
+            40,
+            20,
+        ));
+        app.mouse(wheel(
+            MouseEventKind::Drag(MouseButton::Left),
+            KeyModifiers::NONE,
+            30,
+            20,
+        ));
+        assert!(app.pans.is_empty());
+        assert!(matches!(
+            drag_event(MouseEventKind::Up(MouseButton::Left), 1, 1),
+            Action::None
+        ));
+    }
+
+    /// An app whose first entry is agent text with one code block, drawn
+    /// once so the copy glyph has a place on screen.
+    fn with_a_code_block() -> App {
+        let mut app = app();
+        app.wide.clear();
+        app.transcript.entries.push(Entry::Agent(
+            "```rs\nfn main() {\n    run();\n}\n```".to_string(),
+        ));
+        header(&mut app, 80);
+        app
+    }
+
+    #[test]
+    fn a_click_on_the_copy_glyph_copies_the_whole_block_text_and_marks_it_copied() {
+        let mut app = with_a_code_block();
+        assert_eq!(app.copies.len(), 1);
+        let glyph = app.copies[0].area;
+        let Action::Copy(text) = click(&mut app, glyph.x + glyph.width - 1, glyph.y) else {
+            panic!("expected a copy");
+        };
+        assert_eq!(text, "fn main() {\n    run();\n}");
+        assert!(matches!(app.copied, Some(((0, 0), _))));
+    }
+
+    #[test]
+    fn a_click_elsewhere_in_a_code_block_copies_nothing() {
+        let mut app = with_a_code_block();
+        let glyph = app.copies[0].area;
+        assert!(matches!(
+            click(&mut app, glyph.x, glyph.y + 1),
+            Action::None
+        ));
+        assert!(app.copied.is_none());
+    }
+
+    #[test]
+    fn the_copy_glyph_is_accent_under_the_pointer_and_says_copied_after_a_click() {
+        let mut app = with_a_code_block();
+        let glyph = app.copies[0].area;
+        let last = glyph.x + glyph.width - 1;
+        let cell = |app: &mut App, x: u16| {
+            let buffer = header_buffer(app, 80);
+            (
+                buffer[(x, glyph.y)].symbol().to_string(),
+                buffer[(x, glyph.y)].fg,
+            )
+        };
+        let (symbol, colour) = cell(&mut app, last);
+        assert_eq!(symbol, "\u{f0c5}");
+        assert_ne!(colour, crate::palette::get().accent);
+        app.mouse(wheel(
+            MouseEventKind::Moved,
+            KeyModifiers::NONE,
+            last,
+            glyph.y,
+        ));
+        assert_eq!(cell(&mut app, last).1, crate::palette::get().accent);
+        click(&mut app, last, glyph.y);
+        let buffer = header_buffer(&mut app, 80);
+        let row: String = (0..80)
+            .map(|x| buffer[(x, glyph.y)].symbol().to_string())
+            .collect();
+        assert!(row.contains("copied"), "{row}");
+    }
+
+    #[test]
+    fn a_click_on_an_edit_or_run_call_unfolds_it_and_a_second_click_folds_it() {
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{Diff, ToolCallContent, ToolCallStatus, ToolKind};
+
+        let mut app = with_settings();
+        app.wide.clear();
+        let mut diff = Diff::new("src/main.rs", "new line");
+        diff.old_text = Some("old line".to_string());
+        let tool = Tool {
+            id: "e1".into(),
+            title: "Edit src/main.rs".to_string(),
+            kind: ToolKind::Edit,
+            status: ToolCallStatus::Completed,
+            locations: Vec::new(),
+            content: vec![ToolCallContent::Diff(diff)],
+            children: Vec::new(),
+        };
+        app.transcript.entries.push(Entry::Tool(tool));
+        let rows = |app: &mut App| header_rows_all(app, 80);
+        assert!(!rows(&mut app).contains("old line"));
+        let fold = &app.folds[0];
+        let (x, y) = (fold.area.x, fold.area.y);
+        click(&mut app, x, y);
+        assert!(rows(&mut app).contains("- old line"));
+        click(&mut app, x, y);
+        assert!(!rows(&mut app).contains("old line"));
     }
 
     fn ctrl(ch: char) -> KeyEvent {
@@ -1090,6 +1334,18 @@ mod tests {
                 .map(|x| buffer[(x, y)].symbol().to_string())
                 .collect()
         })
+    }
+
+    fn header_rows_all(app: &mut App, width: u16) -> String {
+        let buffer = header_buffer(app, width);
+        (0..30)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn header(app: &mut App, width: u16) -> String {

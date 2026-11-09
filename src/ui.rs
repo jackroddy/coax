@@ -1,7 +1,8 @@
 use std::path::Path;
+use std::time::Instant;
 
 use agent_client_protocol::v1::schema::{
-    PlanEntryStatus, ToolCallContent, ToolCallId, ToolCallStatus, ToolKind,
+    ContentBlock, PlanEntryStatus, ToolCallContent, ToolCallId, ToolCallStatus, ToolKind,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -142,23 +143,47 @@ struct Markdown {
 }
 
 /// A run of agent text: rows that fit the layout width, or one code block or
-/// table wider than it.
+/// table kept at its natural width.
 enum Part {
     Flow(Vec<Line<'static>>),
-    Wide {
+    Block {
         /// Which block of the entry this is.
         block: usize,
 
         /// The rows at the block's natural width, trailing spaces trimmed.
         rows: Vec<Line<'static>>,
         natural: usize,
+
+        /// The text a copy takes, for a literal block.
+        copy: Option<String>,
     },
 }
+
+/// Columns a code block keeps free after its longest line, where the copy
+/// glyph sits on the first row.
+const COPY_ROOM: usize = 2;
+
+/// The copy glyph, from the Nerd Font set that the header's separators come
+/// from.
+const COPY_GLYPH: &str = "\u{f0c5}";
 
 /// The widest a table is laid out when measuring it.
 const TABLE_WIDTH: usize = 1000;
 
 impl Rendered {
+    /// The text a copy of block `key` (an entry and a block within it) takes.
+    pub fn copy_text(&self, key: (usize, usize)) -> Option<&str> {
+        let markdown = self.entries.get(key.0)?.as_ref()?;
+        markdown.parts.iter().find_map(|part| match part {
+            Part::Block {
+                block,
+                copy: Some(text),
+                ..
+            } if *block == key.1 => Some(text.as_str()),
+            _ => None,
+        })
+    }
+
     fn agent(&mut self, index: usize, text: &str, width: usize) -> &[Part] {
         if self.entries.len() <= index {
             self.entries.resize_with(index + 1, || None);
@@ -177,19 +202,20 @@ impl Rendered {
 }
 
 /// `text` laid out one block at a time. Prose goes at `width`. A code block
-/// or table keeps its natural width, so one wider than `width` is a
-/// `Part::Wide` for the screen to window.
+/// keeps its natural width, as does a table wider than `width`. Either is a
+/// `Part::Block`, and the screen windows one wider than `width`.
 fn markdown(text: &str, width: usize) -> Vec<Part> {
     let mut parts: Vec<Part> = Vec::new();
     for (block, item) in cmr::parse(text).iter().enumerate() {
         if block > 0 {
             flow(&mut parts).push(Line::default());
         }
-        match wide(item, width) {
-            Some((rows, natural)) => parts.push(Part::Wide {
+        match kept_whole(item, width) {
+            Some((rows, natural, copy)) => parts.push(Part::Block {
                 block,
                 rows,
                 natural,
+                copy,
             }),
             None => flow(&mut parts).extend(block_rows(item, width)),
         }
@@ -220,37 +246,43 @@ fn block_rows(block: &cmr::Block, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// The rows and natural width of a code block or table wider than `width`.
-fn wide(block: &cmr::Block, width: usize) -> Option<(Vec<Line<'static>>, usize)> {
-    let (rows, natural) = match block {
+/// The rows, natural width and copy text of a code block, or the rows and
+/// width of a table wider than `width`.
+fn kept_whole(
+    block: &cmr::Block,
+    width: usize,
+) -> Option<(Vec<Line<'static>>, usize, Option<String>)> {
+    match block {
         cmr::Block::Code { lang, lines } => {
             let longest = lines.iter().map(|line| line.chars().count());
             let header = lang.iter().map(|lang| lang.chars().count());
 
             // the gutter is two columns: `│ ` on a line, `┌ ` before the language
-            let natural = longest.chain(header).max().unwrap_or(0) + 2;
-            if natural <= width {
-                return None;
-            }
-            (block_rows(block, natural), natural)
+            let natural = longest.chain(header).max().unwrap_or(0) + 2 + COPY_ROOM;
+            Some((block_rows(block, natural), natural, Some(lines.join("\n"))))
         }
         cmr::Block::Table { .. } => {
             let rows = block_rows(block, TABLE_WIDTH);
             let natural = rows.iter().map(Line::width).max().unwrap_or(0);
-            if natural <= width {
-                return None;
-            }
-            (rows, natural)
+            (natural > width).then_some((rows, natural, None))
         }
-        _ => return None,
-    };
-    Some((rows, natural))
+        _ => None,
+    }
 }
 
 /// `row` cut to the `visible` columns from `offset`, with a dim `◂` in the
 /// first column when there is more to the left and a dim `▸` in the last when
 /// there is more to the right of a row `natural` columns wide.
 fn window(row: &Line<'static>, offset: usize, visible: usize, natural: usize) -> Line<'static> {
+    cells_line(window_cells(row, offset, visible, natural))
+}
+
+fn window_cells(
+    row: &Line<'static>,
+    offset: usize,
+    visible: usize,
+    natural: usize,
+) -> Vec<(char, Style)> {
     let mut cells: Vec<(char, Style)> = row
         .spans
         .iter()
@@ -265,6 +297,30 @@ fn window(row: &Line<'static>, offset: usize, visible: usize, natural: usize) ->
     if offset + visible < natural {
         cells[visible - 1] = ('▸', dim());
     }
+    cells
+}
+
+/// `window` with `label` in the last columns, and the `▸` moved left of it.
+fn window_with_corner(
+    row: &Line<'static>,
+    offset: usize,
+    visible: usize,
+    natural: usize,
+    label: &str,
+    style: Style,
+) -> Line<'static> {
+    let mut cells = window_cells(row, offset, visible, natural);
+    let label: Vec<char> = label.chars().take(visible).collect();
+    if offset + visible < natural && visible > label.len() {
+        cells[visible - label.len() - 1] = ('▸', dim());
+    }
+    for (n, ch) in label.iter().enumerate() {
+        cells[visible - label.len() + n] = (*ch, style);
+    }
+    cells_line(cells)
+}
+
+fn cells_line(cells: Vec<(char, Style)>) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (ch, style) in cells {
         match spans.last_mut() {
@@ -315,7 +371,13 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     let usable = width - width / 10;
     let mut lines: Vec<Line> = Vec::new();
     let mut wides: Vec<Wide> = Vec::new();
+    let mut copies: Vec<Copy> = Vec::new();
     let mut folds: Vec<Fold> = Vec::new();
+    let copied = app
+        .copied
+        .as_ref()
+        .filter(|(_, until)| *until > Instant::now())
+        .map(|(key, _)| *key);
     for (index, entry) in app.transcript.entries.iter().enumerate() {
         match entry {
             Entry::User(text) => lines.extend(bubble(text, width)),
@@ -326,41 +388,69 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                 for part in app.rendered.agent(index, text, visible) {
                     match part {
                         Part::Flow(flow) => rows.extend(flow.iter().cloned()),
-                        Part::Wide {
+                        Part::Block {
                             block,
-                            rows: wide,
+                            rows: block_rows,
                             natural,
+                            copy,
                         } => {
-                            let max = natural - visible;
+                            let shown = (*natural).min(visible);
+                            let max = natural - shown;
                             let key = (index, *block);
                             let offset = app.pans.get(&key).copied().unwrap_or(0).min(max);
-                            wides.push(Wide {
-                                key,
-                                // one row for the border above the box's rows
-                                first: lines.len() + 1 + rows.len(),
-                                height: wide.len(),
-                                width: visible,
-                                max,
-                            });
-                            rows.extend(
-                                wide.iter()
-                                    .map(|row| window(row, offset, visible, *natural)),
-                            );
+
+                            // one row for the border above the box's rows
+                            let first = lines.len() + 1 + rows.len();
+                            if max > 0 {
+                                wides.push(Wide {
+                                    key,
+                                    first,
+                                    height: block_rows.len(),
+                                    width: shown,
+                                    max,
+                                });
+                            }
+                            if copy.is_some() {
+                                copies.push(Copy {
+                                    key,
+                                    first,
+                                    width: shown,
+                                });
+                            }
+                            for (n, row) in block_rows.iter().enumerate() {
+                                if n > 0 || copy.is_none() {
+                                    rows.push(window(row, offset, shown, *natural));
+                                    continue;
+                                }
+                                let (label, style) = if copied == Some(key) {
+                                    ("copied", Style::new().fg(palette::get().accent))
+                                } else if app.hover_copy == Some(key) {
+                                    (COPY_GLYPH, Style::new().fg(palette::get().accent))
+                                } else {
+                                    (COPY_GLYPH, dim())
+                                };
+                                rows.push(window_with_corner(
+                                    row, offset, shown, *natural, label, style,
+                                ));
+                            }
                         }
                     }
                 }
                 lines.extend(framed(rows, palette::get().blue, None));
             }
             Entry::Thought(text) => wrapped("✻ ", "  ", dim(), text, usable, dim(), &mut lines),
-            Entry::Tool(tool) if !tool.children.is_empty() => {
-                folds.push(Fold {
-                    id: tool.id.clone(),
-                    first: lines.len(),
-                });
+            Entry::Tool(tool) => {
                 let expanded = app.expanded.contains(&tool.id);
-                lines.extend(subagent_block(tool, &app.cwd, usable, expanded));
+                let (rows, head) = tool_view(tool, &app.cwd, usable, expanded);
+                if expandable(tool) {
+                    folds.push(Fold {
+                        id: tool.id.clone(),
+                        first: lines.len(),
+                        height: head,
+                    });
+                }
+                lines.extend(rows);
             }
-            Entry::Tool(tool) => lines.extend(tool_block(tool, &app.cwd, usable)),
             Entry::Permission { choice, .. } => {
                 let pad = width.saturating_sub(choice.chars().count());
                 lines.push(Line::from(vec![
@@ -391,7 +481,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .filter_map(|fold| {
             let top = fold.first.max(start);
-            let bottom = (fold.first + 2).min(end);
+            let bottom = (fold.first + fold.height).min(end);
             (top < bottom).then(|| FoldArea {
                 area: Rect {
                     x: area.x,
@@ -401,6 +491,20 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                 },
                 id: fold.id.clone(),
             })
+        })
+        .collect();
+    app.copies = copies
+        .iter()
+        .filter(|copy| (start..end).contains(&copy.first))
+        .map(|copy| CopyArea {
+            // the glyph and the column before it
+            area: Rect::new(
+                area.x + 2 + copy.width.saturating_sub(COPY_ROOM) as u16,
+                area.y + (copy.first - start) as u16,
+                COPY_ROOM.min(copy.width) as u16,
+                1,
+            ),
+            key: copy.key,
         })
         .collect();
     app.wide = wides
@@ -427,13 +531,31 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(visible), area);
 }
 
-/// A subagent block drawn this frame, by the line it starts on.
+/// An expandable tool call drawn this frame, by the line it starts on.
 struct Fold {
     id: ToolCallId,
     first: usize,
+
+    /// The rows of the call's head, which a click folds or unfolds.
+    height: usize,
 }
 
-/// A subagent block's two header rows on screen, which a click folds or
+/// A code block drawn this frame, by its first row among the transcript lines.
+struct Copy {
+    key: (usize, usize),
+    first: usize,
+    width: usize,
+}
+
+/// A copy glyph on screen, found by the mouse.
+pub struct CopyArea {
+    pub area: Rect,
+
+    /// The entry and the block within it.
+    pub key: (usize, usize),
+}
+
+/// An expandable tool call's head rows on screen, which a click folds or
 /// unfolds.
 pub struct FoldArea {
     pub area: Rect,
@@ -548,11 +670,12 @@ fn wrapped(
     }
 }
 
-fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> [Line<'static>; 2] {
+fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> Vec<Line<'static>> {
     tool_rows(tool, cwd, width, kind_word(tool.kind), "")
 }
 
-/// A tool call's two rows, with `word` in the kind column and `suffix` dim
+/// A tool call's head: the dot row, and a row under it unless the call is
+/// done with nothing to add. `word` goes in the kind column and `suffix` dim
 /// after the title.
 fn tool_rows(
     tool: &Tool,
@@ -560,7 +683,7 @@ fn tool_rows(
     width: usize,
     word: &str,
     suffix: &str,
-) -> [Line<'static>; 2] {
+) -> Vec<Line<'static>> {
     let (dot, status, status_style) = match tool.status {
         ToolCallStatus::InProgress => (
             Style::new().fg(palette::get().yellow),
@@ -610,25 +733,215 @@ fn tool_rows(
     }
     second.extend(detail);
     if second.len() == 1 {
+        if tool.status == ToolCallStatus::Completed {
+            return vec![Line::from(first)];
+        }
         second.push(Span::styled(status, status_style));
     }
-    [Line::from(first), Line::from(second)]
+    vec![Line::from(first), Line::from(second)]
+}
+
+/// Whether a click on the call shows more of it: a subagent's work, an edit's
+/// diff or a command's output.
+fn expandable(tool: &Tool) -> bool {
+    !tool.children.is_empty()
+        || match tool.kind {
+            ToolKind::Edit => tool
+                .content
+                .iter()
+                .any(|content| matches!(content, ToolCallContent::Diff(_))),
+            ToolKind::Execute => !output(&tool.content).is_empty(),
+            _ => false,
+        }
+}
+
+/// The text a call's content carries, one string per piece.
+fn output(content: &[ToolCallContent]) -> Vec<&str> {
+    content
+        .iter()
+        .filter_map(|content| match content {
+            ToolCallContent::Content(content) => match &content.content {
+                ContentBlock::Text(text) if !text.text.trim().is_empty() => {
+                    Some(text.text.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// A top-level call's rows, and how many of them are its head. Expanded, it
+/// has its subagent's work, its diff or its output under the head.
+fn tool_view(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> (Vec<Line<'static>>, usize) {
+    if !tool.children.is_empty() {
+        let head = subagent_head(tool, cwd, width).len();
+        return (subagent_block(tool, cwd, width, expanded), head);
+    }
+    let mut lines = tool_block(tool, cwd, width);
+    let head = lines.len();
+    if expanded && expandable(tool) {
+        let inner = width.saturating_sub(SUBAGENT_INDENT.len());
+        let mut rows = match tool.kind {
+            ToolKind::Edit => diff_rows(&tool.content, inner),
+            _ => output_rows(&tool.content, inner),
+        };
+        for row in &mut rows {
+            row.spans.insert(0, Span::raw(SUBAGENT_INDENT));
+        }
+        lines.extend(rows);
+    }
+    (lines, head)
+}
+
+/// The unchanged lines kept either side of a change in a diff.
+const DIFF_CONTEXT: usize = 2;
+
+/// The most cells of the table that finds a diff's common lines. Past it the
+/// old lines show as removed and the new as added.
+const DIFF_CELLS: usize = 4_000_000;
+
+/// How a line of a diff stands: `' '` unchanged, `'-'` removed, `'+'` added.
+fn line_diff<'a>(old: &'a str, new: &'a str) -> Vec<(char, &'a str)> {
+    let old: Vec<&str> = old.lines().collect();
+    let new: Vec<&str> = new.lines().collect();
+    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let suffix = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (old_mid, new_mid) = (
+        &old[prefix..old.len() - suffix],
+        &new[prefix..new.len() - suffix],
+    );
+
+    let mut out: Vec<(char, &str)> = old[..prefix].iter().map(|line| (' ', *line)).collect();
+    if old_mid.len() * new_mid.len() > DIFF_CELLS {
+        out.extend(old_mid.iter().map(|line| ('-', *line)));
+        out.extend(new_mid.iter().map(|line| ('+', *line)));
+    } else {
+        // common[i][j] is the length of the longest run of shared lines in
+        // old_mid[i..] and new_mid[j..], stored row by row
+        let columns = new_mid.len() + 1;
+        let mut common = vec![0u32; (old_mid.len() + 1) * columns];
+        for i in (0..old_mid.len()).rev() {
+            for j in (0..new_mid.len()).rev() {
+                common[i * columns + j] = if old_mid[i] == new_mid[j] {
+                    common[(i + 1) * columns + j + 1] + 1
+                } else {
+                    common[(i + 1) * columns + j].max(common[i * columns + j + 1])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < old_mid.len() && j < new_mid.len() {
+            if old_mid[i] == new_mid[j] {
+                out.push((' ', old_mid[i]));
+                i += 1;
+                j += 1;
+            } else if common[(i + 1) * columns + j] >= common[i * columns + j + 1] {
+                out.push(('-', old_mid[i]));
+                i += 1;
+            } else {
+                out.push(('+', new_mid[j]));
+                j += 1;
+            }
+        }
+        out.extend(old_mid[i..].iter().map(|line| ('-', *line)));
+        out.extend(new_mid[j..].iter().map(|line| ('+', *line)));
+    }
+    out.extend(old[old.len() - suffix..].iter().map(|line| (' ', *line)));
+    out
+}
+
+/// The rows of an edit's diffs: removed lines red after a `-`, added lines
+/// green after a `+`, and the unchanged lines around them dim. A run of
+/// unchanged lines past the context shows as a count.
+fn diff_rows(content: &[ToolCallContent], width: usize) -> Vec<Line<'static>> {
+    let diffs: Vec<_> = content
+        .iter()
+        .filter_map(|content| match content {
+            ToolCallContent::Diff(diff) => Some(diff),
+            _ => None,
+        })
+        .collect();
+    let palette = palette::get();
+    let mut rows = Vec::new();
+    for diff in &diffs {
+        if diffs.len() > 1 {
+            let path = diff.path.display().to_string();
+            rows.push(Line::styled(cut(&path, width), dim()));
+        }
+        let lines = line_diff(diff.old_text.as_deref().unwrap_or(""), &diff.new_text);
+        let near_change = |index: usize| {
+            let from = index.saturating_sub(DIFF_CONTEXT);
+            let to = (index + DIFF_CONTEXT + 1).min(lines.len());
+            lines[from..to].iter().any(|(mark, _)| *mark != ' ')
+        };
+        let mut shown: Vec<bool> = (0..lines.len()).map(near_change).collect();
+
+        // a count takes a row too, so a lone hidden line is shown instead
+        let mut at = 0;
+        while at < shown.len() {
+            let run = shown[at..].iter().take_while(|s| **s == shown[at]).count();
+            if !shown[at] && run == 1 {
+                shown[at] = true;
+            }
+            at += run;
+        }
+        let mut hidden = 0;
+        for (index, (mark, text)) in lines.iter().enumerate() {
+            if !shown[index] {
+                hidden += 1;
+                continue;
+            }
+            if hidden > 0 {
+                rows.push(Line::styled(format!("⋯ {hidden} unchanged"), dim()));
+                hidden = 0;
+            }
+            let text = cut(&format!("{mark} {text}"), width);
+            rows.push(match mark {
+                '-' => Line::styled(text, Style::new().fg(palette.red)),
+                '+' => Line::styled(text, Style::new().fg(palette.green)),
+                _ => Line::styled(text, dim()),
+            });
+        }
+        if hidden > 0 {
+            rows.push(Line::styled(format!("⋯ {hidden} unchanged"), dim()));
+        }
+    }
+    rows
+}
+
+/// The rows of a command's output, laid out as markdown, since the adapter
+/// sends it as a fenced block.
+fn output_rows(content: &[ToolCallContent], width: usize) -> Vec<Line<'static>> {
+    output(content)
+        .into_iter()
+        .flat_map(|text| cmr::render(text, width))
+        .map(|row| {
+            trim_end(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, screen_style(style)))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 /// A subagent's call: folded to its two rows, or expanded with what the
 /// subagent did indented under it.
 fn subagent_block(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> Vec<Line<'static>> {
-    let count = tool.tool_count();
-    let noun = if count == 1 { "tool" } else { "tools" };
-    let suffix = format!("  {count} {noun}");
-    let mut lines = tool_rows(tool, cwd, width, "agent", &suffix).to_vec();
+    let mut lines = subagent_head(tool, cwd, width);
     if !expanded {
         return lines;
     }
     let inner = width.saturating_sub(SUBAGENT_INDENT.len());
     for child in &tool.children {
         let mut rows: Vec<Line<'static>> = match child {
-            Child::Tool(call) => tool_block(call, cwd, inner).to_vec(),
+            Child::Tool(call) => tool_block(call, cwd, inner),
             Child::Text(text) => {
                 let mut rows = Vec::new();
                 wrapped(
@@ -654,6 +967,12 @@ fn subagent_block(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> Vec<
         lines.extend(rows);
     }
     lines
+}
+
+fn subagent_head(tool: &Tool, cwd: &Path, width: usize) -> Vec<Line<'static>> {
+    let count = tool.tool_count();
+    let noun = if count == 1 { "tool" } else { "tools" };
+    tool_rows(tool, cwd, width, "agent", &format!("  {count} {noun}"))
 }
 
 const SUBAGENT_INDENT: &str = "    ";
@@ -1069,7 +1388,7 @@ mod tests {
         parts
             .iter()
             .flat_map(|part| match part {
-                Part::Flow(rows) | Part::Wide { rows, .. } => rows.clone(),
+                Part::Flow(rows) | Part::Block { rows, .. } => rows.clone(),
             })
             .collect()
     }
@@ -1109,23 +1428,26 @@ mod tests {
         }
     }
 
-    fn rows(tool: &Tool, width: usize) -> [String; 2] {
-        tool_block(tool, Path::new("/work"), width).map(|line| line.to_string())
+    fn rows(tool: &Tool, width: usize) -> Vec<String> {
+        tool_block(tool, Path::new("/work"), width)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect()
     }
 
     #[test]
     fn a_tool_title_too_long_for_the_row_is_cut_with_an_ellipsis() {
         let tool = tool("Read a/very/long/path/to/some/file.rs", "/work/x.rs", None);
-        let [first, second] = rows(&tool, 30);
-        assert_eq!(first, "● read   Read a/very/long/pat…");
-        assert_eq!(first.chars().count(), 30);
-        assert_eq!(second, "  ⎿  x.rs");
+        let rows = rows(&tool, 30);
+        assert_eq!(rows[0], "● read   Read a/very/long/pat…");
+        assert_eq!(rows[0].chars().count(), 30);
+        assert_eq!(rows[1], "  ⎿  x.rs");
     }
 
     #[test]
     fn the_location_is_dropped_when_the_title_already_names_the_file() {
         let shown = tool("Read src/main.rs", "/work/src/main.rs", Some(3));
-        assert_eq!(rows(&shown, 80)[1], "  ⎿  done");
+        assert_eq!(rows(&shown, 80), ["● read   Read src/main.rs"]);
         let other = tool("Read the entry point", "/work/src/main.rs", Some(3));
         assert_eq!(rows(&other, 80)[1], "  ⎿  src/main.rs:3");
     }
@@ -1133,9 +1455,7 @@ mod tests {
     #[test]
     fn the_location_gives_way_when_the_row_cannot_hold_it() {
         let tool = tool("Read the entry point", "/work/src/main.rs", Some(3));
-        let [first, second] = rows(&tool, 15);
-        assert_eq!(first, "● read   Read …");
-        assert_eq!(second, "  ⎿  done");
+        assert_eq!(rows(&tool, 15), ["● read   Read …"]);
     }
 
     #[test]
@@ -1270,10 +1590,10 @@ mod tests {
     #[test]
     fn a_code_block_is_as_wide_as_its_longest_line_plus_the_gutter() {
         let parts = markdown("```rs\nabcdefghij\nabc\n```", 8);
-        let [Part::Wide { natural, rows, .. }] = &parts[..] else {
-            panic!("expected one wide block");
+        let [Part::Block { natural, rows, .. }] = &parts[..] else {
+            panic!("expected one block");
         };
-        assert_eq!(*natural, 12);
+        assert_eq!(*natural, 14);
         assert_eq!(plain(rows), ["┌ rs", "│ abcdefghij", "│ abc"]);
     }
 
@@ -1281,8 +1601,8 @@ mod tests {
     fn a_table_is_as_wide_as_its_longest_row_with_the_padding_trimmed() {
         let text = "| name | note |\n|---|---|\n| a | a rather long note indeed |";
         let parts = markdown(text, 12);
-        let [Part::Wide { natural, rows, .. }] = &parts[..] else {
-            panic!("expected one wide block");
+        let [Part::Block { natural, rows, .. }] = &parts[..] else {
+            panic!("expected one block");
         };
         let widest = rows.iter().map(Line::width).max().unwrap();
         assert_eq!(*natural, widest);
@@ -1290,9 +1610,52 @@ mod tests {
     }
 
     #[test]
-    fn a_block_that_fits_the_width_is_laid_out_with_the_prose() {
-        let parts = markdown("```\nshort\n```\n\nafter", 20);
+    fn a_table_that_fits_the_width_is_laid_out_with_the_prose() {
+        let parts = markdown("| a | b |\n|---|---|\n| 1 | 2 |\n\nafter", 20);
         assert!(matches!(&parts[..], [Part::Flow(_)]));
+    }
+
+    #[test]
+    fn every_code_block_is_a_block_of_its_own_with_its_text_to_copy() {
+        let parts = markdown(
+            "before\n\n```\nfn main() {\n    run();\n}\n```\n\nafter",
+            40,
+        );
+        let [Part::Flow(_), Part::Block { copy, .. }, Part::Flow(_)] = &parts[..] else {
+            panic!("expected prose, a block and prose");
+        };
+        assert_eq!(copy.as_deref(), Some("fn main() {\n    run();\n}"));
+    }
+
+    #[test]
+    fn a_wide_code_block_copies_its_whole_text_not_the_window() {
+        let long = "x".repeat(60);
+        let mut rendered = Rendered::default();
+        let text = format!("```rs\n{long}\nshort\n```");
+        rendered.agent(3, &text, 20);
+        assert_eq!(
+            rendered.copy_text((3, 0)),
+            Some(format!("{long}\nshort")).as_deref()
+        );
+        assert_eq!(rendered.copy_text((3, 1)), None);
+        assert_eq!(rendered.copy_text((4, 0)), None);
+    }
+
+    #[test]
+    fn a_table_has_no_text_to_copy() {
+        let text = "| name | note |\n|---|---|\n| a | a rather long note indeed |";
+        let mut rendered = Rendered::default();
+        rendered.agent(0, text, 12);
+        assert_eq!(rendered.copy_text((0, 0)), None);
+    }
+
+    #[test]
+    fn the_copy_glyph_takes_the_last_column_of_the_first_row_and_pushes_the_arrow_left() {
+        let row = Line::from("0123456789");
+        let at =
+            |offset| window_with_corner(&row, offset, 6, 10, "#", Style::default()).to_string();
+        assert_eq!(at(0), "0123▸#");
+        assert_eq!(at(4), "◂5678#");
     }
 
     #[test]
@@ -1327,9 +1690,161 @@ mod tests {
                     )
                 })
                 .collect();
-            let parts = markdown(text, width);
-            assert!(matches!(&parts[..], [Part::Flow(_)]));
-            assert_eq!(flat(&parts), whole);
+            assert_eq!(flat(&markdown(text, width)), whole);
+        }
+    }
+
+    fn diff_of(old: Option<&str>, new: &str) -> Vec<ToolCallContent> {
+        let mut diff = Diff::new("src/main.rs", new);
+        diff.old_text = old.map(str::to_string);
+        vec![ToolCallContent::Diff(diff)]
+    }
+
+    #[test]
+    fn a_line_diff_marks_removed_added_and_unchanged_lines() {
+        assert_eq!(
+            line_diff("a\nb\nc", "a\nx\nc"),
+            [(' ', "a"), ('-', "b"), ('+', "x"), (' ', "c")]
+        );
+        assert_eq!(
+            line_diff("a\nb", "a\nb\nc"),
+            [(' ', "a"), (' ', "b"), ('+', "c")]
+        );
+        assert_eq!(line_diff("", "a"), [('+', "a")]);
+        assert_eq!(line_diff("a\nb", ""), [('-', "a"), ('-', "b")]);
+    }
+
+    #[test]
+    fn a_line_diff_keeps_the_lines_two_ends_share_when_the_middle_moved() {
+        assert_eq!(
+            line_diff("a\nb\nc\nd\ne", "a\nc\nb\nd\ne"),
+            [
+                (' ', "a"),
+                ('-', "b"),
+                (' ', "c"),
+                ('+', "b"),
+                (' ', "d"),
+                (' ', "e")
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_rows_show_removed_lines_red_and_added_lines_green() {
+        let rows = diff_rows(&diff_of(Some("a\nb\nc"), "a\nx\nc"), 40);
+        assert_eq!(plain(&rows), ["  a", "- b", "+ x", "  c"]);
+        assert_eq!(rows[1].style.fg, Some(palette::get().red));
+        assert_eq!(rows[2].style.fg, Some(palette::get().green));
+    }
+
+    #[test]
+    fn a_new_file_shows_every_line_added() {
+        let rows = diff_rows(&diff_of(None, "one\ntwo\n"), 40);
+        assert_eq!(plain(&rows), ["+ one", "+ two"]);
+    }
+
+    #[test]
+    fn a_long_run_of_unchanged_lines_folds_into_a_count_but_a_lone_line_stays() {
+        let old = "1\n2\n3\n4\n5\n6\n7\n8\n9";
+        let rows = diff_rows(&diff_of(Some(old), "x\n2\n3\n4\n5\n6\n7\n8\ny"), 40);
+        assert_eq!(
+            plain(&rows),
+            [
+                "- 1",
+                "+ x",
+                "  2",
+                "  3",
+                "⋯ 3 unchanged",
+                "  7",
+                "  8",
+                "- 9",
+                "+ y"
+            ]
+        );
+        let rows = diff_rows(&diff_of(Some("1\n2\n3\n4\n5\n6"), "x\n2\n3\n4\n5\ny"), 40);
+        assert_eq!(
+            plain(&rows),
+            ["- 1", "+ x", "  2", "  3", "  4", "  5", "- 6", "+ y"]
+        );
+    }
+
+    #[test]
+    fn a_diff_line_is_cut_to_the_width() {
+        let rows = diff_rows(&diff_of(None, "abcdefghij"), 6);
+        assert_eq!(plain(&rows), ["+ abc…"]);
+    }
+
+    #[test]
+    fn an_expanded_edit_shows_its_diff_indented_under_its_rows() {
+        let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
+        edit.kind = ToolKind::Edit;
+        edit.content = diff_of(Some("a"), "b");
+        let cwd = Path::new("/work");
+        let (folded, head) = tool_view(&edit, cwd, 60, false);
+        assert_eq!((folded.len(), head), (2, 2));
+        let (open, head) = tool_view(&edit, cwd, 60, true);
+        assert_eq!(head, 2);
+        assert_eq!(&plain(&open)[2..], ["    - a", "    + b"]);
+    }
+
+    fn text_content(text: &str) -> Vec<ToolCallContent> {
+        vec![ToolCallContent::from(text)]
+    }
+
+    #[test]
+    fn an_expanded_run_shows_its_output_through_the_markdown_path() {
+        let mut run = tool("cargo run", "/work/x", None);
+        run.kind = ToolKind::Execute;
+        run.locations.clear();
+        run.content = text_content("```console\n$ cargo run\nhello\n```");
+        let (open, head) = tool_view(&run, Path::new("/work"), 60, true);
+        assert_eq!(head, 1);
+        assert_eq!(
+            &plain(&open)[1..],
+            ["    ┌ console", "    │ $ cargo run", "    │ hello"]
+        );
+    }
+
+    #[test]
+    fn only_an_edit_with_a_diff_or_a_run_with_output_expands() {
+        let mut edit = tool("Edit", "/work/x", None);
+        edit.kind = ToolKind::Edit;
+        assert!(!expandable(&edit));
+        edit.content = diff_of(None, "a");
+        assert!(expandable(&edit));
+
+        let mut run = tool("run", "/work/x", None);
+        run.kind = ToolKind::Execute;
+        assert!(!expandable(&run));
+        run.content = text_content("  \n");
+        assert!(!expandable(&run));
+        run.content = text_content("out");
+        assert!(expandable(&run));
+
+        let mut read = tool("Read", "/work/x", None);
+        read.content = text_content("file text");
+        assert!(!expandable(&read));
+        assert!(expandable(&task()));
+    }
+
+    #[test]
+    fn a_done_call_with_nothing_to_add_has_no_status_row() {
+        let mut quiet = tool("Read the entry point", "/work/x", None);
+        quiet.locations.clear();
+        assert_eq!(rows(&quiet, 80), ["● read   Read the entry point"]);
+    }
+
+    #[test]
+    fn a_call_that_is_not_done_keeps_its_status_row() {
+        let mut call = tool("Read the entry point", "/work/x", None);
+        call.locations.clear();
+        for (status, word) in [
+            (ToolCallStatus::InProgress, "running…"),
+            (ToolCallStatus::Failed, "failed"),
+            (ToolCallStatus::Pending, "pending"),
+        ] {
+            call.status = status;
+            assert_eq!(rows(&call, 80)[1], format!("  ⎿  {word}"));
         }
     }
 
@@ -1363,7 +1878,6 @@ mod tests {
                 "● agent  Survey the entry point  1 tool",
                 "  ⎿  running…",
                 "    ● read   Read src/main.rs",
-                "      ⎿  done",
                 "    main.rs is a stub.",
             ]
         );

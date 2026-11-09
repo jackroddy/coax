@@ -472,3 +472,49 @@ async fn a_new_session_advertises_the_scenarios_commands() {
     .await
     .unwrap();
 }
+
+const BLOCKS: &str = include_str!("../scenarios/blocks.json");
+
+#[tokio::test]
+async fn an_edits_diff_and_a_runs_output_arrive_in_the_calls_content() {
+    use agent_client_protocol::v1::schema::{ContentBlock, ToolCallContent};
+
+    let scenario = Scenario::parse(BLOCKS).unwrap();
+    let saved = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let keep = saved.clone();
+    acp::run(fake::agent(scenario), async move |link| {
+        *keep.lock().unwrap() = Some(one_prompt(link, "go").await?);
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let transcript = saved.lock().unwrap().take().unwrap();
+    let Entry::Agent(text) = &transcript.entries[1] else {
+        panic!("expected the agent's text first");
+    };
+    assert!(text.contains("```rust"));
+    let Entry::Tool(edit) = &transcript.entries[2] else {
+        panic!("expected the edit");
+    };
+    assert_eq!(edit.kind, ToolKind::Edit);
+    let [ToolCallContent::Diff(diff)] = &edit.content[..] else {
+        panic!("expected one diff");
+    };
+    assert!(
+        diff.old_text
+            .as_deref()
+            .unwrap()
+            .contains("println!(\"hello\")")
+    );
+    assert!(diff.new_text.contains("run();"));
+    let Entry::Tool(run) = &transcript.entries[3] else {
+        panic!("expected the run");
+    };
+    assert_eq!(run.kind, ToolKind::Execute);
+    let [ToolCallContent::Content(content)] = &run.content[..] else {
+        panic!("expected one piece of output");
+    };
+    assert!(
+        matches!(&content.content, ContentBlock::Text(text) if text.text.starts_with("```console"))
+    );
+}

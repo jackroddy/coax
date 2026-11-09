@@ -38,7 +38,8 @@ command line, the keys, and the scenario format the fake agent reads.
   before a code line was cut with `…` and a table was squeezed or stacked. A
   block wider than the box shows a window onto it, with a dim `◂` or `▸` at
   the edge that has more. Shift with the wheel, or a horizontal wheel, over
-  the block pans it four columns at a time.
+  the block pans it four columns at a time. Pressing on a block and dragging
+  sideways pans it column for column with the pointer.
 - A bare `coax` starts every configured agent at once and lists their earlier
   sessions for the current folder in a `sessions` pane above the agents,
   newest first, each with its title, its agent and its age. j and k move
@@ -113,6 +114,18 @@ command line, the keys, and the scenario format the fake agent reads.
 - When `DECADE_MCP` is set, the agent is given decade as an MCP server in the
   session, so it can drive decade's panes itself.
 
+- Every fenced code block, with or without a language, has a copy glyph in
+  its top-right corner. It is dim, turns the accent colour under the pointer,
+  and a click puts the block's whole text on the clipboard through an OSC 52
+  escape sequence. The glyph then reads `copied` for a second. Your terminal
+  has to allow OSC 52, and under tmux `set-clipboard` has to be `on`.
+- A click on an edit call shows its diff under it: removed lines in red after
+  a `-`, added lines in green after a `+`, and the unchanged lines around
+  them dim. A click on a command call shows its output, laid out as markdown.
+  Both are folded until clicked, and a second click folds them again.
+- `scenarios/blocks.json` plays an agent message with code blocks, an edit and
+  a command with output, for the fake agent.
+
 ### Changed
 
 - The session has no panes and reads like a messaging thread. The header is
@@ -127,7 +140,8 @@ command line, the keys, and the scenario format the fake agent reads.
   width. Thoughts start with a dim `✻` and stay unboxed with a 10% margin on
   the right, as do tool calls. A tool call is two rows: a dot coloured by
   status, the kind and the title, then the location, the size of any edit or
-  the status. A title too long for its row is cut with `…`. Your answer to a
+  the status. A done call with nothing to show but its title has no second
+  row. A title too long for its row is cut with `…`. Your answer to a
   permission request is the choice in the accent colour on the right, and
   notices are centred and dim.
 - The prompt sits between two rules and shows one row. It wraps at word
