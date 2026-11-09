@@ -7,13 +7,15 @@
   "priority": 2,
   "labels": [],
   "parent": null,
-  "blocked_by": [],
+  "blocked_by": [
+    "coax-13bebe"
+  ],
   "related": [],
   "assignee": null,
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T04:57:35.234685376Z",
-  "updated_at": "2026-11-09T04:57:35.234685376Z",
+  "updated_at": "2026-11-09T04:57:35.242435655Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
