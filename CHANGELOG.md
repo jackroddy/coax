@@ -134,8 +134,13 @@ command line, the keys, and the scenario format the fake agent reads.
 - `scenarios/blocks.json` plays an agent message with code blocks, an edit and
   a command with output, for the fake agent.
 
-- The `⋯ N more below` row under a scrolled conversation is a button. A click
-  on it jumps to the bottom.
+- A conversation taller than the screen has a scroll bar in the last column
+  of the transcript, which is then one column narrower. The track is a dim
+  `│` and the thumb a `┃` sized to the visible share, at the bottom when you
+  are at the latest message. The thumb is in the accent colour while the
+  pointer is over it or dragging it. Dragging it scrolls with the pointer,
+  and a click on the track centres the thumb there. The wheel, PageUp,
+  PageDown and End still scroll.
 - Enter on a `/name` or `//name` that matches no command leaves the text in the
   prompt and shows a dim `no command /name` (or `no agent command //name`)
   in the rule under the prompt until the next key.

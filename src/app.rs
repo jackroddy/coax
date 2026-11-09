@@ -69,7 +69,7 @@ impl Drag {
     /// The pan that keeps the thumb under the pointer at `column`.
     fn pan_at(&self, column: u16) -> usize {
         let start = column as isize - self.bar_x as isize - self.grab;
-        ui::pan_for_thumb(self.visible, self.max, start)
+        ui::pan_for_thumb(self.visible, self.max, start, 2)
     }
 }
 
@@ -116,8 +116,15 @@ pub struct App {
     /// next key.
     pub unknown: Option<String>,
 
-    /// The `⋯ N more below` row on screen, set by the last draw.
-    pub more_below: Option<Rect>,
+    /// The conversation's scroll bar, set by the last draw when it shows.
+    pub v_bar: Option<ui::VBar>,
+
+    /// Whether the pointer is over the conversation's thumb.
+    pub hover_v_bar: bool,
+
+    /// How far into the conversation's thumb the pointer took hold, while
+    /// it drags.
+    pub v_drag: Option<isize>,
 
     /// The wide blocks on screen, set by the last draw.
     pub wide: Vec<ui::WideBlock>,
@@ -324,6 +331,9 @@ impl App {
             MouseEventKind::Moved => {
                 self.hover = self.chip_at(position);
                 self.hover_copy = self.copy_at(position);
+                self.hover_v_bar = self
+                    .v_bar_at(position)
+                    .is_some_and(|(_, grab)| grab.is_some());
                 self.hover_bar = self
                     .bar_at(position)
                     .filter(|(_, grab)| grab.is_some())
@@ -340,10 +350,15 @@ impl App {
                 if let Some(drag) = self.drag {
                     self.pans.insert(drag.key, drag.pan_at(position.x));
                 }
+                if let (Some(grab), Some(bar)) = (self.v_drag, &self.v_bar) {
+                    let start = position.y as isize - bar.area.y as isize - grab;
+                    self.scroll = bar.scroll_for_thumb(start);
+                }
                 return Action::None;
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.drag = None;
+                self.v_drag = None;
                 return Action::None;
             }
             MouseEventKind::ScrollLeft => -PAN_COLUMNS,
@@ -373,10 +388,42 @@ impl App {
     fn bar_at(&self, position: Position) -> Option<(&ui::ScrollBar, Option<isize>)> {
         let bar = self.bars.iter().find(|bar| bar.area.contains(position))?;
         let offset = self.pans.get(&bar.key).copied().unwrap_or(0);
-        let (start, len) = ui::thumb(bar.area.width as usize, bar.max, offset);
+        let (start, len) = ui::thumb(bar.area.width as usize, bar.max, offset, 2);
         let column = (position.x - bar.area.x) as usize;
         let on_thumb = (start..start + len).contains(&column);
         Some((bar, on_thumb.then(|| (column - start) as isize)))
+    }
+
+    /// The conversation's scroll bar under `position`, and how far into its
+    /// thumb that is when it is on the thumb.
+    fn v_bar_at(&self, position: Position) -> Option<(&ui::VBar, Option<isize>)> {
+        let bar = self
+            .v_bar
+            .as_ref()
+            .filter(|bar| bar.area.contains(position))?;
+        let (start, len) = bar.thumb(self.scroll);
+        let row = (position.y - bar.area.y) as usize;
+        let on_thumb = (start..start + len).contains(&row);
+        Some((bar, on_thumb.then(|| (row - start) as isize)))
+    }
+
+    /// Take hold of the conversation's thumb under a press, or move it to
+    /// the press first when the press is on the track.
+    fn press_v_bar(&mut self, position: Position) -> bool {
+        let Some((bar, grab)) = self.v_bar_at(position) else {
+            return false;
+        };
+        let grab = match grab {
+            Some(grab) => grab,
+            None => {
+                let len = bar.thumb(0).1 as isize;
+                let start = position.y as isize - bar.area.y as isize - len / 2;
+                self.scroll = bar.scroll_for_thumb(start);
+                len / 2
+            }
+        };
+        self.v_drag = Some(grab);
+        true
     }
 
     /// Take hold of the thumb under a press, or move it to the press first
@@ -385,7 +432,7 @@ impl App {
         let Some((bar, grab)) = self.bar_at(position) else {
             return false;
         };
-        let len = ui::thumb(bar.area.width as usize, bar.max, 0).1;
+        let len = ui::thumb(bar.area.width as usize, bar.max, 0, 2).1;
         let drag = Drag {
             key: bar.key,
             grab: grab.unwrap_or(len as isize / 2),
@@ -432,8 +479,7 @@ impl App {
             }
             return Action::None;
         }
-        if self.more_below.is_some_and(|row| row.contains(position)) {
-            self.scroll = 0;
+        if self.press_v_bar(position) {
             return Action::None;
         }
         let Some(chip) = self.chips.iter().find(|chip| chip.area.contains(position)) else {
@@ -887,7 +933,9 @@ pub async fn run(
         pans: HashMap::new(),
         wide: Vec::new(),
         unknown: None,
-        more_below: None,
+        v_bar: None,
+        hover_v_bar: false,
+        v_drag: None,
         drag: None,
         bars: Vec::new(),
         hover_bar: None,
@@ -1051,7 +1099,9 @@ mod tests {
             guard: None,
             pans: HashMap::new(),
             unknown: None,
-            more_below: None,
+            v_bar: None,
+            hover_v_bar: false,
+            v_drag: None,
             drag: None,
             bars: Vec::new(),
             hover_bar: None,
@@ -1149,7 +1199,7 @@ mod tests {
         assert!(!app.pans.contains_key(&(1, 0)));
         mouse_at(&mut app, drag, 12);
         assert_eq!(app.pans[&(1, 0)], 10);
-        assert_eq!(ui::thumb(20, 20, 10).0, 5);
+        assert_eq!(ui::thumb(20, 20, 10, 2).0, 5);
         mouse_at(&mut app, drag, 17);
         assert_eq!(app.pans[&(1, 0)], 20);
         mouse_at(&mut app, drag, 40);
@@ -1176,7 +1226,7 @@ mod tests {
 
         // column 10 of the bar, a thumb 10 long: it starts at column 5
         let offset = app.pans[&(1, 0)];
-        assert_eq!(ui::thumb(20, 20, offset).0, 5);
+        assert_eq!(ui::thumb(20, 20, offset, 2).0, 5);
         mouse_at(&mut app, MouseEventKind::Up(MouseButton::Left), 12);
         mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), 2);
         assert_eq!(app.pans[&(1, 0)], 0);
@@ -1381,35 +1431,197 @@ mod tests {
         assert!(app.unknown.is_none());
     }
 
-    #[test]
-    fn a_click_on_the_more_below_row_jumps_to_the_bottom() {
+    fn with_a_long_conversation() -> App {
         let mut app = with_settings();
-        for n in 0..40 {
+        for n in 0..60 {
             app.transcript.notice(format!("notice {n}"));
         }
-        header(&mut app, 60);
-        app.scroll = 12;
-        header(&mut app, 60);
-        let row = app.more_below.expect("the indicator is on screen");
-        assert_eq!(row.width, 60);
-        click(&mut app, 3, row.y);
-        assert_eq!(app.scroll, 0);
-        header(&mut app, 60);
-        assert!(app.more_below.is_none());
+        header(&mut app, 80);
+        app
     }
 
     #[test]
-    fn a_click_just_above_the_more_below_row_leaves_the_scroll_alone() {
+    fn a_short_conversation_has_no_scroll_bar() {
         let mut app = with_settings();
-        for n in 0..40 {
+        app.transcript.notice("one".to_string());
+        header(&mut app, 80);
+        assert!(app.v_bar.is_none());
+    }
+
+    #[test]
+    fn a_tall_conversation_shows_a_bar_in_the_last_column_of_the_transcript() {
+        let mut app = with_a_long_conversation();
+        let bar = app.v_bar.as_ref().expect("the bar shows");
+        assert_eq!(bar.area.x, 79);
+        assert_eq!(bar.area.width, 1);
+        let (y, height) = (bar.area.y, bar.area.height);
+        let (start, len) = bar.thumb(app.scroll);
+        let screen = header_buffer(&mut app, 80);
+        let column: Vec<String> = (y..y + height)
+            .map(|row| screen[(79, row)].symbol().to_string())
+            .collect();
+        for (row, symbol) in column.iter().enumerate() {
+            let on = (start..start + len).contains(&row);
+            assert_eq!(symbol, if on { "┃" } else { "│" }, "row {row}");
+        }
+
+        // not scrolled, so the thumb is at the bottom
+        assert_eq!(start + len, height as usize);
+    }
+
+    #[test]
+    fn the_transcript_is_laid_out_one_column_narrower_while_the_bar_shows() {
+        // a wide block fills its box, which is 90% of the width
+        let right_edge = |app: &mut App| {
+            let screen = header_buffer(app, 80);
+            (0..80u16)
+                .rev()
+                .find(|x| (0..30).any(|y| screen[(*x, y)].symbol() == "╮"))
+        };
+        let mut app = with_settings();
+        let long = "x".repeat(200);
+        app.transcript
+            .entries
+            .push(Entry::Agent(format!("```\n{long}\n```")));
+        assert_eq!(right_edge(&mut app), Some(71));
+        assert!(app.v_bar.is_none());
+        for n in 0..60 {
             app.transcript.notice(format!("notice {n}"));
         }
-        header(&mut app, 60);
-        app.scroll = 12;
-        header(&mut app, 60);
-        let row = app.more_below.unwrap();
-        click(&mut app, 3, row.y - 1);
-        assert_eq!(app.scroll, 12);
+        app.scroll = 1000;
+        assert_eq!(right_edge(&mut app), Some(70));
+        assert!(app.v_bar.is_some());
+    }
+
+    fn with_a_scroll_bar_of(max: usize) -> App {
+        let mut app = app();
+        app.v_bar = Some(ui::VBar {
+            area: Rect::new(79, 2, 1, 20),
+            max,
+        });
+        app
+    }
+
+    #[test]
+    fn the_conversations_thumb_is_the_visible_share_and_sits_at_the_bottom_when_not_scrolled() {
+        let bar = ui::VBar {
+            area: Rect::new(79, 2, 1, 20),
+            max: 80,
+        };
+        assert_eq!(bar.thumb(0), (16, 4));
+        assert_eq!(bar.thumb(40), (8, 4));
+        assert_eq!(bar.thumb(80), (0, 4));
+        let huge = ui::VBar {
+            area: Rect::new(79, 2, 1, 20),
+            max: 10_000,
+        };
+        assert_eq!(huge.thumb(0), (19, 1));
+        assert_eq!(huge.thumb(10_000), (0, 1));
+    }
+
+    #[test]
+    fn the_scroll_for_a_thumb_position_inverts_the_thumb() {
+        let bar = ui::VBar {
+            area: Rect::new(79, 2, 1, 20),
+            max: 80,
+        };
+        assert_eq!(bar.scroll_for_thumb(16), 0);
+        assert_eq!(bar.scroll_for_thumb(8), 40);
+        assert_eq!(bar.scroll_for_thumb(0), 80);
+        assert_eq!(bar.scroll_for_thumb(-5), 80);
+        assert_eq!(bar.scroll_for_thumb(99), 0);
+    }
+
+    fn mouse_row(app: &mut App, kind: MouseEventKind, row: u16) {
+        app.mouse(wheel(kind, KeyModifiers::NONE, 79, row));
+    }
+
+    #[test]
+    fn pressing_on_the_conversations_thumb_and_dragging_scrolls_with_the_pointer() {
+        let mut app = with_a_scroll_bar_of(80);
+        let down = MouseEventKind::Down(MouseButton::Left);
+        let drag = MouseEventKind::Drag(MouseButton::Left);
+
+        // the thumb is at rows 16..20 of the bar, which starts at row 2
+        mouse_row(&mut app, down, 2 + 17);
+        assert_eq!(app.v_drag, Some(1));
+        assert_eq!(app.scroll, 0);
+        mouse_row(&mut app, drag, 2 + 9);
+        assert_eq!(app.scroll, 40);
+        mouse_row(&mut app, drag, 0);
+        assert_eq!(app.scroll, 80);
+        mouse_row(&mut app, drag, 40);
+        assert_eq!(app.scroll, 0);
+        mouse_row(&mut app, MouseEventKind::Up(MouseButton::Left), 40);
+        assert_eq!(app.v_drag, None);
+        mouse_row(&mut app, drag, 2 + 5);
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn a_click_on_the_conversations_track_centres_the_thumb_there() {
+        let mut app = with_a_scroll_bar_of(80);
+        mouse_row(&mut app, MouseEventKind::Down(MouseButton::Left), 2 + 3);
+
+        // the thumb is 4 long, so it starts 2 rows above the click
+        assert_eq!(app.scroll, 75);
+        assert_eq!(app.v_bar.as_ref().unwrap().thumb(app.scroll).0, 1);
+        assert_eq!(app.v_drag, Some(2));
+    }
+
+    #[test]
+    fn a_press_beside_the_conversations_bar_scrolls_nothing() {
+        let mut app = with_a_scroll_bar_of(80);
+        app.mouse(wheel(
+            MouseEventKind::Down(MouseButton::Left),
+            KeyModifiers::NONE,
+            70,
+            10,
+        ));
+        assert_eq!(app.v_drag, None);
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn the_pointer_is_over_the_conversations_thumb_only_on_the_thumb() {
+        let mut app = with_a_scroll_bar_of(80);
+        mouse_row(&mut app, MouseEventKind::Moved, 2 + 18);
+        assert!(app.hover_v_bar);
+        mouse_row(&mut app, MouseEventKind::Moved, 2 + 5);
+        assert!(!app.hover_v_bar);
+    }
+
+    #[test]
+    fn the_thumb_follows_the_scroll_while_new_lines_arrive_under_a_scrolled_view() {
+        let mut app = with_a_long_conversation();
+        app.scroll = 10;
+        header(&mut app, 80);
+        let before = app.v_bar.as_ref().unwrap().thumb(app.scroll);
+        let first = app.scroll;
+        app.transcript.notice("late".to_string());
+        header(&mut app, 80);
+
+        // the view holds still, so the scroll offset grows with the new lines
+        assert!(app.scroll > first);
+        let after = app.v_bar.as_ref().unwrap().thumb(app.scroll);
+        assert!(after.0 <= before.0);
+    }
+
+    #[test]
+    fn the_wheel_and_the_page_keys_still_scroll_with_the_bar_showing() {
+        let mut app = with_a_long_conversation();
+        app.mouse(wheel(MouseEventKind::ScrollUp, KeyModifiers::NONE, 3, 6));
+        assert_eq!(app.scroll, 3);
+        app.key(
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+            Instant::now(),
+        );
+        assert!(app.scroll > 3);
+        app.key(
+            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+            Instant::now(),
+        );
+        assert_eq!(app.scroll, 0);
     }
 
     fn ctrl(ch: char) -> KeyEvent {

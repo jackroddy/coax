@@ -317,10 +317,10 @@ fn window_with_corner(
 
 /// The thumb of a scroll bar `visible` columns wide over a block that pans
 /// `max` columns, at pan `offset`: its first column and its length. The
-/// length is the visible share of the block, at least 2.
-pub fn thumb(visible: usize, max: usize, offset: usize) -> (usize, usize) {
+/// length is the visible share of the block, at least `min_len`.
+pub fn thumb(visible: usize, max: usize, offset: usize, min_len: usize) -> (usize, usize) {
     let natural = visible + max;
-    let len = ((visible * visible + natural / 2) / natural).clamp(2.min(visible), visible);
+    let len = ((visible * visible + natural / 2) / natural).clamp(min_len.min(visible), visible);
     let free = visible - len;
     let start = (offset.min(max) * free + max / 2)
         .checked_div(max)
@@ -330,8 +330,8 @@ pub fn thumb(visible: usize, max: usize, offset: usize) -> (usize, usize) {
 
 /// The pan that puts the thumb's first column at `start`, which may lie
 /// outside the bar: the inverse of `thumb`.
-pub fn pan_for_thumb(visible: usize, max: usize, start: isize) -> usize {
-    let free = visible - thumb(visible, max, 0).1;
+pub fn pan_for_thumb(visible: usize, max: usize, start: isize, min_len: usize) -> usize {
+    let free = visible - thumb(visible, max, 0, min_len).1;
     if free == 0 {
         return 0;
     }
@@ -342,7 +342,7 @@ pub fn pan_for_thumb(visible: usize, max: usize, start: isize) -> usize {
 /// The scroll bar row under a wide block: a dim track with a thumb on it,
 /// in the accent colour while `hot`.
 fn scroll_bar(visible: usize, max: usize, offset: usize, hot: bool) -> Line<'static> {
-    let (start, len) = thumb(visible, max, offset);
+    let (start, len) = thumb(visible, max, offset, 2);
     let colour = if hot {
         palette::get().accent
     } else {
@@ -401,8 +401,15 @@ fn screen_style(style: cmr::Style) -> Style {
     out
 }
 
-fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
-    let width = area.width.max(4) as usize;
+/// The transcript laid out at one width.
+struct Built {
+    lines: Vec<Line<'static>>,
+    wides: Vec<Wide>,
+    copies: Vec<Copy>,
+    folds: Vec<Fold>,
+}
+
+fn build_transcript(app: &mut App, width: usize) -> Built {
     let usable = width - width / 10;
     let mut lines: Vec<Line> = Vec::new();
     let mut wides: Vec<Wide> = Vec::new();
@@ -505,17 +512,38 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
         }
         lines.push(Line::default());
     }
-    let height = area.height as usize;
-    let rows = height.saturating_sub(1).max(1);
-    app.page = rows;
+    Built {
+        lines,
+        wides,
+        copies,
+        folds,
+    }
+}
+
+/// The conversation, one column narrower with a scroll bar in the last
+/// column when it is taller than `outer`.
+fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
+    let height = outer.height as usize;
+    let mut area = outer;
+    let mut built = build_transcript(app, (area.width as usize).max(4));
+    if built.lines.len() > height && area.width > 1 {
+        area.width -= 1;
+        built = build_transcript(app, (area.width as usize).max(4));
+    }
+    let Built {
+        lines,
+        wides,
+        copies,
+        folds,
+    } = built;
+    app.page = height.saturating_sub(1).max(1);
     if app.scroll > 0 {
         app.scroll += lines.len().saturating_sub(app.lines_seen);
     }
     app.lines_seen = lines.len();
-    app.scroll = app.scroll.min(lines.len().saturating_sub(rows));
-    let rows = if app.scroll > 0 { rows } else { height };
+    app.scroll = app.scroll.min(lines.len().saturating_sub(height));
     let end = lines.len() - app.scroll;
-    let start = end.saturating_sub(rows);
+    let start = end.saturating_sub(height);
     app.folds = folds
         .iter()
         .filter_map(|fold| {
@@ -577,18 +605,59 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
             })
         })
         .collect();
-    let mut visible: Vec<Line> = lines.into_iter().take(end).skip(start).collect();
-    app.more_below = None;
-    if app.scroll > 0 {
-        app.more_below = Some(Rect::new(
-            area.x,
-            area.y + visible.len() as u16,
-            area.width,
-            1,
-        ));
-        visible.push(Line::styled(format!("⋯ {} more below", app.scroll), dim()));
-    }
+    let visible: Vec<Line> = lines.into_iter().take(end).skip(start).collect();
     frame.render_widget(Paragraph::new(visible), area);
+    app.v_bar = None;
+    if area.width < outer.width {
+        let bar = VBar {
+            area: Rect::new(area.right(), area.y, 1, outer.height),
+            max: app.lines_seen - height,
+        };
+        draw_v_bar(frame, &bar, app);
+        app.v_bar = Some(bar);
+    }
+}
+
+/// The conversation's scroll bar: its column on screen, and how far the
+/// conversation scrolls, in lines.
+pub struct VBar {
+    pub area: Rect,
+    pub max: usize,
+}
+
+impl VBar {
+    /// The thumb's first row and its length for a conversation scrolled up by
+    /// `scroll` lines. The thumb sits at the bottom when `scroll` is 0.
+    pub fn thumb(&self, scroll: usize) -> (usize, usize) {
+        let height = self.area.height as usize;
+        thumb(height, self.max, self.max - scroll.min(self.max), 1)
+    }
+
+    /// How far up the conversation is scrolled when the thumb's first row is
+    /// at `start`, which may lie outside the bar.
+    pub fn scroll_for_thumb(&self, start: isize) -> usize {
+        let height = self.area.height as usize;
+        self.max - pan_for_thumb(height, self.max, start, 1)
+    }
+}
+
+fn draw_v_bar(frame: &mut Frame, bar: &VBar, app: &App) {
+    let (start, len) = bar.thumb(app.scroll);
+    let colour = if app.hover_v_bar || app.v_drag.is_some() {
+        palette::get().accent
+    } else {
+        palette::get().foreground
+    };
+    let rows: Vec<Line> = (0..bar.area.height as usize)
+        .map(|row| {
+            if (start..start + len).contains(&row) {
+                Line::styled("┃", Style::new().fg(colour))
+            } else {
+                Line::styled("│", dim())
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(rows), bar.area);
 }
 
 /// An expandable tool call drawn this frame, by the line it starts on.
@@ -1783,33 +1852,33 @@ mod tests {
     #[test]
     fn the_thumb_is_the_visible_share_of_the_block_and_moves_with_the_pan() {
         // half the block is visible
-        assert_eq!(thumb(20, 20, 0), (0, 10));
-        assert_eq!(thumb(20, 20, 10), (5, 10));
-        assert_eq!(thumb(20, 20, 20), (10, 10));
+        assert_eq!(thumb(20, 20, 0, 2), (0, 10));
+        assert_eq!(thumb(20, 20, 10, 2), (5, 10));
+        assert_eq!(thumb(20, 20, 20, 2), (10, 10));
         // a tenth is visible, so the thumb stays at its minimum of 2
-        assert_eq!(thumb(20, 180, 0), (0, 2));
-        assert_eq!(thumb(20, 180, 90), (9, 2));
-        assert_eq!(thumb(20, 180, 180), (18, 2));
+        assert_eq!(thumb(20, 180, 0, 2), (0, 2));
+        assert_eq!(thumb(20, 180, 90, 2), (9, 2));
+        assert_eq!(thumb(20, 180, 180, 2), (18, 2));
         // nearly all of it is visible
-        assert_eq!(thumb(20, 2, 0), (0, 18));
-        assert_eq!(thumb(20, 2, 2), (2, 18));
+        assert_eq!(thumb(20, 2, 0, 2), (0, 18));
+        assert_eq!(thumb(20, 2, 2, 2), (2, 18));
     }
 
     #[test]
     fn the_thumb_never_leaves_a_one_column_bar() {
-        assert_eq!(thumb(1, 5, 3), (0, 1));
-        assert_eq!(thumb(2, 5, 5), (0, 2));
+        assert_eq!(thumb(1, 5, 3, 2), (0, 1));
+        assert_eq!(thumb(2, 5, 5, 2), (0, 2));
     }
 
     #[test]
     fn the_pan_for_a_thumb_position_inverts_the_thumb_and_stops_at_the_ends() {
         for offset in 0..=4 {
-            let (start, _) = thumb(40, 4, offset);
-            assert_eq!(pan_for_thumb(40, 4, start as isize), offset);
+            let (start, _) = thumb(40, 4, offset, 2);
+            assert_eq!(pan_for_thumb(40, 4, start as isize, 2), offset);
         }
-        assert_eq!(pan_for_thumb(20, 20, 5), 10);
-        assert_eq!(pan_for_thumb(20, 20, -7), 0);
-        assert_eq!(pan_for_thumb(20, 20, 99), 20);
+        assert_eq!(pan_for_thumb(20, 20, 5, 2), 10);
+        assert_eq!(pan_for_thumb(20, 20, -7, 2), 0);
+        assert_eq!(pan_for_thumb(20, 20, 99, 2), 20);
     }
 
     #[test]
