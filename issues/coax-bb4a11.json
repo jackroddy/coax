@@ -1,7 +1,7 @@
 {
   "id": "coax-bb4a11",
   "title": "Up and Down in the prompt skip over wrapped rows",
-  "body": "The prompt box draws its text in rows. `wrap_rows` in `ui.rs` breaks the text at word breaks to the box's width, and every `\\n` starts a new row. The cursor keys see only the `\\n` lines. Up and Down in `App`'s prompt key handling call `prompt::line_above` and `prompt::line_below`. Both find the neighbouring line by searching for `\\n` and keep the display column.\n\nWhen a line wraps, its rows are one line to these functions. In a single paragraph that wraps to three rows, Up and Down do nothing, because no line lies above or below it. With the cursor on the first row of a wrapped paragraph, Down jumps past the paragraph's remaining rows to the next `\\n` line.\n\n## Proposal\n\nUp and Down move by drawn row. They keep the display column, as they do now. To find the rows, the movement code needs the width `wrap_rows` was given. `App` would keep the prompt's width from the last draw, the way it keeps `page` for Page Up and Page Down.\n\n## Open\n\n- Should Ctrl-A and Ctrl-E go to the start and end of the drawn row, or stay with the `\\n` line? Emacs moves by logical line. Many text boxes move by visual row.",
+  "body": "The prompt box draws its text in rows. `wrap_rows` in `ui.rs` breaks the text at word breaks to the box's width, and every `\\n` starts a new row. The cursor keys see only the `\\n` lines. Up and Down in `App`'s prompt key handling call `prompt::line_above` and `prompt::line_below`. Both find the neighbouring line by searching for `\\n` and keep the display column.\n\nWhen a line wraps, its rows are one line to these functions. In a single paragraph that wraps to three rows, Up and Down do nothing, because no line lies above or below it. With the cursor on the first row of a wrapped paragraph, Down jumps past the paragraph's remaining rows to the next `\\n` line.\n\n## Proposal\n\nUp and Down move by drawn row. They keep the display column, as they do now. To find the rows, the movement code needs the width `wrap_rows` was given. `App` would keep the prompt's width from the last draw, the way it keeps `page` for Page Up and Page Down.\n\nCtrl-A and Ctrl-E stay on the `\\n` line. coax takes them from readline and Emacs, and both move by logical line.",
   "type": "bug",
   "status": "open",
   "priority": 2,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T23:54:16.222541601Z",
-  "updated_at": "2026-11-09T23:54:16.222541601Z",
+  "updated_at": "2026-11-09T23:55:13.598931131Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
