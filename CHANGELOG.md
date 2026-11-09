@@ -183,6 +183,8 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- An idle session no longer spins a core. A closed decade connection used to wake
+  the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The
   conversation starts on the first row, and a dim status line under the
   prompt carries the settings, the plan summary, context, tokens, cost and

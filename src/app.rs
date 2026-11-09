@@ -1190,10 +1190,10 @@ pub async fn run(
                 app.copied = None;
                 Action::None
             },
-            message = decade_messages.recv() => {
+            message = async { decade_messages.as_mut().unwrap().recv().await }, if decade_messages.is_some() => {
                 match message {
                     Some(message) => app.decade(message),
-                    None => decade_messages = mpsc::unbounded_channel().1,
+                    None => decade_messages = None,
                 }
                 Action::None
             },
@@ -1261,10 +1261,10 @@ pub fn restore() {
     ratatui::restore();
 }
 
-fn connect_decade() -> (Option<Channel>, UnboundedReceiver<Message>) {
-    let (tx, rx) = mpsc::unbounded_channel();
+fn connect_decade() -> (Option<Channel>, Option<UnboundedReceiver<Message>>) {
     match Channel::from_env("coax", &[], &[], None) {
         Some(Ok((channel, messages))) => {
+            let (tx, rx) = mpsc::unbounded_channel();
             std::thread::spawn(move || {
                 for message in messages {
                     if tx.send(message).is_err() {
@@ -1272,9 +1272,9 @@ fn connect_decade() -> (Option<Channel>, UnboundedReceiver<Message>) {
                     }
                 }
             });
-            (Some(channel), rx)
+            (Some(channel), Some(rx))
         }
-        Some(Err(_)) | None => (None, rx),
+        Some(Err(_)) | None => (None, None),
     }
 }
 
