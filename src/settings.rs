@@ -37,11 +37,8 @@ pub struct Setting {
     pub id: String,
     pub name: String,
 
-    /// The text of the setting's row in the overflow list.
+    /// The text of the setting on the status line and in the overflow list.
     pub label: String,
-
-    /// The setting's current value as the header shows it.
-    pub value: String,
     pub description: Option<String>,
     pub control: Control,
 
@@ -188,7 +185,7 @@ fn setting(option: &SessionConfigOption) -> Setting {
         _ => (String::new(), Control::Flip(false), String::new()),
     };
     let label = if value_only {
-        value.clone()
+        value
     } else {
         format!("{} {value}", option.name)
     };
@@ -196,7 +193,6 @@ fn setting(option: &SessionConfigOption) -> Setting {
         id: option.id.0.to_string(),
         name: option.name.clone(),
         label,
-        value,
         description: option.description.clone(),
         control,
         unguarded: is_mode && is_unguarded(&current),
@@ -224,7 +220,6 @@ fn mode_setting(modes: &SessionModeState) -> Setting {
     Setting {
         id: "mode".to_string(),
         name: "mode".to_string(),
-        value: label.clone(),
         label,
         description: None,
         control: Control::Choose(choices),

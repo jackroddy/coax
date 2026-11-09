@@ -34,32 +34,32 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         0
     };
     let [
-        header_area,
         transcript_area,
         plan_area,
         upper_rule,
         prompt_area,
         lower_rule,
+        status_area,
     ] = Layout::vertical([
-        Constraint::Length(3),
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
         Constraint::Length(1),
         Constraint::Length(input.height() as u16),
         Constraint::Length(1),
+        Constraint::Length(1),
     ])
     .areas(area);
 
-    header::draw_header(frame, header_area, app);
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
-    draw_menu(frame, app);
     draw_plan(frame, plan_area, app);
     draw_rule(frame, upper_rule);
     draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
     draw_commands(frame, app, upper_rule);
     draw_confirm(frame, transcript_area, app);
     draw_guard_rule(frame, lower_rule, app);
+    header::draw_status(frame, status_area, app);
+    draw_menu(frame, app);
 }
 
 /// The rule under the prompt, carrying the exit guard's message while armed.
@@ -1503,11 +1503,13 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
         .min((screen.height as usize).saturating_sub(4 + error))
         .max(1);
     let first = (menu.cursor + 1).saturating_sub(visible);
+    // the box sits on the status line, which has the chips it hangs from
+    let height = (visible + error) as u16 + 2;
     let area = Rect {
         x: menu.anchor.min(screen.width - width),
-        y: 1,
+        y: screen.height.saturating_sub(1 + height),
         width,
-        height: (visible + error) as u16 + 2,
+        height,
     };
     let mut lines: Vec<Line> = rows
         .iter()

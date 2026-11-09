@@ -12,8 +12,6 @@ use crate::ui::dim;
 
 const OVERFLOW_CHIP: &str = "⋯";
 
-/// The columns between two settings.
-const SETTING_GAP: &str = "   ";
 const SEPARATOR: &str = " · ";
 
 /// The frames of the working spinner.
@@ -48,24 +46,6 @@ fn identity(title: &str) -> Vec<Span<'static>> {
     ]
 }
 
-/// The settings that fit in `room` columns after the leading space, and
-/// whether a `⋯` stands for the rest. The first setting stays.
-fn fit_chips(widths: &[usize], room: usize) -> (usize, bool) {
-    let gap = SETTING_GAP.chars().count();
-    let overflow = gap + OVERFLOW_CHIP.chars().count();
-    let mut shown = widths.len();
-    loop {
-        let hidden = shown < widths.len();
-        let total = widths[..shown].iter().sum::<usize>()
-            + gap * shown.saturating_sub(1)
-            + if hidden { overflow } else { 0 };
-        if total < room || shown <= 1 {
-            return (shown, hidden);
-        }
-        shown -= 1;
-    }
-}
-
 /// One item of the status side of line 1.
 struct Item {
     text: String,
@@ -90,21 +70,46 @@ fn items_width(items: &[Item]) -> usize {
     sum + SEPARATOR.chars().count() * items.len().saturating_sub(1)
 }
 
-/// The items that fit in `room` columns.
-fn fit_status(mut items: Vec<Item>, room: usize) -> Vec<Item> {
-    while items_width(&items) > room {
+/// The columns the first `widths` settings take, and the `⋯` that stands for
+/// the rest when `hidden`.
+fn settings_width(widths: &[usize], hidden: bool) -> usize {
+    let gap = SEPARATOR.chars().count();
+    let overflow = if hidden {
+        gap + OVERFLOW_CHIP.chars().count()
+    } else {
+        0
+    };
+    widths.iter().sum::<usize>() + gap * widths.len().saturating_sub(1) + overflow
+}
+
+/// What fits on a line `width` columns wide: how many settings, whether a `⋯`
+/// stands for the rest, and the status items kept. The items go first, the
+/// highest rank first. Then settings go from the right. The first setting
+/// and the rank 0 items stay.
+fn fit_line(widths: &[usize], mut items: Vec<Item>, width: usize) -> (usize, bool, Vec<Item>) {
+    let mut shown = widths.len();
+    loop {
+        let hidden = shown < widths.len();
+
+        // a space at each end and two between the sides
+        let total = 1 + settings_width(&widths[..shown], hidden) + 2 + items_width(&items) + 1;
+        if total <= width {
+            return (shown, hidden, items);
+        }
         let droppable = items
             .iter()
             .enumerate()
             .filter(|(_, item)| item.rank > 0)
             .max_by_key(|(_, item)| item.rank)
             .map(|(index, _)| index);
-        let Some(index) = droppable else {
-            break;
-        };
-        items.remove(index);
+        if let Some(index) = droppable {
+            items.remove(index);
+        } else if shown > 1 {
+            shown -= 1;
+        } else {
+            return (shown, hidden, items);
+        }
     }
-    items
 }
 
 fn status(app: &App) -> Vec<Item> {
@@ -173,61 +178,26 @@ fn state(app: &App) -> Item {
     }
 }
 
-/// The header's three rows: `coax`, the agent and the session status; the
-/// setting chips; a rule.
-pub fn draw_header(frame: &mut Frame, area: Rect, app: &mut App) {
-    let [top, strip, rule] = Layout::vertical([Constraint::Length(1); 3]).areas(area);
-    let width = area.width as usize;
-
-    let mut spans = identity(&app.agent);
-    let left_width: usize = spans.iter().map(Span::width).sum();
-
-    // a column of padding after the status, as before it
-    let room = width.saturating_sub(left_width + 2);
-    let items = fit_status(status(app), room);
-    let right_width = items_width(&items) + 1;
-    spans.push(Span::raw(
-        " ".repeat(width.saturating_sub(left_width + right_width)),
-    ));
-    for (n, item) in items.into_iter().enumerate() {
-        if n > 0 {
-            spans.push(Span::styled(SEPARATOR, dim()));
-        }
-        spans.push(Span::styled(item.text, item.style));
-    }
-    spans.push(Span::raw(" "));
-    frame.render_widget(Paragraph::new(Line::from(spans)), top);
-
-    draw_chips(frame, strip, app);
-    draw_rule(frame, rule);
-}
-
-/// A setting as the header's second line shows it: its name dim and its
-/// value after it.
-fn setting_text(name: &str, value: &str) -> (String, String) {
-    (name.to_lowercase(), value.to_lowercase())
-}
-
-fn draw_chips(frame: &mut Frame, area: Rect, app: &mut App) {
+/// The status line: the settings on the left and the session status on the
+/// right, all dim but the mode value when the agent does not ask and the
+/// working state.
+pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
     let palette = palette::get();
     let settings = app.settings.settings();
-    let texts: Vec<(String, String)> = settings
+    let texts: Vec<String> = settings
         .iter()
-        .map(|setting| setting_text(&setting.name, &setting.value))
+        .map(|setting| setting.label.to_lowercase())
         .collect();
-    let widths: Vec<usize> = texts
-        .iter()
-        .map(|(name, value)| name.chars().count() + 1 + value.chars().count())
-        .collect();
-    let (shown, hidden) = fit_chips(&widths, area.width as usize);
+    let widths: Vec<usize> = texts.iter().map(|text| text.chars().count()).collect();
+    let (shown, hidden, items) = fit_line(&widths, status(app), area.width as usize);
 
     let mut spans = vec![Span::raw(" ")];
     let mut x = area.x + 1;
     app.chips.clear();
     let mut place = |spans: &mut Vec<Span<'static>>, width: usize, target: ChipTarget| {
         if spans.len() > 1 {
-            spans.push(Span::raw(SETTING_GAP));
-            x += SETTING_GAP.len() as u16;
+            spans.push(Span::styled(SEPARATOR, dim()));
+            x += SEPARATOR.chars().count() as u16;
         }
         app.chips.push(ChipArea {
             area: Rect::new(x, area.y, width as u16, 1),
@@ -237,8 +207,7 @@ fn draw_chips(frame: &mut Frame, area: Rect, app: &mut App) {
     };
     for (index, setting) in settings.iter().enumerate().take(shown) {
         let target = ChipTarget::Setting(index);
-        let (name, value) = &texts[index];
-        let mut style = Style::default();
+        let mut style = dim();
         if setting.unguarded {
             style = Style::new().fg(palette.yellow);
         }
@@ -248,8 +217,7 @@ fn draw_chips(frame: &mut Frame, area: Rect, app: &mut App) {
             style = Style::new().fg(palette.accent);
         }
         place(&mut spans, widths[index], target);
-        spans.push(Span::styled(format!("{name} "), dim()));
-        spans.push(Span::styled(value.clone(), style));
+        spans.push(Span::styled(texts[index].clone(), style));
     }
     if hidden {
         let target = ChipTarget::Overflow(shown);
@@ -261,40 +229,25 @@ fn draw_chips(frame: &mut Frame, area: Rect, app: &mut App) {
         place(&mut spans, 1, target);
         spans.push(Span::styled(OVERFLOW_CHIP, style));
     }
+
+    let left_width: usize = spans.iter().map(Span::width).sum();
+    let right_width = items_width(&items) + 1;
+    spans.push(Span::raw(" ".repeat(
+        (area.width as usize).saturating_sub(left_width + right_width),
+    )));
+    for (n, item) in items.into_iter().enumerate() {
+        if n > 0 {
+            spans.push(Span::styled(SEPARATOR, dim()));
+        }
+        spans.push(Span::styled(item.text, item.style));
+    }
+    spans.push(Span::raw(" "));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_setting_shows_when_there_is_room() {
-        assert_eq!(fit_chips(&[8, 10, 14, 8], 120), (4, false));
-    }
-
-    #[test]
-    fn settings_leave_from_the_right_into_the_overflow_mark() {
-        // four settings take 1 + 40 + 3 * 3 = 50 columns
-        assert_eq!(fit_chips(&[8, 10, 14, 8], 50), (4, false));
-        // three settings and the mark take 1 + 32 + 6 + 4 = 43
-        assert_eq!(fit_chips(&[8, 10, 14, 8], 49), (3, true));
-        assert_eq!(fit_chips(&[8, 10, 14, 8], 43), (3, true));
-        assert_eq!(fit_chips(&[8, 10, 14, 8], 42), (2, true));
-    }
-
-    #[test]
-    fn the_first_setting_stays_however_narrow_the_header_gets() {
-        assert_eq!(fit_chips(&[8, 10, 14, 8], 3), (1, true));
-    }
-
-    #[test]
-    fn a_setting_shows_its_name_and_value_in_lowercase() {
-        assert_eq!(
-            setting_text("Effort", "Default"),
-            ("effort".to_string(), "default".to_string())
-        );
-    }
 
     fn items() -> Vec<Item> {
         vec![
@@ -309,16 +262,41 @@ mod tests {
         items.iter().map(|item| item.text.as_str()).collect()
     }
 
+    const WIDTHS: [usize; 4] = [4, 4, 14, 8];
+
     #[test]
-    fn a_narrowing_status_drops_tokens_then_context_then_plan() {
-        // 4 + 7 + 6 + 4 columns and three separators of 3
-        assert_eq!(
-            names(&fit_status(items(), 100)),
-            ["plan", "context", "tokens", "idle"]
-        );
-        assert_eq!(names(&fit_status(items(), 29)), ["plan", "context", "idle"]);
-        assert_eq!(names(&fit_status(items(), 17)), ["plan", "idle"]);
-        assert_eq!(names(&fit_status(items(), 8)), ["idle"]);
-        assert_eq!(names(&fit_status(items(), 1)), ["idle"]);
+    fn a_wide_line_shows_every_setting_and_every_item() {
+        let (shown, hidden, kept) = fit_line(&WIDTHS, items(), 200);
+        assert_eq!((shown, hidden), (4, false));
+        assert_eq!(names(&kept), ["plan", "context", "tokens", "idle"]);
+    }
+
+    #[test]
+    fn a_narrowing_line_drops_tokens_then_context_then_plan_then_settings_from_the_right() {
+        // settings take 30 + 9 columns, items 21 + 9, and 4 more for the spaces
+        let fit = |width| {
+            let (shown, hidden, kept) = fit_line(&WIDTHS, items(), width);
+            (shown, hidden, kept.len())
+        };
+        assert_eq!(fit(73), (4, false, 4));
+        assert_eq!(fit(72), (4, false, 3));
+        assert_eq!(fit(58), (4, false, 2));
+        assert_eq!(fit(51), (4, false, 1));
+    }
+
+    #[test]
+    fn once_the_items_are_down_to_the_state_settings_leave_into_the_overflow_mark() {
+        let (shown, hidden, kept) = fit_line(&WIDTHS, items(), 44);
+        assert_eq!((shown, hidden), (3, true));
+        assert_eq!(names(&kept), ["idle"]);
+        let (shown, hidden, _) = fit_line(&WIDTHS, items(), 30);
+        assert_eq!((shown, hidden), (2, true));
+    }
+
+    #[test]
+    fn the_first_setting_and_the_state_stay_however_narrow_the_line_gets() {
+        let (shown, hidden, kept) = fit_line(&WIDTHS, items(), 3);
+        assert_eq!((shown, hidden), (1, true));
+        assert_eq!(names(&kept), ["idle"]);
     }
 }

@@ -1415,7 +1415,7 @@ mod tests {
         typed(&mut app, "/nope");
         app.key(enter(), Instant::now());
         let rows = header_rows_all(&mut app, 60);
-        let last = rows.lines().last().unwrap();
+        let last = rows.lines().nth_back(1).unwrap();
         assert!(last.starts_with("── no command /nope ─"), "{last}");
         typed(&mut app, "x");
         assert!(app.unknown.is_none());
@@ -1746,14 +1746,12 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    /// The three header rows, one string each.
-    fn header_rows(app: &mut App, width: u16) -> [String; 3] {
+    /// The status line, the last row of the screen.
+    fn status_row(app: &mut App, width: u16) -> String {
         let buffer = header_buffer(app, width);
-        [0, 1, 2].map(|y| {
-            (0..width)
-                .map(|x| buffer[(x, y)].symbol().to_string())
-                .collect()
-        })
+        (0..width)
+            .map(|x| buffer[(x, 29)].symbol().to_string())
+            .collect()
     }
 
     fn header_rows_all(app: &mut App, width: u16) -> String {
@@ -1769,97 +1767,89 @@ mod tests {
     }
 
     fn header(app: &mut App, width: u16) -> String {
-        header_rows(app, width).join("\n")
+        status_row(app, width)
     }
 
     #[test]
-    fn the_header_shows_the_identity_the_status_and_the_settings() {
+    fn the_status_line_shows_the_settings_on_the_left_and_the_session_on_the_right() {
         use agent_client_protocol::v1::schema::{Cost, SessionUpdate, Usage, UsageUpdate};
 
         let mut app = with_settings();
-        app.agent = "claude".to_string();
         let update = UsageUpdate::new(28_481, 1_000_000).cost(Cost::new(0.136, "USD"));
         app.settings.apply(&SessionUpdate::UsageUpdate(update));
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
-        let [identity, settings, rule] = header_rows(&mut app, 140);
-        assert!(identity.starts_with(" coax · claude"), "{identity}");
+        let line = status_row(&mut app, 120);
         assert!(
-            identity.ends_with("ctx 28k/1.0M 3% · ↑28k ↓4 · $0.14 · idle "),
-            "{identity}"
+            line.starts_with(" auto · opus · effort default · fast off  "),
+            "{line}"
         );
-        assert!(!identity.contains("session"), "{identity}");
-        assert_eq!(
-            settings.trim_end(),
-            " mode auto   model opus   effort default   fast off"
+        assert!(
+            line.ends_with("ctx 28k/1.0M 3% · ↑28k ↓4 · $0.14 · idle "),
+            "{line}"
         );
-        assert_eq!(rule, "─".repeat(140));
+        assert!(!line.contains("coax"), "{line}");
         assert_eq!(app.chips.len(), 4);
     }
 
     #[test]
-    fn the_header_draws_no_powerline_glyph_and_no_background() {
+    fn the_conversation_starts_on_the_first_row_with_no_header() {
+        let mut app = with_settings();
+        app.transcript.notice("first".to_string());
+        let screen = header_rows_all(&mut app, 60);
+        assert!(screen.lines().next().unwrap().contains("first"), "{screen}");
+        assert!(!screen.contains("coax"));
+    }
+
+    #[test]
+    fn the_status_line_has_no_powerline_glyph_and_no_background() {
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 100);
-        for y in 0..3 {
-            for x in 0..100 {
-                let cell = &buffer[(x, y)];
-                assert!(
-                    !cell
-                        .symbol()
-                        .chars()
-                        .any(|ch| ('\u{e0b0}'..='\u{e0bf}').contains(&ch)),
-                    "({x}, {y})"
-                );
-                assert_eq!(cell.bg, ratatui::style::Color::Reset);
-            }
+        for x in 0..100 {
+            let cell = &buffer[(x, 29)];
+            assert!(
+                !cell
+                    .symbol()
+                    .chars()
+                    .any(|ch| ('\u{e0b0}'..='\u{e0bf}').contains(&ch)),
+                "{x}"
+            );
+            assert_eq!(cell.bg, ratatui::style::Color::Reset);
         }
     }
 
     #[test]
-    fn a_setting_has_its_name_dim_its_value_normal_and_the_mode_value_yellow() {
-        use ratatui::style::{Color, Modifier};
+    fn the_status_line_is_dim_but_for_the_mode_value_when_the_agent_does_not_ask() {
+        use ratatui::style::Modifier;
 
         let mut app = with_settings();
-        let buffer = header_buffer(&mut app, 140);
-        let mode = app.chips[0].area;
-        let model = app.chips[1].area;
-        assert_eq!(mode.x, 1);
-        assert_eq!(model.x, 1 + "mode auto".len() as u16 + 3);
-
-        // the name is dim, the value starts after the name and a space
-        let name = &buffer[(model.x, 1)];
-        let value = &buffer[(model.x + 6, 1)];
-        assert_eq!((name.symbol(), value.symbol()), ("m", "o"));
-        assert!(name.modifier.contains(Modifier::DIM));
-        assert!(!value.modifier.contains(Modifier::DIM));
-        assert_eq!(value.fg, Color::Reset);
-        assert_eq!(buffer[(mode.x + 5, 1)].fg, crate::palette::get().yellow);
+        let buffer = header_buffer(&mut app, 120);
+        let (mode, model) = (app.chips[0].area, app.chips[1].area);
+        assert_eq!((mode.x, mode.y), (1, 29));
+        assert_eq!(model.x, 1 + "auto".len() as u16 + 3);
+        let auto = &buffer[(mode.x, 29)];
+        assert_eq!(auto.fg, crate::palette::get().yellow);
+        assert!(!auto.modifier.contains(Modifier::DIM));
+        assert!(buffer[(model.x, 29)].modifier.contains(Modifier::DIM));
+        assert!(buffer[(mode.x + 5, 29)].modifier.contains(Modifier::DIM));
     }
 
     #[test]
-    fn a_narrow_header_keeps_the_first_setting_and_ends_in_the_overflow_mark() {
+    fn a_narrow_status_line_keeps_the_first_setting_and_ends_the_settings_in_the_overflow_mark() {
         let mut app = with_settings();
-        let [identity, settings, _] = header_rows(&mut app, 30);
-        assert!(settings.starts_with(" mode auto"), "{settings}");
-        assert!(settings.trim_end().ends_with('⋯'), "{settings}");
-        assert!(identity.contains("idle"), "{identity}");
-        assert!(!identity.contains("ctx"), "{identity}");
+        let line = status_row(&mut app, 30);
+        assert!(line.starts_with(" auto"), "{line}");
+        assert!(line.contains('⋯'), "{line}");
+        assert!(line.trim_end().ends_with("idle"), "{line}");
+        assert!(!line.contains("ctx"), "{line}");
     }
 
     #[test]
-    fn the_settings_sit_against_the_left_edge_under_the_identity() {
+    fn the_overflow_mark_replaces_the_settings_that_do_not_fit() {
         let mut app = with_settings();
-        header_buffer(&mut app, 100);
-        assert_eq!(app.chips[0].area.x, 1);
-    }
-
-    #[test]
-    fn the_overflow_chip_replaces_the_chips_that_do_not_fit_on_the_second_line() {
-        let mut app = with_settings();
-        let [_, chips, _] = header_rows(&mut app, 40);
-        assert!(chips.contains(" ⋯ "), "{chips}");
-        assert!(!chips.contains("Fast off"), "{chips}");
+        let line = status_row(&mut app, 36);
+        assert!(line.contains('⋯'), "{line}");
+        assert!(!line.contains("fast off"), "{line}");
         assert_eq!(
             app.chips.last().unwrap().target,
             ChipTarget::Overflow(app.chips.len() - 1)
@@ -1867,41 +1857,50 @@ mod tests {
     }
 
     #[test]
-    fn a_hovered_settings_value_turns_accent_and_nothing_else_changes() {
+    fn a_hovered_setting_turns_accent_and_nothing_else_changes() {
         let mut app = with_settings();
-        header_buffer(&mut app, 140);
-        let area = app.chips[1].area;
-        let value_x = area.x + 6;
-        let before = header_buffer(&mut app, 140);
-        assert_ne!(before[(value_x, 1)].fg, crate::palette::get().accent);
+        header_buffer(&mut app, 120);
+        let area = app.chips[2].area;
+        let before = header_buffer(&mut app, 120);
+        assert_ne!(before[(area.x, 29)].fg, crate::palette::get().accent);
         app.mouse(wheel(
             MouseEventKind::Moved,
             KeyModifiers::NONE,
             area.x + 1,
             area.y,
         ));
-        let buffer = header_buffer(&mut app, 140);
-        assert_eq!(buffer[(value_x, 1)].fg, crate::palette::get().accent);
-        assert!(
-            !buffer[(value_x, 1)]
-                .modifier
-                .contains(ratatui::style::Modifier::UNDERLINED)
+        let buffer = header_buffer(&mut app, 120);
+        for x in area.x..area.x + area.width {
+            assert_eq!(buffer[(x, 29)].fg, crate::palette::get().accent);
+        }
+        assert_eq!(
+            buffer[(app.chips[3].area.x, 29)],
+            before[(app.chips[3].area.x, 29)]
         );
-        assert_eq!(buffer[(area.x, 1)], before[(area.x, 1)]);
-        let other = app.chips[2].area;
-        assert_eq!(buffer[(other.x + 8, 1)], before[(other.x + 8, 1)]);
     }
 
     #[test]
     fn the_working_state_shows_the_spinner_frame() {
         let mut app = with_settings();
         app.transcript.prompt("hi".to_string());
-        let frame = |app: &mut App| header_rows(app, 100)[0].clone();
+        let frame = |app: &mut App| status_row(app, 100);
         assert!(frame(&mut app).ends_with("◐ working "));
         app.spinner = 1;
         assert!(frame(&mut app).ends_with("◓ working "));
         app.spinner = 5;
         assert!(frame(&mut app).ends_with("◓ working "));
+    }
+
+    #[test]
+    fn a_picker_box_opens_above_the_status_line_over_the_value_clicked() {
+        let mut app = with_settings();
+        header(&mut app, 120);
+        let model = app.chips[1].area;
+        click(&mut app, model.x, model.y);
+        header(&mut app, 120);
+        let menu = app.menu_area.expect("the box is drawn");
+        assert_eq!(menu.bottom(), 29);
+        assert_eq!(menu.x, model.x);
     }
 
     fn click(app: &mut App, column: u16, row: u16) -> Action {

@@ -20,8 +20,8 @@ command line, the keys, and the scenario format the fake agent reads.
   highlighted agent, and Esc or Ctrl+c quits. The highlight starts on the
   newest earlier session when there is one, and otherwise on the agent named
   by `default = "<name>"` in the config. With no agents configured, the
-  picker names the file to create. The picker opens with the same
-  first line and rule as the session header, and marks the chosen row with `›`
+  picker names the file to create. The picker has a header of its
+  own, `coax` and a title over a dim rule, and marks the chosen row with `›`
   and a shaded background.
 - Started inside a decade pane, coax joins the decade socket. The status
   line says when it is connected.
@@ -58,23 +58,25 @@ command line, the keys, and the scenario format the fake agent reads.
   `update` steps. With it, the fake agent advertises `session/list` and
   `session/load`, lists the sessions and replays a session's history when it
   is loaded. `scenarios/resume.json` is an example.
-- The header's second line shows the session's settings as plain text, such
-  as `mode auto   model opus   effort default`, in the order mode, model,
-  thought level, other model settings, then the rest. The name is dim and the
-  value is in the normal colour.
-  A click on a chip opens a box under it that lists the choices with their
-  descriptions and marks the current one. A click or the arrow keys with Enter
-  applies the choice through `session/set_config_option`, Esc or a click
-  elsewhere closes the box, and an error from the agent shows in the box. A
-  yes or no setting flips on a click. The mode value is yellow in `auto` and
-  `bypassPermissions`, where the agent does not ask. A
-  value turns the accent colour under the pointer. When the settings do not
-  fit, they move from the right into a dim `⋯` that lists them. An agent with no config options but with modes
-  gets a mode chip through `session/set_mode`.
-- The header's first line also shows the context as `ctx 28k/1.0M 3%`, yellow past 80% and
-  red past 95%, and the session's tokens as `↑28k ↓4` with the cost after
-  them, such as `$0.14`, when the agent sends one. On a narrow screen the
-  tokens go first, then the context and the plan summary.
+- A dim status line under the prompt shows the session's settings on the
+  left, joined by `·`, such as `auto · opus · effort default · fast off`. The
+  mode and the model show their value alone and the rest show the name and
+  the value, in the order mode, model, thought level, other model settings,
+  then the rest. A click on a setting opens a box above it that lists the
+  choices with their descriptions and marks the current one. A click or the
+  arrow keys with Enter applies the choice through
+  `session/set_config_option`, Esc or a click elsewhere closes the box, and an
+  error from the agent shows in the box. A yes or no setting flips on a click.
+  The mode value is yellow in `auto` and `bypassPermissions`, where the agent
+  does not ask. A value turns the accent colour under the pointer. When the
+  settings do not fit, they move from the right into a dim `⋯` that lists
+  them. An agent with no config options but with modes gets a mode setting
+  through `session/set_mode`.
+- The status line also shows the context as `ctx 28k/1.0M 3%`, yellow past
+  80% and red past 95%, and the session's tokens as `↑28k ↓4` with the cost
+  after them, such as `$0.14`, when the agent sends one. On a narrow screen
+  the tokens and cost go first, then the context, then the plan summary, and
+  then settings from the right.
 - The scenario format gains an optional top-level `config_options` array (the
   settings the agent offers, as ACP config options) and `modes`, and an
   optional `usage` on an act, which the prompt response reports. The fake
@@ -98,9 +100,9 @@ command line, the keys, and the scenario format the fake agent reads.
   model chip is dim and a click on it does nothing. Other settings still
   switch at once.
 - Commands in the prompt. A prompt that starts with `/` is a coax command and
-  turns cyan. There is one per header chip, named after the setting in
+  turns cyan. There is one per setting, named after the setting in
   lowercase with spaces as `-`, such as `/mode`, `/model`, `/effort` and
-  `/fast`. Enter opens that chip's box, or flips a yes or no setting, and the
+  `/fast`. Enter opens that setting's box, or flips a yes or no setting, and the
   command never sends anything to the agent. `/model` waits while the agent
   works, as the chip does. A prompt that starts with `//` is one of the
   agent's slash commands and turns green. `//compact` sends `/compact` after a
@@ -148,12 +150,11 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
-- The session has no panes and reads like a messaging thread. The header is
-  three rows. The first has `coax` and the agent's name (by its config entry
-  when it has one) on the left. On the right it has the plan summary, context,
-  tokens, cost and decade when connected, dim and joined by `·`, and then
-  whether the agent is working, with a spinner stepping through `◐◓◑◒`. The
-  second is the settings and the third a dim rule. Your messages sit in a rounded box
+- The session has no panes and reads like a messaging thread. The
+  conversation starts on the first row, and a dim status line under the
+  prompt carries the settings, the plan summary, context, tokens, cost and
+  decade when connected, and whether the agent is working, with a spinner
+  stepping through `◐◓◑◒`. Your messages sit in a rounded box
   in the accent colour against the right edge, at most 70% of the width. The
   agent's text sits in a blue rounded box on the left, at most 90% of the
   width. Thoughts start with a dim `✻` and stay unboxed with a 10% margin on
@@ -165,8 +166,8 @@ command line, the keys, and the scenario format the fake agent reads.
   notices are centred and dim.
 - The prompt sits between two rules and shows one row. It wraps at word
   breaks and grows with the text up to half the screen. There is no footer
-  row of key hints. When the agent has sent a plan, the header shows how many
-  steps are done, before the working or idle state.
+  row of key hints. When the agent has sent a plan, the status line shows how
+  many steps are done, before the working or idle state.
 - Ctrl+c no longer quits at once in a session. While the agent is working it
   cancels the turn, as Esc does, and with text in the prompt it clears the
   prompt. Otherwise, including with the permission box open, it arms an exit
