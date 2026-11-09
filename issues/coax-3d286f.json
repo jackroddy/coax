@@ -15,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T04:57:35.234685376Z",
-  "updated_at": "2026-11-09T09:02:28.051655856Z",
+  "updated_at": "2026-11-09T20:32:49.207094183Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -34,6 +34,14 @@
       "author": "Jack Roddy/4d38e22a",
       "text": "The trial runs from the `claude-coax` entry in `~/.config/coax/config.toml`, with `CLAUDE_CONFIG_DIR` pointing at `tmp-claude/2026-11-08-coax-style/claude-config`. That folder links `CLAUDE.md` and `skills/` from `~/.claude`, copies `settings.json` with `outputStyle` set to Coax, and holds the style in `output-styles/coax.md`. Its plugins folder is missing, so enabled plugins may not load there.",
       "commit": "1fd2c24",
+      "branch": "dev"
+    },
+    {
+      "id": "5109afd7",
+      "at": "2026-11-09T20:32:49.207093613Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "A revised style is drafted as `output-styles/coax-next.md` in the same profile folder, beside the active `coax.md`. It describes the bordered boxes, scroll bars and copy buttons, and teaches the link forms coax now draws (7a387c5): `file:` for code locations, `foam:` for issues, web links, and `color:` for status words. To try it, set `outputStyle` to `Coax next` in that folder's `settings.json`. The scheme names and the wording are Jack's to review.",
+      "commit": "95a68b4",
       "branch": "dev"
     }
   ],
