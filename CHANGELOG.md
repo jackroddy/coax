@@ -221,6 +221,9 @@ command line, the keys, and the scenario format the fake agent reads.
   transcript and replays it only to clients that speak the subagent sessions
   protocol, so a loaded session shows the call with no children, folded and
   with no marker.
+- The token counts on the status line are session totals. Each turn's input,
+  cached reads and writes add to the up count and its output to the down
+  count. They used to show the last turn only.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

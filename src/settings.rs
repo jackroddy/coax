@@ -110,14 +110,19 @@ impl Settings {
         }
     }
 
-    /// Show the usage a prompt response reported. The schema says it counts
-    /// every turn of the session, so the latest response replaces the last.
+    /// Add the usage a prompt response reported to the session's totals.
+    /// The Claude adapter reports one turn's tokens in each response.
     pub fn used(&mut self, usage: &Usage) {
+        let (up, down) = match &self.tokens {
+            Some(tokens) => (tokens.up, tokens.down),
+            None => (0, 0),
+        };
         self.tokens = Some(Tokens {
-            up: usage.input_tokens
+            up: up
+                + usage.input_tokens
                 + usage.cached_read_tokens.unwrap_or(0)
                 + usage.cached_write_tokens.unwrap_or(0),
-            down: usage.output_tokens,
+            down: down + usage.output_tokens,
         });
     }
 
@@ -334,5 +339,26 @@ mod tests {
         let shown = settings.settings();
         assert_eq!(shown[0].label, "Plan");
         assert!(!shown[0].unguarded);
+    }
+
+    #[test]
+    fn each_turns_usage_adds_to_the_session_totals_and_the_cost_shows_the_latest() {
+        let mut settings = Settings::default();
+        let mut usage = Usage::new(110, 30, 10);
+        usage.input_tokens = 10;
+        usage.output_tokens = 30;
+        usage.cached_read_tokens = Some(70);
+        usage.cached_write_tokens = Some(30);
+        settings.used(&usage);
+        settings.used(&usage);
+        let tokens = settings.tokens.as_ref().unwrap();
+        assert_eq!((tokens.up, tokens.down), (220, 60));
+
+        for amount in [0.10, 0.25] {
+            settings.apply(&SessionUpdate::UsageUpdate(
+                UsageUpdate::new(1, 2).cost(Cost::new(amount, "USD")),
+            ));
+        }
+        assert_eq!(settings.cost.as_ref().unwrap().amount, 0.25);
     }
 }
