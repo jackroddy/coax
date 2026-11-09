@@ -35,6 +35,8 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- Agent text is drawn as markdown: headings, lists, tables, rules, inline
+  code and fenced code with highlighting.
 - A bare `coax` opens the agent picker in place of printing usage. A flag
   coax does not know is a usage error, where before it was taken as the agent
   command.

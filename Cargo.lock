@@ -340,10 +340,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmr"
+version = "0.1.0"
+
+[[package]]
 name = "coax"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "cmr",
  "crossterm",
  "decade-channel",
  "ratatui",

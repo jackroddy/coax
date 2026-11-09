@@ -57,11 +57,92 @@ fn draw_plan(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
+/// Agent text laid out as markdown, kept per transcript entry.
+#[derive(Default)]
+pub struct Rendered {
+    entries: Vec<Option<Markdown>>,
+}
+
+struct Markdown {
+    width: usize,
+
+    // agent text only grows by appending, so an
+    // unchanged length means unchanged text
+    len: usize,
+    lines: Vec<Line<'static>>,
+}
+
+impl Rendered {
+    fn agent(&mut self, index: usize, text: &str, width: usize) -> &[Line<'static>] {
+        if self.entries.len() <= index {
+            self.entries.resize_with(index + 1, || None);
+        }
+        let slot = &mut self.entries[index];
+        let fresh = matches!(slot, Some(done) if done.width == width && done.len == text.len());
+        if !fresh {
+            *slot = Some(Markdown {
+                width,
+                len: text.len(),
+                lines: markdown(text, width),
+            });
+        }
+        slot.as_ref().map_or(&[], |done| &done.lines)
+    }
+}
+
+fn markdown(text: &str, width: usize) -> Vec<Line<'static>> {
+    cmr::render(text, width)
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|(text, style)| Span::styled(text, screen_style(style)))
+                .collect()
+        })
+        .collect()
+}
+
+fn screen_style(style: cmr::Style) -> Style {
+    let mut out = Style::new();
+    if let Some(color) = style.fg {
+        out = out.fg(match color {
+            cmr::Color::Black => Color::Black,
+            cmr::Color::Red => Color::Red,
+            cmr::Color::Green => Color::Green,
+            cmr::Color::Yellow => Color::Yellow,
+            cmr::Color::Blue => Color::Blue,
+            cmr::Color::Magenta => Color::Magenta,
+            cmr::Color::Cyan => Color::Cyan,
+            cmr::Color::Gray => Color::Gray,
+            cmr::Color::DarkGray => Color::DarkGray,
+            cmr::Color::LightRed => Color::LightRed,
+            cmr::Color::LightGreen => Color::LightGreen,
+            cmr::Color::LightYellow => Color::LightYellow,
+            cmr::Color::LightBlue => Color::LightBlue,
+            cmr::Color::LightMagenta => Color::LightMagenta,
+            cmr::Color::LightCyan => Color::LightCyan,
+            cmr::Color::White => Color::White,
+        });
+    }
+    if style.bold {
+        out = out.add_modifier(Modifier::BOLD);
+    }
+    if style.dim {
+        out = out.add_modifier(Modifier::DIM);
+    }
+    if style.underline {
+        out = out.add_modifier(Modifier::UNDERLINED);
+    }
+    out
+}
+
 fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     let width = area.width.max(4) as usize;
     let mut lines: Vec<Line> = Vec::new();
-    for entry in &app.transcript.entries {
-        entry_lines(entry, width, &mut lines);
+    for (index, entry) in app.transcript.entries.iter().enumerate() {
+        match entry {
+            Entry::Agent(text) => lines.extend_from_slice(app.rendered.agent(index, text, width)),
+            entry => entry_lines(entry, width, &mut lines),
+        }
         lines.push(Line::default());
     }
     let height = area.height as usize;
@@ -75,7 +156,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
 fn entry_lines(entry: &Entry, width: usize, out: &mut Vec<Line>) {
     match entry {
         Entry::User(text) => wrapped("> ", text, width, bold(), out),
-        Entry::Agent(text) => wrapped("", text, width, Style::default(), out),
+        Entry::Agent(text) => out.extend(markdown(text, width)),
         Entry::Thought(text) => wrapped("~ ", text, width, dim(), out),
         Entry::Tool(tool) => tool_lines(tool, out),
         Entry::Permission { title, choice } => {
@@ -199,4 +280,43 @@ fn dim() -> Style {
 
 fn bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plain(lines: &[Line]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| line.to_string().trim_end().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn agent_text_is_laid_out_again_when_it_grows_or_the_width_changes() {
+        let mut rendered = Rendered::default();
+        assert_eq!(plain(rendered.agent(0, "one two", 20)), ["one two"]);
+        assert_eq!(
+            plain(rendered.agent(0, "one two three", 20)),
+            ["one two three"]
+        );
+        assert_eq!(
+            plain(rendered.agent(0, "one two three", 8)),
+            ["one two", "three"]
+        );
+    }
+
+    #[test]
+    fn agent_markdown_keeps_its_styles_on_screen() {
+        let lines = markdown("# Title\n\nsome `code`", 40);
+        let title = &lines[0].spans[0];
+        assert!(title.style.add_modifier.contains(Modifier::BOLD));
+        let code = lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .find(|span| span.content == "code")
+            .unwrap();
+        assert_eq!(code.style.fg, Some(Color::Cyan));
+    }
 }
