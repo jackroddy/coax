@@ -7,9 +7,11 @@ use crate::settings::Setting;
 pub enum Typed<'a> {
     Plain,
 
-    /// `/name`: a coax command. Anything after the name is ignored.
+    /// `/name input`: a coax command, with the input after it. Only `/edit`
+    /// reads the input.
     Coax {
         name: &'a str,
+        input: &'a str,
     },
 
     /// `//name input`: one of the agent's commands, with the input after it.
@@ -25,9 +27,10 @@ pub fn parse(text: &str) -> Typed<'_> {
         return Typed::Agent { name, input };
     }
     match text.strip_prefix('/') {
-        Some(rest) => Typed::Coax {
-            name: split_name(rest).0,
-        },
+        Some(rest) => {
+            let (name, input) = split_name(rest);
+            Typed::Coax { name, input }
+        }
         None => Typed::Plain,
     }
 }
@@ -43,7 +46,7 @@ fn split_name(rest: &str) -> (&str, &str) {
 pub fn unknown(text: &str) -> Option<String> {
     match parse(text) {
         Typed::Plain => None,
-        Typed::Coax { name } => Some(format!("no command /{name}")),
+        Typed::Coax { name, .. } => Some(format!("no command /{name}")),
         Typed::Agent { name, .. } => Some(format!("no agent command //{name}")),
     }
 }
@@ -72,6 +75,9 @@ pub struct Candidate {
 pub enum Kind {
     /// The setting at this index of `Settings::settings`.
     Coax(usize),
+
+    /// `/edit`, which is not a setting.
+    Edit,
     Agent {
         name: String,
     },
@@ -82,7 +88,7 @@ pub enum Kind {
 pub fn matches(text: &str, settings: &[Setting], agent: &[AvailableCommand]) -> Vec<Candidate> {
     match parse(text) {
         Typed::Plain => Vec::new(),
-        Typed::Coax { name } => {
+        Typed::Coax { name, .. } => {
             let typed = name.to_lowercase();
             settings
                 .iter()
@@ -96,6 +102,11 @@ pub fn matches(text: &str, settings: &[Setting], agent: &[AvailableCommand]) -> 
                         .unwrap_or_else(|| format!("now {}", setting.label)),
                     kind: Kind::Coax(index),
                 })
+                .chain("edit".starts_with(&typed).then(|| Candidate {
+                    fill: "/edit".to_string(),
+                    description: "edit the prompt in $EDITOR".to_string(),
+                    kind: Kind::Edit,
+                }))
                 .collect()
         }
         Typed::Agent { name, .. } => {
@@ -138,10 +149,12 @@ mod tests {
     }
 
     #[test]
-    fn a_single_slash_is_a_coax_command_and_ignores_what_follows_the_name() {
-        assert_eq!(parse("/mode"), Typed::Coax { name: "mode" });
-        assert_eq!(parse("/mode now"), Typed::Coax { name: "mode" });
-        assert_eq!(parse("/"), Typed::Coax { name: "" });
+    fn a_single_slash_is_a_coax_command_with_what_follows_the_name_as_its_input() {
+        let coax = |name, input| Typed::Coax { name, input };
+        assert_eq!(parse("/mode"), coax("mode", ""));
+        assert_eq!(parse("/mode now"), coax("mode", "now"));
+        assert_eq!(parse("/"), coax("", ""));
+        assert_eq!(parse("/edit a\nb"), coax("edit", "a\nb"));
     }
 
     #[test]
@@ -190,9 +203,26 @@ mod tests {
             .map(|candidate| candidate.fill)
             .collect();
         assert_eq!(names, ["/mode", "/model"]);
-        assert_eq!(matches("/", &settings, &[]).len(), 3);
+        assert_eq!(matches("/", &settings, &[]).len(), 4);
         assert!(matches("/x", &settings, &[]).is_empty());
         assert_eq!(matches("/MO", &settings, &[]).len(), 2);
+    }
+
+    #[test]
+    fn edit_is_listed_after_the_settings_and_matches_by_prefix() {
+        let settings = [setting("Mode")];
+        let found = matches("/", &settings, &[]);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[1].fill, "/edit");
+        assert_eq!(found[1].kind, Kind::Edit);
+        assert_eq!(found[1].description, "edit the prompt in $EDITOR");
+        assert_eq!(matches("/ed", &settings, &[]).len(), 1);
+        assert!(
+            matches("/mo", &settings, &[])
+                .iter()
+                .all(|c| c.kind != Kind::Edit)
+        );
+        assert_eq!(matches("/edit some text", &settings, &[]).len(), 1);
     }
 
     #[test]

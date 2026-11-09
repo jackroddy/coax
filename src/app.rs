@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use agent_client_protocol::Error;
@@ -21,6 +23,7 @@ use tokio::sync::oneshot;
 use crate::acp::{Applied, Change, Event, Link};
 use crate::clipboard;
 use crate::command::{self, Candidate, Kind};
+use crate::editor;
 use crate::prompt;
 use crate::session::{Entry, Transcript};
 use crate::settings::{Control, Setting, Settings};
@@ -237,6 +240,10 @@ pub enum Action {
     /// Put this text on the system clipboard.
     Copy(String),
     Change(Change),
+
+    /// Open this text in the user's editor, then hand the result to
+    /// `App::finish_edit`.
+    Edit(String),
     Prompt(String),
     Cancel,
     Quit,
@@ -595,6 +602,13 @@ impl App {
                     .map_or(0, |chip| chip.area.x);
                 self.activate(index, anchor)
             }
+            Kind::Edit => {
+                let text = match command::parse(&self.input) {
+                    command::Typed::Coax { input, .. } => input.to_string(),
+                    _ => String::new(),
+                };
+                Action::Edit(text)
+            }
             Kind::Agent { name } => {
                 if self.transcript.in_flight {
                     return Action::None;
@@ -616,7 +630,7 @@ impl App {
     /// The command named exactly by the prompt's text, if there is one.
     fn exact(&self, settings: &[Setting]) -> Option<Candidate> {
         let name = match command::parse(&self.input) {
-            command::Typed::Coax { name } | command::Typed::Agent { name, .. } => name,
+            command::Typed::Coax { name, .. } | command::Typed::Agent { name, .. } => name,
             command::Typed::Plain => return None,
         };
         command::matches(&self.input, settings, &self.settings.commands)
@@ -677,6 +691,18 @@ impl App {
         }
         self.unknown = None;
         self.insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
+    }
+
+    /// Take the editor's result: its text replaces the prompt with the
+    /// cursor at the end, and a failure leaves the prompt as it was.
+    pub fn finish_edit(&mut self, result: Result<String, String>) {
+        match result {
+            Ok(text) => {
+                self.set_input(text);
+                self.edited();
+            }
+            Err(message) => self.transcript.notice(message),
+        }
     }
 
     fn edited(&mut self) {
@@ -1142,12 +1168,41 @@ pub async fn run(
             Action::Prompt(text) => link.prompt(app.session.clone(), text),
             Action::Cancel => link.cancel(app.session.clone()),
             Action::Change(change) => link.change(app.session.clone(), change),
+            Action::Edit(text) => {
+                let editor =
+                    editor::pick(std::env::var("VISUAL").ok(), std::env::var("EDITOR").ok());
+                let result =
+                    with_terminal_suspended(&mut terminal, || editor::edit(&editor, &text));
+                app.finish_edit(result);
+                Ok(())
+            }
         };
         if let Err(error) = outcome {
             break Err(error);
         }
     };
     restore();
+    result
+}
+
+/// Hand the terminal to a child process: leave the alternate screen and raw
+/// mode, keep the key thread from reading, run `work`, and take the terminal
+/// back with a full redraw.
+fn with_terminal_suspended<T>(
+    terminal: &mut ratatui::DefaultTerminal,
+    work: impl FnOnce() -> T,
+) -> T {
+    KEYS_PAUSED.store(true, Ordering::SeqCst);
+    let reading = KEYS_READING.lock();
+    leave_input_modes();
+    ratatui::restore();
+    let result = work();
+    let _ = crossterm::terminal::enable_raw_mode();
+    let _ = crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen);
+    enter_input_modes();
+    let _ = terminal.clear();
+    drop(reading);
+    KEYS_PAUSED.store(false, Ordering::SeqCst);
     result
 }
 
@@ -1181,11 +1236,30 @@ fn connect_decade() -> (Option<Channel>, UnboundedReceiver<Message>) {
     }
 }
 
+/// Set while a child process owns the terminal, so the key thread leaves
+/// its input alone.
+static KEYS_PAUSED: AtomicBool = AtomicBool::new(false);
+
+/// Held by the key thread around each wait for input, and by the thread that
+/// pauses it, so a pause starts only between two waits.
+static KEYS_READING: Mutex<()> = Mutex::new(());
+
+const KEY_POLL: Duration = Duration::from_millis(50);
+
 pub fn key_thread() -> Keys {
     let (tx, rx) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         loop {
-            let event = crossterm::event::read();
+            if KEYS_PAUSED.load(Ordering::SeqCst) {
+                std::thread::sleep(KEY_POLL);
+                continue;
+            }
+            let _reading = KEYS_READING.lock();
+            let event = match crossterm::event::poll(KEY_POLL) {
+                Ok(true) => crossterm::event::read(),
+                Ok(false) => continue,
+                Err(error) => Err(error),
+            };
             let failed = event.is_err();
             if tx.send(event).is_err() || failed {
                 return;
@@ -2646,5 +2720,54 @@ mod tests {
         open_permission(&mut app);
         app.paste("lost");
         assert_eq!(app.input, "x");
+    }
+
+    #[test]
+    fn edit_is_in_the_slash_list_and_enter_on_it_asks_for_the_editor_with_no_text() {
+        let mut app = app();
+        type_text(&mut app, "/ed");
+        let list = app.popup();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].description, "edit the prompt in $EDITOR");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert_eq!(app.input, "/edit");
+        let Action::Edit(text) = press(&mut app, KeyCode::Enter) else {
+            panic!("enter on /edit should open the editor");
+        };
+        assert_eq!(text, "");
+        assert!(app.transcript.entries.is_empty());
+    }
+
+    #[test]
+    fn edit_opens_the_text_after_its_name() {
+        let mut app = app();
+        type_text(&mut app, "/edit two words");
+        let Action::Edit(text) = press(&mut app, KeyCode::Enter) else {
+            panic!("enter on /edit should open the editor");
+        };
+        assert_eq!(text, "two words");
+        assert_eq!(app.input, "/edit two words");
+    }
+
+    #[test]
+    fn the_editors_text_replaces_the_prompt_with_the_cursor_at_the_end() {
+        let mut app = with_input("/edit");
+        app.finish_edit(Ok("日本\nsecond".to_string()));
+        assert_eq!(app.input, "日本\nsecond");
+        assert_eq!(app.cursor, app.input.len());
+        assert!(app.transcript.entries.is_empty());
+    }
+
+    #[test]
+    fn a_failed_editor_leaves_the_prompt_and_says_so() {
+        let mut app = with_input("/edit draft");
+        app.finish_edit(Err(
+            "vi exited with exit status: 1, prompt unchanged".to_string()
+        ));
+        assert_eq!(app.input, "/edit draft");
+        assert!(matches!(
+            app.transcript.entries.last(),
+            Some(Entry::Notice(text)) if text.contains("prompt unchanged")
+        ));
     }
 }

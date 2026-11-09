@@ -167,6 +167,13 @@ command line, the keys, and the scenario format the fake agent reads.
   `…` cut of long titles and the padding of lists and rules line up. A joined
   emoji (a ZWJ sequence or one with a skin tone) is measured by its parts, so
   it can still be off by a column or two.
+- `/edit` opens the prompt in `$VISUAL`, else `$EDITOR`, else `vi`. Typing
+  `/edit` replaces the prompt, so the editor opens on whatever follows the
+  name: `/edit some draft` starts the editor on `some draft`. coax leaves the
+  screen while the editor runs. The saved text, less its trailing newline,
+  replaces the prompt with the cursor at the end, and is not sent. When the
+  editor exits with an error the prompt stays as it was and a dim line says
+  so.
 
 ### Changed
 

@@ -4,6 +4,7 @@ pub mod app;
 pub mod clipboard;
 pub mod command;
 pub mod config;
+pub mod editor;
 pub mod fake;
 pub mod header;
 pub mod palette;
