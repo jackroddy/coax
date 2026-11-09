@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T09:22:35.258988956Z",
-  "updated_at": "2026-11-09T09:24:57.927095651Z",
+  "updated_at": "2026-11-09T10:31:28.621607845Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/4d38e22a",
       "text": "Text colouring by palette name is filed separately and also needs an inline syntax of coax's own. The two should share one form; see that issue's open questions.",
       "commit": "3a6ef1f",
+      "branch": "dev"
+    },
+    {
+      "id": "a358d3c2",
+      "at": "2026-11-09T10:31:28.621606745Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Landed in 7a387c5 on dev, with the form settled by Jack's approval: plain markdown links, with coax giving each scheme its meaning. cmr parses the link and draws it underlined. coax reads the scheme and nothing coax-specific is in cmr.\n\n- `color:<name>` draws the text in that palette colour, with no hover and no click. This answers coax-ec0448 as well.\n- `file:<path>#<line>` is blue and underlined. Hover shows the relative path, the line and the title. A click sends decade `show` with kind `file`, the absolute path and the line, to `[links] decade_pane` (default `code`). With no connection the line under the prompt says `no decade connection`.\n- `http:` and `https:` show the URL on hover. A click runs `xdg-open` only with `[links] open_urls = true`.\n- `foam:` and any scheme under `[links.schemes.<scheme>]` run a configured `hover` argv on hover, with a 2 s limit, and cache the output per target. An optional `click` argv runs detached.\n\nLeft for Jack:\n\n- The scheme names (`color:`, `file:`, `foam:`) and the coax output style wording that teaches the model to write them (coax-3d286f).\n- `open_urls` defaults to false. I lean to leaving it false until the output style tells the model to link URLs, since a model that is prompt-injected could otherwise put a link in front of you.\n- Links inside a code block or a table wider than the screen draw but have no hover or click, because those blocks pan by columns.\n- A hover target that starts with `-` runs nothing, so a link cannot pass a flag to the configured command.\n- Close both issues when the human-facing parts are decided. I closed neither.",
+      "commit": "95a68b4",
       "branch": "dev"
     }
   ],
