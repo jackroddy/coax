@@ -71,6 +71,15 @@ command line, the keys, and the scenario format the fake agent reads.
   settings the agent offers, as ACP config options) and `modes`, and an
   optional `usage` on an act, which the prompt response reports. The fake
   agent answers `session/set_config_option` and `session/set_mode`.
+- A subagent's tool calls and text group under the tool call that started it.
+  The block shows folded as `● agent <description>  N tools`, with its status
+  below, and a click on it shows what the subagent did, indented under it.
+  Text from a subagent no longer joins the main agent's reply, and the main
+  agent's later text no longer joins the subagent's. coax reads the Claude
+  adapter's `_meta.claudeCode.parentToolUseId` tag to tell which call a
+  subagent's output belongs to. The scenario format is unchanged: an `update`
+  step already carries `_meta` as it does on the wire, and
+  `scenarios/subagents.json` shows two parallel subagents.
 - Ctrl+t shows or hides the plan, as a list above the prompt. It is hidden
   until then.
 - `--prompt <text>` sends a first prompt as soon as the session opens.

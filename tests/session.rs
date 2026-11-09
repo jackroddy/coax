@@ -6,7 +6,7 @@ use agent_client_protocol::{AcpAgent, Error};
 use coax::acp::{self, Applied, Change, Event, Link};
 use coax::fake;
 use coax::scenario::Scenario;
-use coax::session::{Entry, Transcript};
+use coax::session::{Child, Entry, Transcript};
 use coax::settings::Settings;
 
 const HELLO: &str = include_str!("../scenarios/hello.json");
@@ -380,4 +380,64 @@ async fn a_turn_reports_the_context_the_cost_and_the_session_tokens() {
     })
     .await
     .unwrap();
+}
+
+const SUBAGENTS: &str = include_str!("../scenarios/subagents.json");
+
+async fn subagent_transcript() -> Transcript {
+    let scenario = Scenario::parse(SUBAGENTS).unwrap();
+    let saved = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let keep = saved.clone();
+    acp::run(fake::agent(scenario), async move |link| {
+        *keep.lock().unwrap() = Some(one_prompt(link, "go").await?);
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let taken = saved.lock().unwrap().take();
+    taken.unwrap()
+}
+
+#[tokio::test]
+async fn a_subagents_calls_and_text_group_under_its_task_call() {
+    let transcript = subagent_transcript().await;
+    let kinds: Vec<&str> = transcript
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            Entry::User(_) => "user",
+            Entry::Agent(_) => "agent",
+            Entry::Tool(_) => "tool",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(kinds, ["user", "agent", "tool", "tool", "agent"]);
+    let Entry::Tool(survey) = &transcript.entries[2] else {
+        unreachable!()
+    };
+    assert_eq!(survey.title, "Survey the entry point");
+    assert_eq!(survey.status, ToolCallStatus::Completed);
+    assert_eq!(survey.tool_count(), 1);
+    assert!(
+        matches!(&survey.children[0], Child::Tool(call) if call.title == "Read src/main.rs" && call.status == ToolCallStatus::Completed)
+    );
+    assert!(matches!(&survey.children[1], Child::Text(text) if text == "main.rs is a stub."));
+    let Entry::Tool(config) = &transcript.entries[3] else {
+        unreachable!()
+    };
+    assert_eq!(config.children.len(), 2);
+    assert!(
+        matches!(&config.children[1], Child::Text(text) if text == "Cargo.toml names the crate.")
+    );
+}
+
+#[tokio::test]
+async fn text_never_merges_across_a_subagent_boundary() {
+    let transcript = subagent_transcript().await;
+    assert!(
+        matches!(&transcript.entries[1], Entry::Agent(text) if text == "Spawning two helpers. ")
+    );
+    assert!(
+        matches!(&transcript.entries[4], Entry::Agent(text) if text == "Both helpers are done.")
+    );
 }

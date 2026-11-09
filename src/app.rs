@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -7,7 +7,7 @@ use agent_client_protocol::Error;
 use agent_client_protocol::v1::schema::SessionConfigOptionValue;
 use agent_client_protocol::v1::schema::{
     InitializeResponse, PermissionOption, PermissionOptionKind, RequestPermissionOutcome,
-    SelectedPermissionOutcome, SessionId, ToolCallUpdate,
+    SelectedPermissionOutcome, SessionId, ToolCallId, ToolCallUpdate,
 };
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event as TermEvent, KeyCode, KeyEvent, KeyModifiers,
@@ -48,6 +48,12 @@ pub struct App {
     pub input: String,
     pub scroll: usize,
     pub show_plan: bool,
+
+    /// The subagent calls shown unfolded.
+    pub expanded: HashSet<ToolCallId>,
+
+    /// The subagent blocks on screen, set by the last draw.
+    pub folds: Vec<ui::FoldArea>,
     pub settings: Settings,
 
     /// The header chips on screen, set by the last draw.
@@ -274,6 +280,12 @@ impl App {
             return Action::None;
         }
         let Some(chip) = self.chips.iter().find(|chip| chip.area.contains(position)) else {
+            if let Some(fold) = self.folds.iter().find(|fold| fold.area.contains(position)) {
+                let id = fold.id.clone();
+                if !self.expanded.remove(&id) {
+                    self.expanded.insert(id);
+                }
+            }
             return Action::None;
         };
         let anchor = chip.area.x;
@@ -537,6 +549,8 @@ pub async fn run(
         input: String::new(),
         scroll: 0,
         show_plan: false,
+        expanded: HashSet::new(),
+        folds: Vec::new(),
         settings,
         chips: Vec::new(),
         hover: None,
@@ -670,6 +684,8 @@ mod tests {
             input: String::new(),
             scroll: 0,
             show_plan: false,
+            expanded: HashSet::new(),
+            folds: Vec::new(),
             settings: Settings::default(),
             chips: Vec::new(),
             hover: None,
@@ -974,5 +990,21 @@ mod tests {
         let overflow = app.chips.last().unwrap().area;
         click(&mut app, overflow.x, overflow.y);
         assert!(app.menu_rows() >= 2);
+    }
+
+    #[test]
+    fn a_click_on_a_subagent_block_unfolds_it_and_a_second_click_folds_it() {
+        let mut app = app();
+        app.wide.clear();
+        app.folds = vec![ui::FoldArea {
+            area: Rect::new(0, 4, 60, 2),
+            id: ToolCallId::new("t1"),
+        }];
+        click(&mut app, 3, 5);
+        assert!(app.expanded.contains(&ToolCallId::new("t1")));
+        click(&mut app, 3, 4);
+        assert!(app.expanded.is_empty());
+        click(&mut app, 3, 9);
+        assert!(app.expanded.is_empty());
     }
 }

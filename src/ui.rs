@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use agent_client_protocol::v1::schema::{
-    PlanEntryStatus, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
+    PlanEntryStatus, StopReason, ToolCallContent, ToolCallId, ToolCallStatus, ToolKind,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use crate::app::{App, ChipArea, ChipTarget, ExitKey, MenuTarget};
 use crate::palette;
-use crate::session::{Entry, Tool};
+use crate::session::{Child, Entry, Tool};
 use crate::settings::{self, Control};
 
 const MAX_PLAN_ROWS: usize = 6;
@@ -575,6 +575,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     let usable = width - width / 10;
     let mut lines: Vec<Line> = Vec::new();
     let mut wides: Vec<Wide> = Vec::new();
+    let mut folds: Vec<Fold> = Vec::new();
     for (index, entry) in app.transcript.entries.iter().enumerate() {
         match entry {
             Entry::User(text) => lines.extend(bubble(text, width)),
@@ -611,6 +612,14 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                 lines.extend(framed(rows, palette::get().blue, None));
             }
             Entry::Thought(text) => wrapped("✻ ", "  ", dim(), text, usable, dim(), &mut lines),
+            Entry::Tool(tool) if !tool.children.is_empty() => {
+                folds.push(Fold {
+                    id: tool.id.clone(),
+                    first: lines.len(),
+                });
+                let expanded = app.expanded.contains(&tool.id);
+                lines.extend(subagent_block(tool, &app.cwd, usable, expanded));
+            }
             Entry::Tool(tool) => lines.extend(tool_block(tool, &app.cwd, usable)),
             Entry::Permission { choice, .. } => {
                 let pad = width.saturating_sub(choice.chars().count());
@@ -638,6 +647,22 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     let rows = if app.scroll > 0 { rows } else { height };
     let end = lines.len() - app.scroll;
     let start = end.saturating_sub(rows);
+    app.folds = folds
+        .iter()
+        .filter_map(|fold| {
+            let top = fold.first.max(start);
+            let bottom = (fold.first + 2).min(end);
+            (top < bottom).then(|| FoldArea {
+                area: Rect {
+                    x: area.x,
+                    y: area.y + (top - start) as u16,
+                    width: area.width,
+                    height: (bottom - top) as u16,
+                },
+                id: fold.id.clone(),
+            })
+        })
+        .collect();
     app.wide = wides
         .iter()
         .filter_map(|wide| {
@@ -660,6 +685,19 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
         visible.push(Line::styled(format!("⋯ {} more below", app.scroll), dim()));
     }
     frame.render_widget(Paragraph::new(visible), area);
+}
+
+/// A subagent block drawn this frame, by the line it starts on.
+struct Fold {
+    id: ToolCallId,
+    first: usize,
+}
+
+/// A subagent block's two header rows on screen, which a click folds or
+/// unfolds.
+pub struct FoldArea {
+    pub area: Rect,
+    pub id: ToolCallId,
 }
 
 /// A wide block drawn this frame, by its place among the transcript lines.
@@ -771,6 +809,18 @@ fn wrapped(
 }
 
 fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> [Line<'static>; 2] {
+    tool_rows(tool, cwd, width, kind_word(tool.kind), "")
+}
+
+/// A tool call's two rows, with `word` in the kind column and `suffix` dim
+/// after the title.
+fn tool_rows(
+    tool: &Tool,
+    cwd: &Path,
+    width: usize,
+    word: &str,
+    suffix: &str,
+) -> [Line<'static>; 2] {
     let (dot, status, status_style) = match tool.status {
         ToolCallStatus::InProgress => (
             Style::new().fg(palette::get().yellow),
@@ -787,12 +837,14 @@ fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> [Line<'static>; 2] {
     };
     let head = [
         Span::styled("● ", dot),
-        Span::styled(format!("{:<6}", kind_word(tool.kind)), bold()),
+        Span::styled(format!("{word:<6}"), bold()),
         Span::raw(" "),
     ];
-    let room = width.saturating_sub(head.iter().map(Span::width).sum());
+    let room =
+        width.saturating_sub(head.iter().map(Span::width).sum::<usize>() + suffix.chars().count());
     let mut first = head.to_vec();
     first.push(Span::raw(cut(&tool.title, room)));
+    first.push(Span::styled(suffix.to_string(), dim()));
 
     let lead = Span::styled("  ⎿  ", dim());
     let room = width.saturating_sub(lead.width());
@@ -822,6 +874,49 @@ fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> [Line<'static>; 2] {
     }
     [Line::from(first), Line::from(second)]
 }
+
+/// A subagent's call: folded to its two rows, or expanded with what the
+/// subagent did indented under it.
+fn subagent_block(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> Vec<Line<'static>> {
+    let count = tool.tool_count();
+    let noun = if count == 1 { "tool" } else { "tools" };
+    let suffix = format!("  {count} {noun}");
+    let mut lines = tool_rows(tool, cwd, width, "agent", &suffix).to_vec();
+    if !expanded {
+        return lines;
+    }
+    let inner = width.saturating_sub(SUBAGENT_INDENT.len());
+    for child in &tool.children {
+        let mut rows: Vec<Line<'static>> = match child {
+            Child::Tool(call) => tool_block(call, cwd, inner).to_vec(),
+            Child::Text(text) => {
+                let mut rows = Vec::new();
+                wrapped(
+                    "",
+                    "",
+                    Style::default(),
+                    text,
+                    inner,
+                    Style::default(),
+                    &mut rows,
+                );
+                rows
+            }
+            Child::Thought(text) => {
+                let mut rows = Vec::new();
+                wrapped("✻ ", "  ", dim(), text, inner, dim(), &mut rows);
+                rows
+            }
+        };
+        for row in &mut rows {
+            row.spans.insert(0, Span::raw(SUBAGENT_INDENT));
+        }
+        lines.extend(rows);
+    }
+    lines
+}
+
+const SUBAGENT_INDENT: &str = "    ";
 
 fn kind_word(kind: ToolKind) -> &'static str {
     match kind {
@@ -1156,6 +1251,7 @@ mod tests {
             status: ToolCallStatus::Completed,
             locations: vec![location],
             content: Vec::new(),
+            children: Vec::new(),
         }
     }
 
@@ -1434,5 +1530,41 @@ mod tests {
     fn the_mode_chip_stays_however_narrow_the_header_gets() {
         let fit = parts().fit(30);
         assert_eq!((fit.chips, fit.hidden), (1, true));
+    }
+
+    fn task() -> Tool {
+        let mut task = tool("Survey the entry point", "/work/x.rs", None);
+        task.kind = ToolKind::Think;
+        task.status = ToolCallStatus::InProgress;
+        task.locations.clear();
+        task.children = vec![
+            Child::Tool(tool("Read src/main.rs", "/work/src/main.rs", None)),
+            Child::Text("main.rs is a stub.".to_string()),
+        ];
+        task
+    }
+
+    #[test]
+    fn a_folded_subagent_block_shows_its_title_its_tool_count_and_its_status() {
+        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, false));
+        assert_eq!(
+            lines,
+            ["● agent  Survey the entry point  1 tool", "  ⎿  running…"]
+        );
+    }
+
+    #[test]
+    fn an_expanded_subagent_block_draws_its_children_indented_four_columns() {
+        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, true));
+        assert_eq!(
+            lines,
+            [
+                "● agent  Survey the entry point  1 tool",
+                "  ⎿  running…",
+                "    ● read   Read src/main.rs",
+                "      ⎿  done",
+                "    main.rs is a stub.",
+            ]
+        );
     }
 }

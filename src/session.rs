@@ -1,3 +1,5 @@
+type Meta = serde_json::Map<String, serde_json::Value>;
+
 use agent_client_protocol::v1::schema::{
     ContentBlock, PlanEntry, SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallId,
     ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolKind,
@@ -10,6 +12,25 @@ pub struct Tool {
     pub status: ToolCallStatus,
     pub locations: Vec<ToolCallLocation>,
     pub content: Vec<ToolCallContent>,
+
+    /// What a subagent started by this call did, in arrival order.
+    pub children: Vec<Child>,
+}
+
+impl Tool {
+    /// How many tool calls the subagent made.
+    pub fn tool_count(&self) -> usize {
+        self.children
+            .iter()
+            .filter(|child| matches!(child, Child::Tool(_)))
+            .count()
+    }
+}
+
+pub enum Child {
+    Tool(Tool),
+    Text(String),
+    Thought(String),
 }
 
 pub enum Entry {
@@ -43,14 +64,8 @@ impl Transcript {
     pub fn permission(&mut self, update: ToolCallUpdate, choice: String) {
         let id = update.tool_call_id.clone();
         self.update_tool(update);
-        let title = self
-            .entries
-            .iter()
-            .rev()
-            .find_map(|entry| match entry {
-                Entry::Tool(tool) if tool.id == id => Some(tool.title.clone()),
-                _ => None,
-            })
+        let title = find_tool(&mut self.entries, &id)
+            .map(|tool| tool.title.clone())
             .unwrap_or_else(|| id.to_string());
         self.entries.push(Entry::Permission { title, choice });
     }
@@ -63,6 +78,13 @@ impl Transcript {
         match update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 let text = content_text(&chunk.content);
+                if let Some(parent) = self.parent(chunk.meta.as_ref()) {
+                    match parent.children.last_mut() {
+                        Some(Child::Text(existing)) => existing.push_str(&text),
+                        _ => parent.children.push(Child::Text(text)),
+                    }
+                    return;
+                }
                 match self.entries.last_mut() {
                     Some(Entry::Agent(existing)) => existing.push_str(&text),
                     _ => self.entries.push(Entry::Agent(text)),
@@ -70,6 +92,13 @@ impl Transcript {
             }
             SessionUpdate::AgentThoughtChunk(chunk) => {
                 let text = content_text(&chunk.content);
+                if let Some(parent) = self.parent(chunk.meta.as_ref()) {
+                    match parent.children.last_mut() {
+                        Some(Child::Thought(existing)) => existing.push_str(&text),
+                        _ => parent.children.push(Child::Thought(text)),
+                    }
+                    return;
+                }
                 match self.entries.last_mut() {
                     Some(Entry::Thought(existing)) => existing.push_str(&text),
                     _ => self.entries.push(Entry::Thought(text)),
@@ -82,7 +111,10 @@ impl Transcript {
                     _ => self.entries.push(Entry::User(text)),
                 }
             }
-            SessionUpdate::ToolCall(call) => self.entries.push(Entry::Tool(tool(call))),
+            SessionUpdate::ToolCall(call) => match self.parent(call.meta.as_ref()) {
+                Some(parent) => parent.children.push(Child::Tool(tool(call))),
+                None => self.entries.push(Entry::Tool(tool(call))),
+            },
             SessionUpdate::ToolCallUpdate(update) => self.update_tool(update),
             SessionUpdate::Plan(plan) => self.plan = plan.entries,
             SessionUpdate::Notice(notice) => {
@@ -97,20 +129,26 @@ impl Transcript {
         }
     }
 
+    /// The tool call that a subagent's output, tagged by `meta`, belongs to.
+    fn parent(&mut self, meta: Option<&Meta>) -> Option<&mut Tool> {
+        let id = parent_tool_call(meta)?;
+        find_tool(&mut self.entries, &id)
+    }
+
     fn update_tool(&mut self, update: ToolCallUpdate) {
         let ToolCallUpdate {
             tool_call_id,
             fields,
+            meta,
             ..
         } = update;
-        let existing = self.entries.iter_mut().rev().find_map(|entry| match entry {
-            Entry::Tool(tool) if tool.id == tool_call_id => Some(tool),
-            _ => None,
-        });
-        let Some(tool) = existing else {
+        let Some(tool) = find_tool(&mut self.entries, &tool_call_id) else {
             let mut call = ToolCall::new(tool_call_id, fields.title.clone().unwrap_or_default());
             call.update(fields);
-            self.entries.push(Entry::Tool(tool(call)));
+            match self.parent(meta.as_ref()) {
+                Some(parent) => parent.children.push(Child::Tool(tool(call))),
+                None => self.entries.push(Entry::Tool(tool(call))),
+            }
             return;
         };
         if let Some(title) = fields.title {
@@ -131,6 +169,41 @@ impl Transcript {
     }
 }
 
+/// The latest tool call named `id`, at the top level or inside a subagent.
+fn find_tool<'a>(entries: &'a mut [Entry], id: &ToolCallId) -> Option<&'a mut Tool> {
+    for entry in entries.iter_mut().rev() {
+        if let Entry::Tool(tool) = entry
+            && let Some(found) = within(tool, id)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn within<'a>(tool: &'a mut Tool, id: &ToolCallId) -> Option<&'a mut Tool> {
+    if tool.id == *id {
+        return Some(tool);
+    }
+    for child in tool.children.iter_mut().rev() {
+        if let Child::Tool(tool) = child
+            && let Some(found) = within(tool, id)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The tool call that produced an update, read from the Claude adapter's
+/// `_meta.claudeCode.parentToolUseId` tag. The adapter puts it on the tool
+/// calls and the text a subagent produces, naming the Agent or Task call that
+/// started the subagent.
+pub fn parent_tool_call(meta: Option<&Meta>) -> Option<ToolCallId> {
+    let id = meta?.get("claudeCode")?.get("parentToolUseId")?.as_str()?;
+    Some(ToolCallId::new(id))
+}
+
 fn tool(call: ToolCall) -> Tool {
     Tool {
         id: call.tool_call_id,
@@ -139,6 +212,7 @@ fn tool(call: ToolCall) -> Tool {
         status: call.status,
         locations: call.locations,
         content: call.content,
+        children: Vec::new(),
     }
 }
 
@@ -221,5 +295,50 @@ mod tests {
         transcript.apply(SessionUpdate::Plan(Plan::new(vec![entry("c")])));
         assert_eq!(transcript.plan.len(), 1);
         assert_eq!(transcript.plan[0].content, "c");
+    }
+
+    fn tagged(parent: &str) -> Meta {
+        let mut meta = Meta::new();
+        meta.insert(
+            "claudeCode".to_string(),
+            serde_json::json!({ "parentToolUseId": parent }),
+        );
+        meta
+    }
+
+    #[test]
+    fn the_adapters_parent_tag_names_the_task_call() {
+        assert_eq!(
+            parent_tool_call(Some(&tagged("t1"))),
+            Some(ToolCallId::new("t1"))
+        );
+        assert_eq!(parent_tool_call(Some(&Meta::new())), None);
+        assert_eq!(parent_tool_call(None), None);
+    }
+
+    #[test]
+    fn a_tagged_chunk_for_an_unknown_parent_falls_back_to_the_top_level() {
+        let mut transcript = Transcript::default();
+        let mut orphan = chunk("lost");
+        orphan.meta = Some(tagged("missing"));
+        transcript.apply(SessionUpdate::AgentMessageChunk(orphan));
+        assert!(matches!(&transcript.entries[0], Entry::Agent(text) if text == "lost"));
+    }
+
+    #[test]
+    fn a_tagged_update_changes_a_call_inside_its_parent() {
+        let mut transcript = Transcript::default();
+        transcript.apply(SessionUpdate::ToolCall(ToolCall::new("t1", "Task")));
+        let mut child = ToolCall::new("c1", "Read");
+        child.meta = Some(tagged("t1"));
+        transcript.apply(SessionUpdate::ToolCall(child));
+        let mut update = ToolCallUpdate::new("c1", ToolCallUpdateFields::new().title("Read it"));
+        update.meta = Some(tagged("t1"));
+        transcript.apply(SessionUpdate::ToolCallUpdate(update));
+        assert_eq!(transcript.entries.len(), 1);
+        let Entry::Tool(task) = &transcript.entries[0] else {
+            unreachable!()
+        };
+        assert!(matches!(&task.children[0], Child::Tool(call) if call.title == "Read it"));
     }
 }

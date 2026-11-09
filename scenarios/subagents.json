@@ -1,0 +1,159 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Spawning two helpers. "
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Survey the entry point",
+            "kind": "think",
+            "status": "in_progress",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "Read main.rs and summarise"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t2",
+            "title": "Survey the config",
+            "kind": "think",
+            "status": "in_progress",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "Read Cargo.toml and summarise"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "c1",
+            "title": "Read src/main.rs",
+            "kind": "read",
+            "status": "in_progress",
+            "_meta": {
+              "claudeCode": {
+                "parentToolUseId": "t1"
+              }
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "main.rs is a stub."
+            },
+            "_meta": {
+              "claudeCode": {
+                "parentToolUseId": "t1"
+              }
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "c2",
+            "title": "Read Cargo.toml",
+            "kind": "read",
+            "status": "in_progress",
+            "_meta": {
+              "claudeCode": {
+                "parentToolUseId": "t2"
+              }
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "c1",
+            "status": "completed",
+            "_meta": {
+              "claudeCode": {
+                "parentToolUseId": "t1"
+              }
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Cargo.toml names the crate."
+            },
+            "_meta": {
+              "claudeCode": {
+                "parentToolUseId": "t2"
+              }
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "c2",
+            "status": "completed",
+            "_meta": {
+              "claudeCode": {
+                "parentToolUseId": "t2"
+              }
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "status": "completed"
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t2",
+            "status": "completed"
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Both helpers are done."
+            }
+          }
+        },
+        {
+          "stop": "end_turn"
+        }
+      ]
+    }
+  ]
+}
