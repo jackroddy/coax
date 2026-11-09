@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T09:24:57.917760089Z",
-  "updated_at": "2026-11-09T10:31:28.630992965Z",
+  "updated_at": "2026-11-09T10:31:37.602662709Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -22,9 +22,10 @@
       "id": "e1c8b621",
       "at": "2026-11-09T10:31:28.630992395Z",
       "author": "Jack Roddy/4d38e22a",
-      "text": "Landed in 7a387c5 on dev. Colours use the `color:<name>` scheme of a standard markdown link, as in `[failed](color:red)`. This settles the shared form with coax-1898d3, which is a markdown link and not a `{.red}` span. Names are the palette names: accent, muted, selection, foreground, red, yellow, orange, green, cyan, blue, magenta. An unknown name draws plain text. Still open for Jack: the output style wording (coax-3d286f) and whether bold or code inside a coloured link should keep its colour. Today cmr draws link text as plain text with the link style, so code inside a link is not tried.",
+      "text": "Landed in 7a387c5 on dev. Colours use the `color:<name>` scheme of a standard markdown link, as in `[failed](color:red)`. This settles the shared form with coax-1898d3: a markdown link, not a `{.red}` span. Names are the palette names: accent, muted, selection, foreground, red, yellow, orange, green, cyan, blue, magenta. An unknown name draws plain text. Still open for Jack: the output style wording (coax-3d286f). Bold or code inside a coloured link was not tried.",
       "commit": "95a68b4",
-      "branch": "dev"
+      "branch": "dev",
+      "edited_at": "2026-11-09T10:31:37.602662399Z"
     }
   ],
   "stamps": {
