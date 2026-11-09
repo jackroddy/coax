@@ -184,9 +184,34 @@
           }
         },
         {
+          "update": {
+            "sessionUpdate": "usage_update",
+            "used": 28481,
+            "size": 1000000
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "usage_update",
+            "used": 28481,
+            "size": 1000000,
+            "cost": {
+              "amount": 0.136,
+              "currency": "USD"
+            }
+          }
+        },
+        {
           "stop": "end_turn"
         }
-      ]
+      ],
+      "usage": {
+        "totalTokens": 28485,
+        "inputTokens": 12,
+        "outputTokens": 4,
+        "cachedReadTokens": 28469,
+        "cachedWriteTokens": 0
+      }
     },
     {
       "steps": [
@@ -279,6 +304,95 @@
           }
         }
       ]
+    }
+  ],
+  "config_options": [
+    {
+      "id": "effort",
+      "name": "Effort",
+      "type": "select",
+      "currentValue": "default",
+      "options": [
+        {
+          "value": "default",
+          "name": "Default"
+        },
+        {
+          "value": "low",
+          "name": "Low"
+        },
+        {
+          "value": "high",
+          "name": "High",
+          "description": "Think harder, slower"
+        }
+      ],
+      "category": "thought_level"
+    },
+    {
+      "id": "mode",
+      "name": "Mode",
+      "type": "select",
+      "currentValue": "auto",
+      "options": [
+        {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before each change"
+        },
+        {
+          "value": "acceptEdits",
+          "name": "Accept edits",
+          "description": "Edits go through, other tools ask"
+        },
+        {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan only, change nothing"
+        },
+        {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Never ask"
+        },
+        {
+          "value": "bypassPermissions",
+          "name": "Bypass permissions",
+          "description": "Skip every check"
+        }
+      ],
+      "category": "mode"
+    },
+    {
+      "id": "model",
+      "name": "Model",
+      "type": "select",
+      "currentValue": "opus",
+      "options": [
+        {
+          "value": "opus",
+          "name": "Opus",
+          "description": "Most capable"
+        },
+        {
+          "value": "sonnet",
+          "name": "Sonnet",
+          "description": "Fast and capable"
+        },
+        {
+          "value": "haiku",
+          "name": "Haiku",
+          "description": "Quick"
+        }
+      ],
+      "category": "model"
+    },
+    {
+      "id": "fast",
+      "name": "Fast",
+      "category": "model_config",
+      "type": "boolean",
+      "currentValue": false
     }
   ]
 }

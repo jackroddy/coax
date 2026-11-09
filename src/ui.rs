@@ -9,9 +9,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
-use crate::app::{App, ExitKey};
+use crate::app::{App, ChipArea, ChipTarget, ExitKey, MenuTarget};
 use crate::palette;
 use crate::session::{Entry, Tool};
+use crate::settings::{self, Control};
 
 const MAX_PLAN_ROWS: usize = 6;
 
@@ -49,6 +50,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_header(frame, header_area, app);
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
+    draw_menu(frame, app);
     draw_plan(frame, plan_area, app);
     draw_rule(frame, upper_rule);
     draw_input(frame, prompt_area, &input);
@@ -101,16 +103,24 @@ pub fn pane(title: &str, focused: bool) -> Block<'static> {
 /// The two header rows: the coax badge and `title` on the left, `right`
 /// against the right edge, and a dim rule below.
 pub fn title_bar(frame: &mut Frame, area: Rect, title: &str, right: Line) {
-    let [top, rule] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+    title_bar_with(frame, area, Line::from(badge(title)), right);
+}
+
+fn badge(title: &str) -> Vec<Span<'static>> {
     let badge = Style::new()
         .fg(palette::INK)
         .bg(palette::get().cyan)
         .add_modifier(Modifier::BOLD);
-    let left = Line::from(vec![
+    vec![
         Span::styled(" coax ", badge),
         Span::raw("  "),
         Span::styled(title.to_string(), bold()),
-    ]);
+    ]
+}
+
+/// Like `title_bar`, with the left side given as a line.
+fn title_bar_with(frame: &mut Frame, area: Rect, left: Line<'static>, right: Line) {
+    let [top, rule] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
     let gap = (area.width as usize)
         .saturating_sub(left.width() + right.width())
         .max(1);
@@ -124,39 +134,234 @@ pub fn title_bar(frame: &mut Frame, area: Rect, title: &str, right: Line) {
     );
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
+/// What fits in the header at a width: how many chips, whether a `⋯` chip
+/// stands for the rest, and which of the right-hand items are shown.
+#[derive(Debug, PartialEq, Eq)]
+struct Fit {
+    chips: usize,
+    hidden: bool,
+    session: bool,
+    tokens: bool,
+    context: bool,
+    plan: bool,
+}
+
+/// Widths of the header's parts, 0 for a part that is absent.
+struct HeaderParts {
+    left: usize,
+    chips: Vec<usize>,
+    plan: usize,
+    context: usize,
+    tokens: usize,
+    session: usize,
+
+    /// The decade and state items, which always show.
+    rest: usize,
+}
+
+const OVERFLOW_CHIP: &str = " ⋯ ";
+
+impl HeaderParts {
+    fn total(&self, fit: &Fit) -> usize {
+        let mut total = self.left;
+        if fit.chips > 0 {
+            total += 2 + self.chips[..fit.chips].iter().sum::<usize>() + fit.chips - 1;
+            if fit.hidden {
+                total += 1 + OVERFLOW_CHIP.chars().count();
+            }
+        }
+        let items: Vec<usize> = [
+            (fit.plan, self.plan),
+            (fit.context, self.context),
+            (fit.tokens, self.tokens),
+            (true, self.rest),
+            (fit.session, self.session),
+        ]
+        .into_iter()
+        .filter(|(shown, width)| *shown && *width > 0)
+        .map(|(_, width)| width)
+        .collect();
+
+        // a gap before the right side, three columns between its items and
+        // a column after them
+        total + 1 + items.iter().sum::<usize>() + 3 * items.len().saturating_sub(1) + 1
+    }
+
+    /// Drop what does not fit in `width`: the session id, then the tokens and
+    /// cost, the context, the plan, and then chips from the right into `⋯`.
+    /// The first chip, the mode, stays.
+    fn fit(&self, width: usize) -> Fit {
+        let mut fit = Fit {
+            chips: self.chips.len(),
+            hidden: false,
+            session: self.session > 0,
+            tokens: self.tokens > 0,
+            context: self.context > 0,
+            plan: self.plan > 0,
+        };
+        while self.total(&fit) > width {
+            if fit.session {
+                fit.session = false;
+            } else if fit.tokens {
+                fit.tokens = false;
+            } else if fit.context {
+                fit.context = false;
+            } else if fit.plan {
+                fit.plan = false;
+            } else if fit.chips > 1 {
+                fit.chips -= 1;
+                fit.hidden = true;
+            } else {
+                break;
+            }
+        }
+        fit
+    }
+}
+
+fn draw_header(frame: &mut Frame, area: Rect, app: &mut App) {
+    let palette = palette::get();
     let state = if app.transcript.in_flight {
-        Span::styled("◐ working", Style::new().fg(palette::get().yellow))
+        Span::styled("◐ working", Style::new().fg(palette.yellow))
     } else {
         match &app.transcript.last_stop {
-            Some(stop) if *stop != StopReason::EndTurn => Span::styled(
-                format!("idle, {stop:?}"),
-                Style::new().fg(palette::get().yellow),
-            ),
+            Some(stop) if *stop != StopReason::EndTurn => {
+                Span::styled(format!("idle, {stop:?}"), Style::new().fg(palette.yellow))
+            }
             _ => Span::styled("idle", dim()),
         }
     };
+    let mut rest = Vec::new();
+    match &app.decade_pane {
+        Some(pane) if pane.is_empty() => rest.push(Span::styled("decade   ", dim())),
+        Some(pane) => rest.push(Span::styled(format!("decade pane {pane}   "), dim())),
+        None => {}
+    }
+    rest.push(state);
+
     let plan = &app.transcript.plan;
-    let mut right = Vec::new();
-    if !plan.is_empty() {
+    let plan_item = (!plan.is_empty()).then(|| {
         let done = plan
             .iter()
             .filter(|entry| entry.status == PlanEntryStatus::Completed)
             .count();
-        right.push(Span::styled(
-            format!("plan {done}/{} done   ", plan.len()),
+        vec![Span::styled(
+            format!("plan {done}/{} done", plan.len()),
             dim(),
+        )]
+    });
+    let context_item = app.settings.context.as_ref().map(|context| {
+        let percent = if context.size == 0 {
+            0
+        } else {
+            (context.used as f64 * 100.0 / context.size as f64).round() as u64
+        };
+        let style = if percent > 95 {
+            Style::new().fg(palette.red)
+        } else if percent > 80 {
+            Style::new().fg(palette.yellow)
+        } else {
+            dim()
+        };
+        vec![Span::styled(
+            format!(
+                "ctx {}/{} {percent}%",
+                settings::count(context.used),
+                settings::count(context.size)
+            ),
+            style,
+        )]
+    });
+    let tokens_item = app.settings.tokens.as_ref().map(|tokens| {
+        let mut text = format!(
+            "↑{} ↓{}",
+            settings::count(tokens.up),
+            settings::count(tokens.down)
+        );
+        if let Some(cost) = &app.settings.cost {
+            text.push(' ');
+            text.push_str(&settings::money(cost));
+        }
+        vec![Span::styled(text, dim())]
+    });
+    let session: String = app.session.to_string().chars().take(8).collect();
+    let session_item = vec![Span::styled(format!("session {session}"), dim())];
+
+    let settings = app.settings.settings();
+    let chip_texts: Vec<String> = settings
+        .iter()
+        .map(|setting| format!(" {} ", setting.label))
+        .collect();
+    let left_width = badge(&app.agent).iter().map(Span::width).sum::<usize>();
+    let width_of = |item: &Option<Vec<Span>>| {
+        item.as_ref()
+            .map_or(0, |spans| spans.iter().map(Span::width).sum())
+    };
+    let parts = HeaderParts {
+        left: left_width,
+        chips: chip_texts.iter().map(|text| text.chars().count()).collect(),
+        plan: width_of(&plan_item),
+        context: width_of(&context_item),
+        tokens: width_of(&tokens_item),
+        session: session_item.iter().map(Span::width).sum(),
+        rest: rest.iter().map(Span::width).sum(),
+    };
+    let fit = parts.fit(area.width as usize);
+
+    let mut chips: Vec<(String, Style, ChipTarget)> = Vec::new();
+    for (index, setting) in settings.iter().enumerate().take(fit.chips) {
+        let mut style = Style::new().bg(palette.selection);
+        if setting.unguarded {
+            style = style.fg(palette.yellow);
+        }
+        chips.push((chip_texts[index].clone(), style, ChipTarget::Setting(index)));
+    }
+    if fit.hidden {
+        chips.push((
+            OVERFLOW_CHIP.to_string(),
+            Style::new().bg(palette.selection),
+            ChipTarget::Overflow(fit.chips),
         ));
     }
-    right.push(state);
-    match &app.decade_pane {
-        Some(pane) if pane.is_empty() => right.push(Span::styled("   decade", dim())),
-        Some(pane) => right.push(Span::styled(format!("   decade pane {pane}"), dim())),
-        None => {}
+    let mut left = badge(&app.agent);
+    app.chips.clear();
+    let mut x = area.x + left_width as u16;
+    for (n, (text, style, target)) in chips.into_iter().enumerate() {
+        let gap = if n == 0 { "  " } else { " " };
+        left.push(Span::raw(gap));
+        x += gap.len() as u16;
+        let width = text.chars().count() as u16;
+        let style = if app.hover == Some(target) {
+            style.add_modifier(Modifier::UNDERLINED)
+        } else {
+            style
+        };
+        left.push(Span::styled(text, style));
+        app.chips.push(ChipArea {
+            area: Rect::new(x, area.y, width, 1),
+            target,
+        });
+        x += width;
     }
-    let session: String = app.session.to_string().chars().take(8).collect();
-    right.push(Span::styled(format!("   session {session} "), dim()));
-    title_bar(frame, area, &app.agent, Line::from(right));
+
+    let mut right = Vec::new();
+    let items = [
+        (fit.plan, plan_item),
+        (fit.context, context_item),
+        (fit.tokens, tokens_item),
+        (true, Some(rest)),
+        (fit.session, Some(session_item)),
+    ];
+    for (shown, item) in items {
+        if let (true, Some(spans)) = (shown, item) {
+            if !right.is_empty() {
+                right.push(Span::raw("   "));
+            }
+            right.extend(spans);
+        }
+    }
+    right.push(Span::raw(" "));
+    title_bar_with(frame, area, Line::from(left), Line::from(right));
 }
 
 fn draw_plan(frame: &mut Frame, area: Rect, app: &App) {
@@ -800,6 +1005,96 @@ fn wrap_input(text: &str, width: usize) -> Vec<String> {
     rows
 }
 
+/// The picker box hanging under a header chip.
+fn draw_menu(frame: &mut Frame, app: &mut App) {
+    app.menu_area = None;
+    let Some(menu) = &app.menu else {
+        return;
+    };
+    let settings = app.settings.settings();
+    let (title, rows): (String, Vec<(String, Option<String>, bool)>) = match &menu.target {
+        MenuTarget::Setting(id) => {
+            let Some(setting) = settings.iter().find(|setting| setting.id == *id) else {
+                return;
+            };
+            let Control::Choose(choices) = &setting.control else {
+                return;
+            };
+            let rows = choices
+                .iter()
+                .map(|choice| {
+                    (
+                        choice.name.clone(),
+                        choice.description.clone(),
+                        choice.current,
+                    )
+                })
+                .collect();
+            (setting.name.clone(), rows)
+        }
+        MenuTarget::Overflow(first) => {
+            let rows = settings
+                .iter()
+                .skip(*first)
+                .map(|setting| (setting.label.clone(), None, false))
+                .collect();
+            ("settings".to_string(), rows)
+        }
+    };
+    let screen = frame.area();
+    let row_width = |(name, note, _): &(String, Option<String>, bool)| {
+        2 + name.chars().count() + note.as_ref().map_or(0, |note| 2 + note.chars().count())
+    };
+    let wanted = rows
+        .iter()
+        .map(row_width)
+        .max()
+        .unwrap_or(0)
+        .max(title.chars().count() + 2)
+        + 4;
+    let width = (wanted as u16).min(60).min(screen.width);
+    let error = usize::from(menu.error.is_some());
+    let visible = rows
+        .len()
+        .min((screen.height as usize).saturating_sub(4 + error))
+        .max(1);
+    let first = (menu.cursor + 1).saturating_sub(visible);
+    let area = Rect {
+        x: menu.anchor.min(screen.width - width),
+        y: 1,
+        width,
+        height: (visible + error) as u16 + 2,
+    };
+    let inner = (width as usize).saturating_sub(4);
+    let mut lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(visible)
+        .map(|(index, (name, note, current))| {
+            let mark = if *current { "● " } else { "  " };
+            let mut spans = vec![Span::raw(mark), Span::raw(name.clone())];
+            if let Some(note) = note {
+                let room = inner.saturating_sub(2 + name.chars().count() + 2);
+                spans.push(Span::styled(format!("  {}", cut(note, room)), dim()));
+            }
+            let line = Line::from(spans);
+            if index == menu.cursor {
+                line.style(Style::new().bg(palette::get().selection))
+            } else {
+                line
+            }
+        })
+        .collect();
+    if let Some(message) = &menu.error {
+        lines.push(Line::styled(cut(message, inner), dim()));
+    }
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(pane(&title, true)), area);
+    app.menu_area = Some(area);
+    app.menu_first = first;
+}
+
 pub fn dim() -> Style {
     match palette::get().muted {
         Some(color) => Style::new().fg(color),
@@ -1086,5 +1381,58 @@ mod tests {
             assert!(matches!(&parts[..], [Part::Flow(_)]));
             assert_eq!(flat(&parts), whole);
         }
+    }
+
+    fn parts() -> HeaderParts {
+        HeaderParts {
+            left: 20,
+            chips: vec![6, 8, 10, 9],
+            plan: 13,
+            context: 15,
+            tokens: 13,
+            session: 16,
+            rest: 6,
+        }
+    }
+
+    #[test]
+    fn a_wide_header_shows_every_part() {
+        let fit = parts().fit(135);
+        assert_eq!(
+            fit,
+            Fit {
+                chips: 4,
+                hidden: false,
+                session: true,
+                tokens: true,
+                context: true,
+                plan: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_narrowing_header_drops_the_session_then_tokens_then_context_then_plan() {
+        let session = parts().fit(134);
+        assert!(!session.session && session.tokens && session.context && session.plan);
+        let tokens = parts().fit(100);
+        assert!(!tokens.tokens && tokens.context && tokens.chips == 4);
+        let context = parts().fit(85);
+        assert!(!context.context && context.plan && context.chips == 4);
+        let plan = parts().fit(66);
+        assert!(!plan.plan && plan.chips == 4 && !plan.hidden);
+    }
+
+    #[test]
+    fn a_narrower_header_moves_chips_from_the_right_into_the_overflow_chip() {
+        let fit = parts().fit(60);
+        assert_eq!((fit.chips, fit.hidden), (3, true));
+        assert!(!fit.plan && !fit.context && !fit.tokens && !fit.session);
+    }
+
+    #[test]
+    fn the_mode_chip_stays_however_narrow_the_header_gets() {
+        let fit = parts().fit(30);
+        assert_eq!((fit.chips, fit.hidden), (1, true));
     }
 }

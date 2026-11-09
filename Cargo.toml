@@ -13,7 +13,7 @@ keywords = ["acp", "agent", "chat", "tui", "terminal"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-agent-client-protocol = { version = "5", features = ["process", "stdio"] }
+agent-client-protocol = { version = "5", features = ["process", "stdio", "unstable_end_turn_token_usage"] }
 cmr = { version = "0.1.0", path = "../cmr" }
 crossterm = "0.29.0"
 decade-channel = { version = "0.1.0", path = "../decade/decade-channel" }

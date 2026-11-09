@@ -52,6 +52,25 @@ command line, the keys, and the scenario format the fake agent reads.
   `update` steps. With it, the fake agent advertises `session/list` and
   `session/load`, lists the sessions and replays a session's history when it
   is loaded. `scenarios/resume.json` is an example.
+- The header shows the session's settings as chips after the agent's name, in
+  the order mode, model, thought level, other model settings, then the rest.
+  A click on a chip opens a box under it that lists the choices with their
+  descriptions and marks the current one. A click or the arrow keys with Enter
+  applies the choice through `session/set_config_option`, Esc or a click
+  elsewhere closes the box, and an error from the agent shows in the box. A
+  yes or no setting flips on a click. The mode chip turns yellow in `auto` and
+  `bypassPermissions`, where the agent does not ask. A chip is underlined
+  under the pointer. When the chips do not fit, they move from the right into
+  a `⋯` chip that lists them. An agent with no config options but with modes
+  gets a mode chip through `session/set_mode`.
+- The header also shows the context as `ctx 28k/1.0M 3%`, yellow past 80% and
+  red past 95%, and the session's tokens as `↑28k ↓4` with the cost after
+  them, such as `$0.14`, when the agent sends one. On a narrow screen the
+  session id goes first, then the tokens, the context and the plan summary.
+- The scenario format gains an optional top-level `config_options` array (the
+  settings the agent offers, as ACP config options) and `modes`, and an
+  optional `usage` on an act, which the prompt response reports. The fake
+  agent answers `session/set_config_option` and `session/set_mode`.
 - Ctrl+t shows or hides the plan, as a list above the prompt. It is hidden
   until then.
 - `--prompt <text>` sends a first prompt as soon as the session opens.

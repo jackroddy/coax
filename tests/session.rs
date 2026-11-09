@@ -3,10 +3,11 @@ use agent_client_protocol::v1::schema::{
     ToolCallStatus, ToolKind,
 };
 use agent_client_protocol::{AcpAgent, Error};
-use coax::acp::{self, Event, Link};
+use coax::acp::{self, Applied, Change, Event, Link};
 use coax::fake;
 use coax::scenario::Scenario;
 use coax::session::{Entry, Transcript};
+use coax::settings::Settings;
 
 const HELLO: &str = include_str!("../scenarios/hello.json");
 
@@ -35,6 +36,7 @@ async fn one_prompt(mut link: Link, text: &str) -> Result<Transcript, Error> {
                     .unwrap();
                 transcript.permission(*update, allow.name.clone());
             }
+            Event::Tokens(_) | Event::Setting(_) => {}
             Event::Done(result) => {
                 transcript.finished(result?);
                 break;
@@ -159,6 +161,7 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
                     }
                 }
                 Event::Permission { .. } => {}
+                Event::Tokens(_) | Event::Setting(_) => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
@@ -272,6 +275,7 @@ async fn a_prompt_after_loading_plays_the_scenarios_acts() {
                         ))
                         .unwrap();
                 }
+                Event::Tokens(_) | Event::Setting(_) => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
@@ -279,6 +283,99 @@ async fn a_prompt_after_loading_plays_the_scenarios_acts() {
             }
         }
         assert!(matches!(&transcript.entries[0], Entry::Thought(_)));
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_new_session_offers_the_scenarios_settings_in_header_order() {
+    let scenario = Scenario::parse(RESUME).unwrap();
+    acp::run(fake::agent(scenario), async |link| {
+        link.initialize().await?;
+        let response = link.new_session(std::env::temp_dir()).await?;
+        let mut settings = Settings::default();
+        settings.open(response.config_options, response.modes);
+        let labels: Vec<String> = settings.settings().into_iter().map(|s| s.label).collect();
+        assert_eq!(labels, ["Auto", "Opus", "Effort Default", "Fast off"]);
+        assert!(settings.settings()[0].unguarded);
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error() {
+    let scenario = Scenario::parse(RESUME).unwrap();
+    acp::run(fake::agent(scenario), async |mut link| {
+        link.initialize().await?;
+        let session = link.new_session(std::env::temp_dir()).await?.session_id;
+        let choose = |id: &str, value: &str| Change::Config {
+            id: id.to_string(),
+            value: value.into(),
+        };
+        link.change(session.clone(), choose("model", "sonnet"))?;
+        let Some(Event::Setting(Ok(Applied::Options(options)))) = link.events.recv().await else {
+            panic!("expected the updated options");
+        };
+        let mut settings = Settings::default();
+        settings.set_options(options);
+        assert_eq!(settings.settings()[1].label, "Sonnet");
+
+        link.change(session.clone(), choose("model", "gpt"))?;
+        assert!(matches!(
+            link.events.recv().await,
+            Some(Event::Setting(Err(_)))
+        ));
+
+        link.change(
+            session,
+            Change::Config {
+                id: "fast".to_string(),
+                value: true.into(),
+            },
+        )?;
+        let Some(Event::Setting(Ok(Applied::Options(options)))) = link.events.recv().await else {
+            panic!("expected the updated options");
+        };
+        settings.set_options(options);
+        assert_eq!(settings.settings()[3].label, "Fast on");
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_turn_reports_the_context_the_cost_and_the_session_tokens() {
+    let scenario = Scenario::parse(RESUME).unwrap();
+    acp::run(fake::agent(scenario), async |mut link| {
+        link.initialize().await?;
+        let session = link.new_session(std::env::temp_dir()).await?.session_id;
+        link.prompt(session, "hello".to_string())?;
+        let mut settings = Settings::default();
+        while let Some(event) = link.events.recv().await {
+            match event {
+                Event::Update(update) => settings.apply(&update),
+                Event::Tokens(usage) => settings.used(&usage),
+                Event::Permission { options, reply, .. } => {
+                    reply
+                        .send(RequestPermissionOutcome::Selected(
+                            SelectedPermissionOutcome::new(options[0].option_id.clone()),
+                        ))
+                        .unwrap();
+                }
+                Event::Done(_) => break,
+                Event::Setting(_) => {}
+            }
+        }
+        let context = settings.context.unwrap();
+        assert_eq!((context.used, context.size), (28481, 1_000_000));
+        assert_eq!(settings.cost.unwrap().amount, 0.136);
+        let tokens = settings.tokens.unwrap();
+        assert_eq!((tokens.up, tokens.down), (28481, 4));
         Ok(())
     })
     .await

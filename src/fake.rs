@@ -8,8 +8,10 @@ use agent_client_protocol::v1::schema::{
     InitializeRequest, InitializeResponse, ListSessionsRequest, ListSessionsResponse,
     LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
     PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, SessionCapabilities,
-    SessionId, SessionInfo, SessionListCapabilities, SessionNotification, SessionUpdate,
-    StopReason,
+    SessionConfigKind, SessionConfigOptionValue, SessionConfigSelectOptions, SessionId,
+    SessionInfo, SessionListCapabilities, SessionNotification, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
+    SetSessionModeResponse, StopReason,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
 use agent_client_protocol::{
@@ -19,6 +21,11 @@ use agent_client_protocol::{
 use crate::scenario::{Act, Scenario, Step};
 
 pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
+    let options = Arc::new(Mutex::new(scenario.config_options));
+    let modes = Arc::new(Mutex::new(scenario.modes));
+    let (new_options, load_options, set_options) =
+        (options.clone(), options.clone(), options.clone());
+    let (new_modes, load_modes, set_modes) = (modes.clone(), modes.clone(), modes.clone());
     let saved = Arc::new(scenario.sessions);
     let advertised = saved.clone();
     let listed = saved.clone();
@@ -48,8 +55,77 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
             on_receive_request!(),
         )
         .on_receive_request(
-            async |_req: NewSessionRequest, responder, _cx: ConnectionTo<Client>| {
-                responder.respond(NewSessionResponse::new("fake-session"))
+            async move |_req: NewSessionRequest, responder, _cx: ConnectionTo<Client>| {
+                let options = new_options.lock().unwrap().clone();
+                responder.respond(
+                    NewSessionResponse::new("fake-session")
+                        .config_options((!options.is_empty()).then_some(options))
+                        .modes(new_modes.lock().unwrap().clone()),
+                )
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: SetSessionConfigOptionRequest,
+                        responder,
+                        _cx: ConnectionTo<Client>| {
+                let mut options = set_options.lock().unwrap();
+                let Some(option) = options.iter_mut().find(|option| option.id == req.config_id)
+                else {
+                    return responder.respond_with_error(Error::invalid_params());
+                };
+                let accepted = match (&mut option.kind, &req.value) {
+                    (
+                        SessionConfigKind::Select(select),
+                        SessionConfigOptionValue::ValueId { value },
+                    ) => {
+                        let known = match &select.options {
+                            SessionConfigSelectOptions::Ungrouped(choices) => {
+                                choices.iter().any(|choice| choice.value == *value)
+                            }
+                            SessionConfigSelectOptions::Grouped(groups) => groups
+                                .iter()
+                                .flat_map(|group| &group.options)
+                                .any(|choice| choice.value == *value),
+                            _ => false,
+                        };
+                        if known {
+                            select.current_value = value.clone();
+                        }
+                        known
+                    }
+                    (
+                        SessionConfigKind::Boolean(boolean),
+                        SessionConfigOptionValue::Boolean { value },
+                    ) => {
+                        boolean.current_value = *value;
+                        true
+                    }
+                    _ => false,
+                };
+                if accepted {
+                    responder.respond(SetSessionConfigOptionResponse::new(options.clone()))
+                } else {
+                    responder.respond_with_error(Error::invalid_params())
+                }
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: SetSessionModeRequest, responder, _cx: ConnectionTo<Client>| {
+                let mut modes = set_modes.lock().unwrap();
+                match modes.as_mut() {
+                    Some(state)
+                        if state
+                            .available_modes
+                            .iter()
+                            .any(|mode| mode.id == req.mode_id) =>
+                    {
+                        state.current_mode_id = req.mode_id;
+                        responder.respond(SetSessionModeResponse::new())
+                    }
+                    _ => responder.respond_with_error(Error::invalid_params()),
+                }
             },
             on_receive_request!(),
         )
@@ -81,7 +157,12 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
                         ))?;
                     }
                 }
-                responder.respond(LoadSessionResponse::new())
+                let options = load_options.lock().unwrap().clone();
+                responder.respond(
+                    LoadSessionResponse::new()
+                        .config_options((!options.is_empty()).then_some(options))
+                        .modes(load_modes.lock().unwrap().clone()),
+                )
             },
             on_receive_request!(),
         )
@@ -113,6 +194,7 @@ async fn play(
     cancelled: Arc<AtomicBool>,
     responder: Responder<PromptResponse>,
 ) -> Result<(), Error> {
+    let usage = act.as_ref().and_then(|act| act.usage.clone());
     let Some(act) = act else {
         let text = ContentBlock::from("the scenario has no more acts");
         let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(text));
@@ -147,8 +229,10 @@ async fn play(
                     }
                 }
             }
-            Step::Stop(reason) => return responder.respond(PromptResponse::new(reason)),
+            Step::Stop(reason) => {
+                return responder.respond(PromptResponse::new(reason).usage(usage));
+            }
         }
     }
-    responder.respond(PromptResponse::new(StopReason::EndTurn))
+    responder.respond(PromptResponse::new(StopReason::EndTurn).usage(usage))
 }

@@ -7,4 +7,5 @@ pub mod palette;
 pub mod picker;
 pub mod scenario;
 pub mod session;
+pub mod settings;
 pub mod ui;

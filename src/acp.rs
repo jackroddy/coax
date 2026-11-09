@@ -7,9 +7,10 @@ use agent_client_protocol::v1::schema::{
     InitializeRequest, InitializeResponse, ListSessionsRequest, LoadSessionRequest,
     LoadSessionResponse, McpServer, McpServerHttp, NewSessionRequest, NewSessionResponse,
     PermissionOption, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, SessionId,
-    SessionInfo, SessionNotification, SessionUpdate, StopReason, ToolCallUpdate,
-    WriteTextFileRequest, WriteTextFileResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    SessionConfigOptionValue, SessionId, SessionInfo, SessionModeId, SessionNotification,
+    SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
+    ToolCallUpdate, Usage, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectTo, Error, on_receive_notification, on_receive_request,
@@ -24,7 +25,24 @@ pub enum Event {
         options: Vec<PermissionOption>,
         reply: oneshot::Sender<RequestPermissionOutcome>,
     },
+    Tokens(Usage),
+    Setting(Result<Applied, Error>),
     Done(Result<StopReason, Error>),
+}
+
+/// A setting to change.
+pub enum Change {
+    Config {
+        id: String,
+        value: SessionConfigOptionValue,
+    },
+    Mode(String),
+}
+
+/// A setting change the agent accepted.
+pub enum Applied {
+    Options(Vec<agent_client_protocol::v1::schema::SessionConfigOption>),
+    Mode(String),
 }
 
 pub struct Link {
@@ -85,10 +103,47 @@ impl Link {
         let sent = self.cx.send_request(request);
         let tx = self.tx.clone();
         self.cx.spawn(async move {
-            let result = sent.block_task().await.map(|response| response.stop_reason);
-            let _ = tx.send(Event::Done(result));
+            let response = sent.block_task().await;
+            if let Ok(response) = &response
+                && let Some(usage) = &response.usage
+            {
+                let _ = tx.send(Event::Tokens(usage.clone()));
+            }
+            let _ = tx.send(Event::Done(response.map(|response| response.stop_reason)));
             Ok(())
         })
+    }
+
+    /// Ask the agent to change a setting. The answer arrives as an
+    /// `Event::Setting`.
+    pub fn change(&self, session: SessionId, change: Change) -> Result<(), Error> {
+        let tx = self.tx.clone();
+        match change {
+            Change::Config { id, value } => {
+                let sent = self
+                    .cx
+                    .send_request(SetSessionConfigOptionRequest::new(session, id, value));
+                self.cx.spawn(async move {
+                    let applied = sent
+                        .block_task()
+                        .await
+                        .map(|response| Applied::Options(response.config_options));
+                    let _ = tx.send(Event::Setting(applied));
+                    Ok(())
+                })
+            }
+            Change::Mode(id) => {
+                let sent = self.cx.send_request(SetSessionModeRequest::new(
+                    session,
+                    SessionModeId::new(id.clone()),
+                ));
+                self.cx.spawn(async move {
+                    let applied = sent.block_task().await.map(|_| Applied::Mode(id));
+                    let _ = tx.send(Event::Setting(applied));
+                    Ok(())
+                })
+            }
+        }
     }
 
     pub fn cancel(&self, session: SessionId) -> Result<(), Error> {

@@ -1,11 +1,21 @@
 use agent_client_protocol::v1::schema::{
-    PermissionOption, SessionUpdate, StopReason, ToolCallUpdate,
+    PermissionOption, SessionConfigOption, SessionModeState, SessionUpdate, StopReason,
+    ToolCallUpdate, Usage,
 };
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Scenario {
     pub acts: Vec<Act>,
+
+    /// The settings the agent offers a new or loaded session, as config
+    /// options. A `set_config_option` request changes them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_options: Vec<SessionConfigOption>,
+
+    /// The older modes API, offered next to `config_options`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modes: Option<SessionModeState>,
 
     /// Earlier sessions the agent lists and can load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -28,6 +38,10 @@ pub struct SavedSession {
 #[derive(Serialize, Deserialize)]
 pub struct Act {
     pub steps: Vec<Step>,
+
+    /// The token usage the prompt response reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
