@@ -31,7 +31,7 @@ pub struct App {
 pub struct Permission {
     pub title: String,
     pub options: Vec<PermissionOption>,
-    update: Box<ToolCallUpdate>,
+    pub update: Box<ToolCallUpdate>,
     reply: oneshot::Sender<RequestPermissionOutcome>,
 }
 

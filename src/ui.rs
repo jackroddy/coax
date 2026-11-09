@@ -7,39 +7,46 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Padding, Paragraph};
+use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use crate::app::App;
 use crate::palette;
 use crate::session::{Entry, Tool};
 
+const PLAN_WIDTH: u16 = 30;
+const WIDE: u16 = 90;
+
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let plan_rows = app.transcript.plan.len().min(6) as u16;
-    let permission_rows = if app.permission.is_some() { 2 } else { 0 };
-    let [
-        header_area,
-        plan_area,
-        session_area,
-        permission_area,
-        prompt_area,
-        footer_area,
-    ] = Layout::vertical([
+    let wide = frame.area().width >= WIDE;
+    let plan_rows = match app.transcript.plan.len().min(6) as u16 {
+        0 => 0,
+        rows if !wide => rows + 2,
+        _ => 0,
+    };
+    let [header_area, plan_area, body_area, prompt_area, footer_area] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(plan_rows),
         Constraint::Min(3),
-        Constraint::Length(permission_rows),
         Constraint::Length(3),
         Constraint::Length(1),
     ])
     .areas(frame.area());
+    let side = if wide && !app.transcript.plan.is_empty() {
+        PLAN_WIDTH
+    } else {
+        0
+    };
+    let [session_area, side_area] =
+        Layout::horizontal([Constraint::Min(10), Constraint::Length(side)]).areas(body_area);
 
     draw_header(frame, header_area, app);
     draw_plan(frame, plan_area, app);
+    draw_plan(frame, side_area, app);
     let session = pane("session", false);
     let transcript_area = session.inner(session_area);
     frame.render_widget(session, session_area);
     draw_transcript(frame, transcript_area, app);
-    draw_permission(frame, permission_area, app);
+    draw_permission(frame, session_area, app);
     draw_input(frame, prompt_area, app);
     draw_footer(frame, footer_area, app);
 }
@@ -115,25 +122,31 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_plan(frame: &mut Frame, area: Rect, app: &App) {
-    if area.height == 0 {
+    if area.height == 0 || area.width == 0 {
         return;
     }
+    let block = pane("plan", false);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let room = (inner.width as usize).saturating_sub(2);
     let lines: Vec<Line> = app
         .transcript
         .plan
         .iter()
-        .take(area.height as usize)
+        .take(inner.height as usize)
         .map(|entry| {
-            let mark = match entry.status {
-                PlanEntryStatus::Pending => "[ ]",
-                PlanEntryStatus::InProgress => "[>]",
-                PlanEntryStatus::Completed => "[x]",
-                _ => "[?]",
+            let (glyph, style) = match entry.status {
+                PlanEntryStatus::InProgress => ("◐", Style::new().fg(palette::WORKING)),
+                PlanEntryStatus::Completed => ("●", Style::new().fg(palette::DONE)),
+                _ => ("○", dim()),
             };
-            Line::from(format!("{mark} {}", entry.content)).style(dim())
+            Line::from(vec![
+                Span::styled(format!("{glyph} "), style),
+                Span::raw(cut(&entry.content, room)),
+            ])
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines), area);
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Agent text laid out as markdown, kept per transcript entry.
@@ -236,7 +249,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                 index += run.len() - 1;
             }
             Entry::Permission { title, choice } => {
-                lines.push(Line::from(format!("? {title} -> {choice}")).style(dim()));
+                lines.push(Line::from(format!("↳ {choice}  {title}")).style(dim()));
             }
             Entry::Notice(text) => {
                 lines
@@ -312,7 +325,7 @@ fn tool_line(tool: &Tool, branch: &str, cwd: &Path, width: usize) -> Line<'stati
     let room = width.saturating_sub(head.iter().map(Span::width).sum());
 
     let mut diff = Vec::new();
-    let (added, removed) = diff_size(tool);
+    let (added, removed) = diff_size(&tool.content);
     if added + removed > 0 {
         diff.push(Span::styled(
             format!("  +{added}"),
@@ -370,10 +383,10 @@ fn location(tool: &Tool, cwd: &Path) -> Option<String> {
     })
 }
 
-fn diff_size(tool: &Tool) -> (usize, usize) {
+fn diff_size(content: &[ToolCallContent]) -> (usize, usize) {
     let mut added = 0;
     let mut removed = 0;
-    for content in &tool.content {
+    for content in content {
         if let ToolCallContent::Diff(diff) = content {
             added += diff.new_text.lines().count();
             removed += diff
@@ -397,21 +410,39 @@ fn cut(text: &str, room: usize) -> String {
     out
 }
 
-fn draw_permission(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     let Some(permission) = &app.permission else {
         return;
     };
-    let options: Vec<String> = permission
-        .options
-        .iter()
-        .enumerate()
-        .map(|(i, option)| format!("[{}] {}", i + 1, option.name))
-        .collect();
-    let lines = vec![
-        Line::from(format!("? {}", permission.title)).style(Style::default().fg(Color::Yellow)),
-        Line::from(format!("  {}   [Esc] cancel", options.join("  "))),
-    ];
-    frame.render_widget(Paragraph::new(lines), area);
+    let mut lines = Vec::new();
+    let content = permission.update.fields.content.as_deref().unwrap_or(&[]);
+    let (added, removed) = diff_size(content);
+    if added + removed > 0 {
+        lines.push(Line::from(vec![
+            Span::styled(format!("+{added}"), Style::new().fg(palette::DONE)),
+            Span::styled(format!(" −{removed}"), Style::new().fg(palette::ALARM)),
+        ]));
+        lines.push(Line::default());
+    }
+    for (n, option) in permission.options.iter().enumerate() {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{}  ", n + 1), focus().add_modifier(Modifier::BOLD)),
+            Span::raw(option.name.clone()),
+        ]));
+    }
+    let content_width = lines.iter().map(Line::width).max().unwrap_or(0);
+    let wanted = content_width.max(permission.title.chars().count() + 2) + 4;
+    let width = (wanted as u16).clamp(24.min(over.width), over.width);
+    let height = (lines.len() as u16 + 2).min(over.height);
+    let area = Rect {
+        x: over.x + (over.width - width) / 2,
+        y: over.y + (over.height - height) / 2,
+        width,
+        height,
+    };
+    let title = cut(&permission.title, (width as usize).saturating_sub(4));
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(pane(&title, true)), area);
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, app: &App) {

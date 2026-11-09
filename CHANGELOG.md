@@ -22,8 +22,9 @@ command line, the keys, and the scenario format the fake agent reads.
   picker names the file to create.
 - Started inside a decade pane, coax joins the decade socket. The status
   line says when it is connected.
-- Permission requests from the agent pause on screen above the input, with
-  the options numbered; a digit answers, Esc cancels. `--allow` answers every
+- Permission requests from the agent open a box over the conversation, with
+  the options numbered; a digit answers, Esc cancels. The answer stays in
+  the conversation as a dim `↳` line. `--allow` answers every
   request with the first allow option instead, for scripted runs.
 - `--prompt <text>` sends a first prompt as soon as the session opens.
 - When `DECADE_MCP` is set, the agent is given decade as an MCP server in the
@@ -31,6 +32,9 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- The plan sits in its own pane, 30 columns wide on the right when the
+  screen is at least 90 columns, and across the top on narrower screens.
+  Each step shows `○` pending, `◐` in progress or `●` done.
 - Your prompts start with `›`, and the agent's thoughts sit behind a dim `│`
   gutter. Consecutive tool calls group under one `✦ N tools` line, with one
   line per call: a status glyph, the kind, the title, and the size of any
