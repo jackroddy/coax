@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -169,6 +169,9 @@ pub struct App {
     pub session: SessionId,
     pub decade_pane: Option<String>,
     pub permission: Option<Permission>,
+
+    /// The requests that came while `permission` was open, oldest first.
+    pub queued: VecDeque<Permission>,
     pub rendered: ui::Rendered,
     pub cwd: PathBuf,
     auto_allow: bool,
@@ -287,13 +290,18 @@ impl App {
                     .title
                     .clone()
                     .unwrap_or_else(|| update.tool_call_id.to_string());
-                self.permission = Some(Permission {
+                let permission = Permission {
                     title,
                     options,
                     update,
                     reply,
-                });
-                if self.auto_allow {
+                };
+                if self.permission.is_none() {
+                    self.permission = Some(permission);
+                } else {
+                    self.queued.push_back(permission);
+                }
+                while self.auto_allow && self.permission.is_some() {
                     let allow = self.permission.as_ref().and_then(|p| {
                         p.options
                             .iter()
@@ -303,8 +311,12 @@ impl App {
                     self.decide(allow);
                 }
             }
-            Event::Done(Ok(stop)) => self.transcript.finished(stop),
+            Event::Done(Ok(stop)) => {
+                self.close_permissions();
+                self.transcript.finished(stop);
+            }
             Event::Done(Err(error)) => {
+                self.close_permissions();
                 self.transcript.in_flight = false;
                 self.transcript.cancel_running();
                 self.transcript.notice(format!("prompt failed: {error}"));
@@ -312,6 +324,7 @@ impl App {
             Event::Exited(reason) => {
                 self.exited = true;
                 self.permission = None;
+                self.queued.clear();
                 self.menu = None;
                 self.confirm = None;
                 self.transcript.agent_exited(&reason);
@@ -350,6 +363,14 @@ impl App {
         };
         let _ = permission.reply.send(outcome);
         self.transcript.permission(*permission.update, choice);
+        self.permission = self.queued.pop_front();
+    }
+
+    /// Cancel the open request and the queued ones, when their turn is over.
+    fn close_permissions(&mut self) {
+        while self.permission.is_some() {
+            self.decide(None);
+        }
     }
 
     pub fn mouse(&mut self, mouse: MouseEvent) -> Action {
@@ -1179,6 +1200,7 @@ async fn session(
         session,
         decade_pane: decade.as_ref().map(|_| String::new()),
         permission: None,
+        queued: VecDeque::new(),
         rendered: ui::Rendered::default(),
         cwd,
         auto_allow,
@@ -1427,6 +1449,7 @@ mod tests {
             session: SessionId::new("s"),
             decade_pane: None,
             permission: None,
+            queued: VecDeque::new(),
             rendered: ui::Rendered::default(),
             cwd: PathBuf::new(),
             auto_allow: false,
@@ -3061,5 +3084,84 @@ mod tests {
                 terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
             }
         }
+    }
+
+    fn ask(app: &mut App, id: &str) -> oneshot::Receiver<RequestPermissionOutcome> {
+        use agent_client_protocol::v1::schema::{PermissionOptionId, ToolCallUpdateFields};
+
+        let (reply, answer) = oneshot::channel();
+        app.event(Event::Permission {
+            update: Box::new(ToolCallUpdate::new(
+                id.to_string(),
+                ToolCallUpdateFields::new().title(format!("Write {id}")),
+            )),
+            options: vec![PermissionOption::new(
+                PermissionOptionId::new("yes"),
+                "Allow once",
+                PermissionOptionKind::AllowOnce,
+            )],
+            reply,
+        });
+        answer
+    }
+
+    #[test]
+    fn a_second_permission_request_waits_behind_the_first_and_cancels_nothing() {
+        let mut app = app();
+        let mut first = ask(&mut app, "a");
+        let mut second = ask(&mut app, "b");
+        assert_eq!(app.permission.as_ref().unwrap().title, "Write a");
+        assert!(first.try_recv().is_err());
+        assert!(second.try_recv().is_err());
+        app.key(
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+            Instant::now(),
+        );
+        assert!(matches!(
+            first.try_recv(),
+            Ok(RequestPermissionOutcome::Selected(_))
+        ));
+        assert_eq!(app.permission.as_ref().unwrap().title, "Write b");
+        assert!(second.try_recv().is_err());
+        app.key(
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+            Instant::now(),
+        );
+        assert!(matches!(
+            second.try_recv(),
+            Ok(RequestPermissionOutcome::Selected(_))
+        ));
+        assert!(app.permission.is_none());
+    }
+
+    #[test]
+    fn the_end_of_a_turn_closes_the_open_and_queued_permission_boxes() {
+        let mut app = app();
+        app.transcript.prompt("go".to_string());
+        let mut first = ask(&mut app, "a");
+        let mut second = ask(&mut app, "b");
+        app.event(Event::Done(Ok(
+            agent_client_protocol::v1::schema::StopReason::EndTurn,
+        )));
+        assert!(app.permission.is_none());
+        assert!(matches!(
+            first.try_recv(),
+            Ok(RequestPermissionOutcome::Cancelled)
+        ));
+        assert!(matches!(
+            second.try_recv(),
+            Ok(RequestPermissionOutcome::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn allow_answers_every_queued_request() {
+        let mut app = app();
+        app.auto_allow = true;
+        let mut first = ask(&mut app, "a");
+        let mut second = ask(&mut app, "b");
+        assert!(first.try_recv().is_ok());
+        assert!(second.try_recv().is_ok());
+        assert!(app.permission.is_none());
     }
 }

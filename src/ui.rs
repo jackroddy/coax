@@ -1292,13 +1292,13 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
         height,
     };
     let title = cut(&permission.title, (width as usize).saturating_sub(4));
+    let mut block =
+        pane(&title, true).title_bottom(Line::styled("esc cancel", dim()).right_aligned());
+    if !app.queued.is_empty() {
+        block = block.title_bottom(Line::styled(format!("{} more", app.queued.len()), dim()));
+    }
     frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            pane(&title, true).title_bottom(Line::styled("esc cancel", dim()).right_aligned()),
-        ),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<Color>) {

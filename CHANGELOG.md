@@ -200,6 +200,9 @@ command line, the keys, and the scenario format the fake agent reads.
 - A conversation that is taller than the pane at one width and shorter one
   column narrower no longer panics the scroll bar. The bar shows only when
   the narrower layout is still taller.
+- A second permission request no longer cancels the first. The requests queue,
+  the box shows the oldest with `N more` under it, and the next appears when
+  one is answered. A box closes, as cancelled, when its turn ends.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The
