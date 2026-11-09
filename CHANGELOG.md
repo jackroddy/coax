@@ -71,10 +71,17 @@ command line, the keys, and the scenario format the fake agent reads.
   the status. A title too long for its row is cut with `…`. Your answer to a
   permission request is the choice in the accent colour on the right, and
   notices are centred and dim.
-- The prompt sits between two rules and shows three rows. It wraps at word
-  breaks and grows with the text up to half the screen. The footer under it
-  lists the keys that work in the current state and, when the agent has sent a
-  plan, how many steps are done.
+- The prompt sits between two rules and shows one row. It wraps at word
+  breaks and grows with the text up to half the screen. There is no footer
+  row of key hints. When the agent has sent a plan, the header shows how many
+  steps are done, before the working or idle state.
+- Ctrl+c no longer quits at once in a session. While the agent is working it
+  cancels the turn, as Esc does, and with text in the prompt it clears the
+  prompt. Otherwise, including with the permission box open, it arms an exit
+  guard for 1.5 seconds and a second Ctrl+c in that time quits. Ctrl+d on an
+  empty prompt arms the same guard and a second Ctrl+d quits. Any other key
+  disarms it. While armed, the rule under the prompt says which key to press
+  again. The picker still quits on Esc and Ctrl+c at once.
 - The mouse wheel scrolls the conversation three lines, so coax now captures
   the mouse and the terminal's own text selection needs Shift held. PageUp and
   PageDown move a full page, and End jumps to the bottom. While scrolled up,

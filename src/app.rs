@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::Error;
 use agent_client_protocol::v1::schema::{
@@ -21,6 +22,23 @@ use crate::session::Transcript;
 use crate::ui;
 
 const WHEEL_LINES: usize = 3;
+
+/// How long a first ^c or ^d waits for the second.
+const GUARD_WINDOW: Duration = Duration::from_millis(1500);
+
+/// The key that armed the exit guard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExitKey {
+    CtrlC,
+    CtrlD,
+}
+
+/// A first exit key, waiting for a second until `until`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Guard {
+    pub key: ExitKey,
+    pub until: Instant,
+}
 const PAN_COLUMNS: isize = 4;
 
 pub struct App {
@@ -28,6 +46,7 @@ pub struct App {
     pub input: String,
     pub scroll: usize,
     pub show_plan: bool,
+    pub guard: Option<Guard>,
 
     /// How far each wide block is panned, by entry and block.
     pub pans: HashMap<(usize, usize), usize>,
@@ -159,11 +178,36 @@ impl App {
         }
     }
 
-    pub fn key(&mut self, key: KeyEvent) -> Action {
+    /// Handle a key pressed at `now`. Any key but the one that completes
+    /// the exit guard disarms it.
+    pub fn key(&mut self, key: KeyEvent, now: Instant) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let armed = self.guard.take().filter(|guard| guard.until > now);
+        let exit = match key.code {
+            KeyCode::Char('c') if ctrl => Some(ExitKey::CtrlC),
+            KeyCode::Char('d') if ctrl && self.input.is_empty() => Some(ExitKey::CtrlD),
+            _ => None,
+        };
+        if let Some(exit) = exit {
+            if armed.is_some_and(|guard| guard.key == exit) {
+                return Action::Quit;
+            }
+            let working = self.transcript.in_flight && self.permission.is_none();
+            if exit == ExitKey::CtrlC && working {
+                return Action::Cancel;
+            }
+            if exit == ExitKey::CtrlC && !self.input.is_empty() {
+                self.input.clear();
+                return Action::None;
+            }
+            self.guard = Some(Guard {
+                key: exit,
+                until: now + GUARD_WINDOW,
+            });
+            return Action::None;
+        }
         if let Some(permission) = &self.permission {
             match key.code {
-                KeyCode::Char('c') if ctrl => return Action::Quit,
                 KeyCode::Esc => self.decide(None),
                 KeyCode::Char(digit) if digit.is_ascii_digit() => {
                     let index = digit.to_digit(10).unwrap() as usize;
@@ -176,7 +220,6 @@ impl App {
             return Action::None;
         }
         match key.code {
-            KeyCode::Char('c') if ctrl => Action::Quit,
             KeyCode::Char('t') if ctrl => {
                 self.show_plan = !self.show_plan;
                 Action::None
@@ -267,6 +310,7 @@ pub async fn run(
         input: String::new(),
         scroll: 0,
         show_plan: false,
+        guard: None,
         pans: HashMap::new(),
         wide: Vec::new(),
         page: 1,
@@ -298,6 +342,7 @@ pub async fn run(
         if let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
             break Err(Error::into_internal_error(error));
         }
+        let expiry = app.guard.map(|guard| guard.until);
         let action = tokio::select! {
             event = link.events.recv() => match event {
                 Some(event) => {
@@ -307,7 +352,7 @@ pub async fn run(
                 None => break Ok(()),
             },
             key = keys.recv() => match key {
-                Some(Ok(TermEvent::Key(key))) => app.key(key),
+                Some(Ok(TermEvent::Key(key))) => app.key(key, Instant::now()),
                 Some(Ok(TermEvent::Mouse(mouse))) => {
                     app.mouse(mouse);
                     Action::None
@@ -315,6 +360,10 @@ pub async fn run(
                 Some(Ok(_)) => Action::None,
                 Some(Err(error)) => break Err(Error::into_internal_error(error)),
                 None => break Ok(()),
+            },
+            () = async { tokio::time::sleep_until(expiry.unwrap().into()).await }, if expiry.is_some() => {
+                app.guard = None;
+                Action::None
             },
             message = decade_messages.recv() => {
                 match message {
@@ -388,6 +437,7 @@ mod tests {
             input: String::new(),
             scroll: 0,
             show_plan: false,
+            guard: None,
             pans: HashMap::new(),
             wide: vec![WideBlock {
                 area: Rect::new(2, 5, 20, 3),
@@ -449,5 +499,108 @@ mod tests {
             20,
         ));
         assert!(app.pans.is_empty());
+    }
+
+    fn ctrl(ch: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL)
+    }
+
+    fn open_permission(app: &mut App) {
+        let (reply, _answer) = oneshot::channel();
+        app.permission = Some(Permission {
+            title: "Write".to_string(),
+            options: Vec::new(),
+            update: Box::new(ToolCallUpdate::new("t1", Default::default())),
+            reply,
+        });
+    }
+
+    #[test]
+    fn ctrl_c_while_the_agent_is_working_cancels_the_turn() {
+        let mut app = app();
+        app.transcript.in_flight = true;
+        assert!(matches!(app.key(ctrl('c'), Instant::now()), Action::Cancel));
+        assert!(app.guard.is_none());
+    }
+
+    #[test]
+    fn ctrl_c_with_text_in_the_prompt_clears_it() {
+        let mut app = app();
+        app.input = "half a thought".to_string();
+        assert!(matches!(app.key(ctrl('c'), Instant::now()), Action::None));
+        assert!(app.input.is_empty());
+        assert!(app.guard.is_none());
+    }
+
+    #[test]
+    fn ctrl_c_on_an_idle_empty_prompt_arms_and_a_second_one_inside_the_window_quits() {
+        let mut app = app();
+        let start = Instant::now();
+        assert!(matches!(app.key(ctrl('c'), start), Action::None));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(ExitKey::CtrlC));
+        let second = start + Duration::from_millis(1400);
+        assert!(matches!(app.key(ctrl('c'), second), Action::Quit));
+    }
+
+    #[test]
+    fn a_second_ctrl_c_after_the_window_arms_again_instead_of_quitting() {
+        let mut app = app();
+        let start = Instant::now();
+        app.key(ctrl('c'), start);
+        let late = start + Duration::from_millis(1600);
+        assert!(matches!(app.key(ctrl('c'), late), Action::None));
+        assert_eq!(
+            app.guard.map(|guard| guard.until),
+            Some(late + GUARD_WINDOW)
+        );
+    }
+
+    #[test]
+    fn ctrl_c_with_the_permission_box_open_arms_and_a_second_quits() {
+        let mut app = app();
+        app.transcript.in_flight = true;
+        open_permission(&mut app);
+        let start = Instant::now();
+        assert!(matches!(app.key(ctrl('c'), start), Action::None));
+        assert!(app.guard.is_some());
+        assert!(matches!(app.key(ctrl('c'), start), Action::Quit));
+    }
+
+    #[test]
+    fn ctrl_d_on_an_empty_prompt_arms_its_own_guard_and_a_second_quits() {
+        let mut app = app();
+        let start = Instant::now();
+        assert!(matches!(app.key(ctrl('d'), start), Action::None));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(ExitKey::CtrlD));
+        assert!(matches!(app.key(ctrl('d'), start), Action::Quit));
+    }
+
+    #[test]
+    fn ctrl_d_with_text_in_the_prompt_does_nothing() {
+        let mut app = app();
+        app.input = "text".to_string();
+        assert!(matches!(app.key(ctrl('d'), Instant::now()), Action::None));
+        assert!(app.guard.is_none());
+        assert_eq!(app.input, "text");
+    }
+
+    #[test]
+    fn the_other_exit_key_does_not_complete_the_guard() {
+        let mut app = app();
+        let start = Instant::now();
+        app.key(ctrl('c'), start);
+        assert!(matches!(app.key(ctrl('d'), start), Action::None));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(ExitKey::CtrlD));
+    }
+
+    #[test]
+    fn any_other_key_disarms_the_guard() {
+        let mut app = app();
+        let start = Instant::now();
+        app.key(ctrl('c'), start);
+        app.key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), start);
+        assert!(app.guard.is_none());
+        assert!(matches!(app.key(ctrl('c'), start), Action::None));
+        assert!(app.guard.is_some());
     }
 }

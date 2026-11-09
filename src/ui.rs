@@ -9,7 +9,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
-use crate::app::App;
+use crate::app::{App, ExitKey};
 use crate::palette;
 use crate::session::{Entry, Tool};
 
@@ -36,14 +36,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         upper_rule,
         prompt_area,
         lower_rule,
-        footer_area,
     ] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
         Constraint::Length(1),
         Constraint::Length(input.height() as u16),
-        Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(area);
@@ -54,8 +52,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_plan(frame, plan_area, app);
     draw_rule(frame, upper_rule);
     draw_input(frame, prompt_area, &input);
-    draw_rule(frame, lower_rule);
-    draw_footer(frame, footer_area, app);
+    draw_guard_rule(frame, lower_rule, app);
+}
+
+/// The rule under the prompt, carrying the exit guard's message while armed.
+fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(guard) = app.guard else {
+        return draw_rule(frame, area);
+    };
+    let message = match guard.key {
+        ExitKey::CtrlC => "press ^c again to quit",
+        ExitKey::CtrlD => "press ^d again to quit",
+    };
+    let rest = (area.width as usize).saturating_sub(message.chars().count() + 4);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("── ", dim()),
+            Span::styled(message, Style::new().fg(palette::get().yellow)),
+            Span::styled(format!(" {}", "─".repeat(rest)), dim()),
+        ])),
+        area,
+    );
 }
 
 fn draw_rule(frame: &mut Frame, area: Rect) {
@@ -119,7 +136,19 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
             _ => Span::styled("idle", dim()),
         }
     };
-    let mut right = vec![state];
+    let plan = &app.transcript.plan;
+    let mut right = Vec::new();
+    if !plan.is_empty() {
+        let done = plan
+            .iter()
+            .filter(|entry| entry.status == PlanEntryStatus::Completed)
+            .count();
+        right.push(Span::styled(
+            format!("plan {done}/{} done   ", plan.len()),
+            dim(),
+        ));
+    }
+    right.push(state);
     match &app.decade_pane {
         Some(pane) if pane.is_empty() => right.push(Span::styled("   decade", dim())),
         Some(pane) => right.push(Span::styled(format!("   decade pane {pane}"), dim())),
@@ -128,47 +157,6 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let session: String = app.session.to_string().chars().take(8).collect();
     right.push(Span::styled(format!("   session {session} "), dim()));
     title_bar(frame, area, &app.agent, Line::from(right));
-}
-
-fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let plan = &app.transcript.plan;
-    let mut hints = vec![if app.permission.is_some() {
-        "1-9 choose"
-    } else if app.transcript.in_flight {
-        "esc cancel"
-    } else {
-        "enter send"
-    }];
-    if app.permission.is_none() {
-        hints.push("pgup/pgdn scroll");
-        if !plan.is_empty() {
-            hints.push("^t plan");
-        }
-    } else {
-        hints.push("esc cancel");
-    }
-    hints.push("^c quit");
-    let left = format!("  {}", hints.join("   "));
-    let right = if plan.is_empty() {
-        String::new()
-    } else {
-        let done = plan
-            .iter()
-            .filter(|entry| entry.status == PlanEntryStatus::Completed)
-            .count();
-        format!("plan {done}/{} done ", plan.len())
-    };
-    let gap = (area.width as usize)
-        .saturating_sub(left.chars().count() + right.chars().count())
-        .max(1);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw(left),
-            Span::raw(" ".repeat(gap)),
-            Span::styled(right, dim()),
-        ])),
-        area,
-    );
 }
 
 fn draw_plan(frame: &mut Frame, area: Rect, app: &App) {
@@ -753,7 +741,7 @@ struct InputView {
 
 const PROMPT_FIRST: &str = "> ";
 const PROMPT_LEAD: &str = "  ";
-const PROMPT_ROWS: usize = 3;
+const PROMPT_ROWS: usize = 1;
 
 impl InputView {
     fn height(&self) -> usize {
@@ -956,8 +944,8 @@ mod tests {
     }
 
     #[test]
-    fn the_prompt_shows_three_rows_for_short_text_and_grows_with_long_text() {
-        assert_eq!(input_view("", 20, 10).height(), 3);
+    fn the_prompt_shows_one_row_for_short_text_and_grows_with_long_text() {
+        assert_eq!(input_view("", 20, 10).height(), 1);
         let long = "word ".repeat(12);
         assert_eq!(input_view(&long, 20, 10).height(), 4);
     }
