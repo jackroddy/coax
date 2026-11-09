@@ -12,6 +12,14 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Added
 
+- Named agents in `~/.config/coax/config.toml` (under `$XDG_CONFIG_HOME` when
+  it is set). Each `[agents.<name>]` entry has a `command`, `args` and `env`.
+  `coax --agent <name>` starts that entry.
+- A picker over the named agents. It opens on a launch with no agent named
+  and no command. Up and Down (or `k` and `j`) move, Enter starts the
+  highlighted agent, and Esc or Ctrl+c quits. `default = "<name>"` in the
+  config sets which agent starts highlighted. With no agents configured, the
+  picker names the file to create.
 - Follow-along into decade. Started inside a decade pane, coax joins the
   decade socket and, with no agent involved, tells the code pane what the
   agent is looking at: a read tool call with a location becomes `show`, a
@@ -24,6 +32,12 @@ command line, the keys, and the scenario format the fake agent reads.
 - `--prompt <text>` sends a first prompt as soon as the session opens.
 - When `DECADE_MCP` is set, the agent is given decade as an MCP server in the
   session, so it can drive decade's panes itself.
+
+### Changed
+
+- A bare `coax` opens the agent picker in place of printing usage. A flag
+  coax does not know is a usage error, where before it was taken as the agent
+  command.
 
 ## [0.1.0] - 2026-11-06
 
