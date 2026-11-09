@@ -36,7 +36,7 @@ async fn one_prompt(mut link: Link, text: &str) -> Result<Transcript, Error> {
                     .unwrap();
                 transcript.permission(*update, allow.name.clone());
             }
-            Event::Tokens(_) | Event::Setting(_) | Event::Exited(_) => {}
+            Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) => {}
             Event::Done(result) => {
                 transcript.finished(result?);
                 break;
@@ -161,7 +161,7 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
                     }
                 }
                 Event::Permission { .. } => {}
-                Event::Tokens(_) | Event::Setting(_) | Event::Exited(_) => {}
+                Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
@@ -179,7 +179,7 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
 /// The next setting event, past the updates a new session sends.
 async fn next_setting(link: &mut Link) -> Option<Event> {
     while let Some(event) = link.events.recv().await {
-        if matches!(event, Event::Setting(_)) {
+        if matches!(event, Event::Setting { .. }) {
             return Some(event);
         }
     }
@@ -285,7 +285,7 @@ async fn a_prompt_after_loading_plays_the_scenarios_acts() {
                         ))
                         .unwrap();
                 }
-                Event::Tokens(_) | Event::Setting(_) | Event::Exited(_) => {}
+                Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
@@ -327,7 +327,10 @@ async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error(
             value: value.into(),
         };
         link.change(session.clone(), choose("model", "sonnet"))?;
-        let Some(Event::Setting(Ok(Applied::Options(options)))) = next_setting(&mut link).await
+        let Some(Event::Setting {
+            result: Ok(Applied::Options(options)),
+            ..
+        }) = next_setting(&mut link).await
         else {
             panic!("expected the updated options");
         };
@@ -338,7 +341,7 @@ async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error(
         link.change(session.clone(), choose("model", "gpt"))?;
         assert!(matches!(
             next_setting(&mut link).await,
-            Some(Event::Setting(Err(_)))
+            Some(Event::Setting { result: Err(_), .. })
         ));
 
         link.change(
@@ -348,7 +351,10 @@ async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error(
                 value: true.into(),
             },
         )?;
-        let Some(Event::Setting(Ok(Applied::Options(options)))) = next_setting(&mut link).await
+        let Some(Event::Setting {
+            result: Ok(Applied::Options(options)),
+            ..
+        }) = next_setting(&mut link).await
         else {
             panic!("expected the updated options");
         };
@@ -380,7 +386,7 @@ async fn a_turn_reports_the_context_the_cost_and_the_session_tokens() {
                         .unwrap();
                 }
                 Event::Done(_) => break,
-                Event::Setting(_) | Event::Exited(_) => {}
+                Event::Setting { .. } | Event::Exited(_) => {}
             }
         }
         let context = settings.context.unwrap();

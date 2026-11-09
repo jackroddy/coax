@@ -206,6 +206,9 @@ command line, the keys, and the scenario format the fake agent reads.
 - Ctrl+c while the agent works cancels the turn and also arms the exit guard,
   so a second Ctrl+c within 1.5 seconds quits when the agent ignores the
   cancel.
+- The agent's answer to a setting change closes or marks only the menu that
+  asked for it. A late answer used to close an unrelated menu or write its
+  error into it.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

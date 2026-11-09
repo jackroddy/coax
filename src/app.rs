@@ -269,17 +269,30 @@ impl App {
                 self.transcript.apply(*update);
             }
             Event::Tokens(usage) => self.settings.used(&usage),
-            Event::Setting(Ok(applied)) => {
+            Event::Setting {
+                id,
+                result: Ok(applied),
+            } => {
                 match applied {
                     Applied::Options(options) => self.settings.set_options(options),
                     Applied::Mode(id) => self.settings.set_mode(&id),
                 }
-                self.menu = None;
+                if self.menu_asked(&id) {
+                    self.menu = None;
+                }
             }
-            Event::Setting(Err(error)) => match &mut self.menu {
-                Some(menu) => menu.error = Some(error.to_string()),
-                None => self.transcript.notice(format!("setting failed: {error}")),
-            },
+            Event::Setting {
+                id,
+                result: Err(error),
+            } => {
+                if self.menu_asked(&id)
+                    && let Some(menu) = &mut self.menu
+                {
+                    menu.error = Some(error.to_string());
+                } else {
+                    self.transcript.notice(format!("setting failed: {error}"));
+                }
+            }
             Event::Permission {
                 update,
                 options,
@@ -329,6 +342,23 @@ impl App {
                 self.confirm = None;
                 self.transcript.agent_exited(&reason);
             }
+        }
+    }
+
+    /// Whether the open menu is the one a change to setting `id` came from.
+    fn menu_asked(&self, id: &str) -> bool {
+        let Some(menu) = &self.menu else {
+            return false;
+        };
+        match &menu.target {
+            MenuTarget::Setting(asked) => asked == id,
+            MenuTarget::Overflow(first) => self
+                .settings
+                .settings()
+                .iter()
+                .skip(*first)
+                .any(|setting| setting.id == id),
+            MenuTarget::History => false,
         }
     }
 
@@ -2321,8 +2351,37 @@ mod tests {
         header(&mut app, 140);
         let mode = app.chips[0].area;
         click(&mut app, mode.x, mode.y);
-        app.event(Event::Setting(Err(Error::invalid_params())));
+        let Some(MenuTarget::Setting(id)) = app.menu.as_ref().map(|menu| &menu.target) else {
+            panic!("the chip opened no setting menu");
+        };
+        let id = id.clone();
+        app.event(Event::Setting {
+            id,
+            result: Err(Error::invalid_params()),
+        });
         assert!(app.menu.as_ref().unwrap().error.is_some());
+    }
+
+    #[test]
+    fn a_reply_for_another_setting_leaves_the_open_menu_alone() {
+        let mut app = with_settings();
+        header(&mut app, 140);
+        let mode = app.chips[0].area;
+        click(&mut app, mode.x, mode.y);
+        app.event(Event::Setting {
+            id: "elsewhere".to_string(),
+            result: Err(Error::invalid_params()),
+        });
+        assert!(app.menu.as_ref().unwrap().error.is_none());
+        assert!(matches!(
+            app.transcript.entries.last(),
+            Some(Entry::Notice(text)) if text.starts_with("setting failed")
+        ));
+        app.event(Event::Setting {
+            id: "elsewhere".to_string(),
+            result: Ok(Applied::Mode("x".to_string())),
+        });
+        assert!(app.menu.is_some());
     }
 
     #[test]

@@ -26,7 +26,11 @@ pub enum Event {
         reply: oneshot::Sender<RequestPermissionOutcome>,
     },
     Tokens(Usage),
-    Setting(Result<Applied, Error>),
+    Setting {
+        /// The id of the setting the request changed.
+        id: String,
+        result: Result<Applied, Error>,
+    },
     Done(Result<StopReason, Error>),
 
     /// The agent's connection ended, with the reason as text.
@@ -129,15 +133,17 @@ impl Link {
         let tx = self.tx.clone();
         match change {
             Change::Config { id, value } => {
-                let sent = self
-                    .cx
-                    .send_request(SetSessionConfigOptionRequest::new(session, id, value));
+                let sent = self.cx.send_request(SetSessionConfigOptionRequest::new(
+                    session,
+                    id.clone(),
+                    value,
+                ));
                 self.cx.spawn(async move {
-                    let applied = sent
+                    let result = sent
                         .block_task()
                         .await
                         .map(|response| Applied::Options(response.config_options));
-                    let _ = tx.send(Event::Setting(applied));
+                    let _ = tx.send(Event::Setting { id, result });
                     Ok(())
                 })
             }
@@ -147,8 +153,11 @@ impl Link {
                     SessionModeId::new(id.clone()),
                 ));
                 self.cx.spawn(async move {
-                    let applied = sent.block_task().await.map(|_| Applied::Mode(id));
-                    let _ = tx.send(Event::Setting(applied));
+                    let result = sent.block_task().await.map(|_| Applied::Mode(id));
+                    let _ = tx.send(Event::Setting {
+                        id: "mode".to_string(),
+                        result,
+                    });
                     Ok(())
                 })
             }
