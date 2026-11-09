@@ -227,6 +227,9 @@ command line, the keys, and the scenario format the fake agent reads.
 - The `+N −M` size of an edit counts the lines that changed, taken from the
   same line diff the expanded view shows. It counted every line of the old and
   new texts. The permission box and a loaded session count the same way.
+- The copy glyph is `⧉` (U+29C9) in place of a Nerd Font private-use
+  character. Some fonts drew that wider than one column and pushed the box's
+  right border out of line.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

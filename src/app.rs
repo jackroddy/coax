@@ -1691,7 +1691,7 @@ mod tests {
             )
         };
         let (symbol, colour) = cell(&mut app, last);
-        assert_eq!(symbol, "\u{f0c5}");
+        assert_eq!(symbol, "\u{29c9}");
         assert_ne!(colour, crate::palette::get().accent);
         app.mouse(wheel(
             MouseEventKind::Moved,

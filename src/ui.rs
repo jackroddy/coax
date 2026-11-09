@@ -197,9 +197,8 @@ enum Part {
 /// glyph sits on the first row.
 const COPY_ROOM: usize = 2;
 
-/// The copy glyph, from the Nerd Font set that the header's separators come
-/// from.
-const COPY_GLYPH: &str = "\u{f0c5}";
+/// The copy glyph, one column wide in every font.
+const COPY_GLYPH: &str = "\u{29c9}";
 
 /// The widest a table is laid out when measuring it.
 const TABLE_WIDTH: usize = 1000;
@@ -2031,6 +2030,16 @@ mod tests {
         let mut diff = Diff::new("src/main.rs", new);
         diff.old_text = old.map(str::to_string);
         vec![ToolCallContent::Diff(diff)]
+    }
+
+    #[test]
+    fn the_copy_glyph_measures_one_column() {
+        assert_eq!(COPY_GLYPH.width(), 1);
+        assert!(
+            COPY_GLYPH
+                .chars()
+                .all(|ch| !('\u{e000}'..='\u{f8ff}').contains(&ch))
+        );
     }
 
     #[test]
