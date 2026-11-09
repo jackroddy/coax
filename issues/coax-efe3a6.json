@@ -3,7 +3,7 @@
   "title": "A long tool call title is cut off at the screen width",
   "body": "coax draws a tool call on one line: the kind, the title and the status. A title wider than the pane is cut at the right edge, and the status goes with it. The adapter makes a Bash call's title the whole command. In a 120-column pane, a `mkdir -p ... && touch ... && git check-ignore ...` call ended at `git check-ig`, with no `done` after it.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T03:57:33.094861428Z",
-  "updated_at": "2026-11-09T03:57:33.094861428Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T06:00:28.632469762Z",
+  "closed_at": "2026-11-09T06:00:28.632469762Z",
+  "close_reason": "Fixed in \"Group tool calls and restyle prompts and thoughts\" on dev: `tool_line` in `src/ui.rs` cuts the title with an ellipsis to fit the pane, and the status glyph comes before the title.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "0548ccc",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "ef55402",
+      "branch": "dev"
+    }
   }
 }
