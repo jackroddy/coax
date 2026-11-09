@@ -205,11 +205,28 @@ struct Markdown {
     // agent text only grows by appending, so an
     // unchanged length means unchanged text
     len: usize,
-    lines: Vec<Line<'static>>,
+    parts: Vec<Part>,
 }
 
+/// A run of agent text: rows that fit the layout width, or one code block or
+/// table wider than it.
+enum Part {
+    Flow(Vec<Line<'static>>),
+    Wide {
+        /// Which block of the entry this is.
+        block: usize,
+
+        /// The rows at the block's natural width, trailing spaces trimmed.
+        rows: Vec<Line<'static>>,
+        natural: usize,
+    },
+}
+
+/// The widest a table is laid out when measuring it.
+const TABLE_WIDTH: usize = 1000;
+
 impl Rendered {
-    fn agent(&mut self, index: usize, text: &str, width: usize) -> &[Line<'static>] {
+    fn agent(&mut self, index: usize, text: &str, width: usize) -> &[Part] {
         if self.entries.len() <= index {
             self.entries.resize_with(index + 1, || None);
         }
@@ -219,22 +236,110 @@ impl Rendered {
             *slot = Some(Markdown {
                 width,
                 len: text.len(),
-                lines: markdown(text, width),
+                parts: markdown(text, width),
             });
         }
-        slot.as_ref().map_or(&[], |done| &done.lines)
+        slot.as_ref().map_or(&[], |done| &done.parts)
     }
 }
 
-fn markdown(text: &str, width: usize) -> Vec<Line<'static>> {
-    cmr::render(text, width)
+/// `text` laid out one block at a time. Prose goes at `width`. A code block
+/// or table keeps its natural width, so one wider than `width` is a
+/// `Part::Wide` for the screen to window.
+fn markdown(text: &str, width: usize) -> Vec<Part> {
+    let mut parts: Vec<Part> = Vec::new();
+    for (block, item) in cmr::parse(text).iter().enumerate() {
+        if block > 0 {
+            flow(&mut parts).push(Line::default());
+        }
+        match wide(item, width) {
+            Some((rows, natural)) => parts.push(Part::Wide {
+                block,
+                rows,
+                natural,
+            }),
+            None => flow(&mut parts).extend(block_rows(item, width)),
+        }
+    }
+    parts
+}
+
+fn flow(parts: &mut Vec<Part>) -> &mut Vec<Line<'static>> {
+    if !matches!(parts.last(), Some(Part::Flow(_))) {
+        parts.push(Part::Flow(Vec::new()));
+    }
+    match parts.last_mut() {
+        Some(Part::Flow(rows)) => rows,
+        _ => unreachable!(),
+    }
+}
+
+fn block_rows(block: &cmr::Block, width: usize) -> Vec<Line<'static>> {
+    cmr::layout(std::slice::from_ref(block), width)
         .into_iter()
         .map(|row| {
-            row.into_iter()
-                .map(|(text, style)| Span::styled(text, screen_style(style)))
-                .collect()
+            trim_end(
+                row.into_iter()
+                    .map(|(text, style)| Span::styled(text, screen_style(style)))
+                    .collect(),
+            )
         })
         .collect()
+}
+
+/// The rows and natural width of a code block or table wider than `width`.
+fn wide(block: &cmr::Block, width: usize) -> Option<(Vec<Line<'static>>, usize)> {
+    let (rows, natural) = match block {
+        cmr::Block::Code { lang, lines } => {
+            let longest = lines.iter().map(|line| line.chars().count());
+            let header = lang.iter().map(|lang| lang.chars().count());
+
+            // the gutter is two columns: `│ ` on a line, `┌ ` before the language
+            let natural = longest.chain(header).max().unwrap_or(0) + 2;
+            if natural <= width {
+                return None;
+            }
+            (block_rows(block, natural), natural)
+        }
+        cmr::Block::Table { .. } => {
+            let rows = block_rows(block, TABLE_WIDTH);
+            let natural = rows.iter().map(Line::width).max().unwrap_or(0);
+            if natural <= width {
+                return None;
+            }
+            (rows, natural)
+        }
+        _ => return None,
+    };
+    Some((rows, natural))
+}
+
+/// `row` cut to the `visible` columns from `offset`, with a dim `◂` in the
+/// first column when there is more to the left and a dim `▸` in the last when
+/// there is more to the right of a row `natural` columns wide.
+fn window(row: &Line<'static>, offset: usize, visible: usize, natural: usize) -> Line<'static> {
+    let mut cells: Vec<(char, Style)> = row
+        .spans
+        .iter()
+        .flat_map(|span| span.content.chars().map(|ch| (ch, span.style)))
+        .skip(offset)
+        .take(visible)
+        .collect();
+    cells.resize(visible, (' ', Style::default()));
+    if offset > 0 {
+        cells[0] = ('◂', dim());
+    }
+    if offset + visible < natural {
+        cells[visible - 1] = ('▸', dim());
+    }
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for (ch, style) in cells {
+        match spans.last_mut() {
+            Some(last) if last.style == style => last.content.to_mut().push(ch),
+            _ => spans.push(Span::styled(ch.to_string(), style)),
+        }
+    }
+    Line::from(spans)
 }
 
 fn screen_style(style: cmr::Style) -> Style {
@@ -276,13 +381,40 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     let width = area.width.max(4) as usize;
     let usable = width - width / 10;
     let mut lines: Vec<Line> = Vec::new();
+    let mut wides: Vec<Wide> = Vec::new();
     for (index, entry) in app.transcript.entries.iter().enumerate() {
         match entry {
             Entry::User(text) => lines.extend(bubble(text, width)),
             Entry::Agent(text) => {
                 let widest = (width * 9 / 10).max(5);
-                let body = app.rendered.agent(index, text, widest - 4);
-                let rows = body.iter().cloned().map(trim_end).collect();
+                let visible = widest - 4;
+                let mut rows: Vec<Line<'static>> = Vec::new();
+                for part in app.rendered.agent(index, text, visible) {
+                    match part {
+                        Part::Flow(flow) => rows.extend(flow.iter().cloned()),
+                        Part::Wide {
+                            block,
+                            rows: wide,
+                            natural,
+                        } => {
+                            let max = natural - visible;
+                            let key = (index, *block);
+                            let offset = app.pans.get(&key).copied().unwrap_or(0).min(max);
+                            wides.push(Wide {
+                                key,
+                                // one row for the border above the box's rows
+                                first: lines.len() + 1 + rows.len(),
+                                height: wide.len(),
+                                width: visible,
+                                max,
+                            });
+                            rows.extend(
+                                wide.iter()
+                                    .map(|row| window(row, offset, visible, *natural)),
+                            );
+                        }
+                    }
+                }
                 lines.extend(framed(rows, palette::get().blue, None));
             }
             Entry::Thought(text) => wrapped("✻ ", "  ", dim(), text, usable, dim(), &mut lines),
@@ -312,15 +444,49 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     app.scroll = app.scroll.min(lines.len().saturating_sub(rows));
     let rows = if app.scroll > 0 { rows } else { height };
     let end = lines.len() - app.scroll;
-    let mut visible: Vec<Line> = lines
-        .into_iter()
-        .take(end)
-        .skip(end.saturating_sub(rows))
+    let start = end.saturating_sub(rows);
+    app.wide = wides
+        .iter()
+        .filter_map(|wide| {
+            let top = wide.first.max(start);
+            let bottom = (wide.first + wide.height).min(end);
+            (top < bottom).then(|| WideBlock {
+                area: Rect {
+                    x: area.x + 2,
+                    y: area.y + (top - start) as u16,
+                    width: wide.width as u16,
+                    height: (bottom - top) as u16,
+                },
+                key: wide.key,
+                max: wide.max,
+            })
+        })
         .collect();
+    let mut visible: Vec<Line> = lines.into_iter().take(end).skip(start).collect();
     if app.scroll > 0 {
         visible.push(Line::styled(format!("⋯ {} more below", app.scroll), dim()));
     }
     frame.render_widget(Paragraph::new(visible), area);
+}
+
+/// A wide block drawn this frame, by its place among the transcript lines.
+struct Wide {
+    key: (usize, usize),
+    first: usize,
+    height: usize,
+    width: usize,
+    max: usize,
+}
+
+/// A wide block on screen, found by the mouse to pan it.
+pub struct WideBlock {
+    pub area: Rect,
+
+    /// The entry and the block within it.
+    pub key: (usize, usize),
+
+    /// The furthest the block pans, in columns.
+    pub max: usize,
 }
 
 /// A message of yours in an accent bubble against the right edge, at most
@@ -662,6 +828,15 @@ mod tests {
 
     use super::*;
 
+    fn flat(parts: &[Part]) -> Vec<Line<'static>> {
+        parts
+            .iter()
+            .flat_map(|part| match part {
+                Part::Flow(rows) | Part::Wide { rows, .. } => rows.clone(),
+            })
+            .collect()
+    }
+
     fn plain(lines: &[Line]) -> Vec<String> {
         lines
             .iter()
@@ -672,13 +847,13 @@ mod tests {
     #[test]
     fn agent_text_is_laid_out_again_when_it_grows_or_the_width_changes() {
         let mut rendered = Rendered::default();
-        assert_eq!(plain(rendered.agent(0, "one two", 20)), ["one two"]);
+        assert_eq!(plain(&flat(rendered.agent(0, "one two", 20))), ["one two"]);
         assert_eq!(
-            plain(rendered.agent(0, "one two three", 20)),
+            plain(&flat(rendered.agent(0, "one two three", 20))),
             ["one two three"]
         );
         assert_eq!(
-            plain(rendered.agent(0, "one two three", 8)),
+            plain(&flat(rendered.agent(0, "one two three", 8))),
             ["one two", "three"]
         );
     }
@@ -743,7 +918,7 @@ mod tests {
 
     #[test]
     fn agent_markdown_keeps_its_styles_on_screen() {
-        let lines = markdown("# Title\n\nsome `code`", 40);
+        let lines = flat(&markdown("# Title\n\nsome `code`", 40));
         let title = &lines[0].spans[0];
         assert!(title.style.add_modifier.contains(Modifier::BOLD));
         let code = lines
@@ -852,5 +1027,71 @@ mod tests {
             assert_eq!(span.style.bg, None);
         }
         assert_eq!(lines[1].spans[1].style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn a_code_block_is_as_wide_as_its_longest_line_plus_the_gutter() {
+        let parts = markdown("```rs\nabcdefghij\nabc\n```", 8);
+        let [Part::Wide { natural, rows, .. }] = &parts[..] else {
+            panic!("expected one wide block");
+        };
+        assert_eq!(*natural, 12);
+        assert_eq!(plain(rows), ["┌ rs", "│ abcdefghij", "│ abc"]);
+    }
+
+    #[test]
+    fn a_table_is_as_wide_as_its_longest_row_with_the_padding_trimmed() {
+        let text = "| name | note |\n|---|---|\n| a | a rather long note indeed |";
+        let parts = markdown(text, 12);
+        let [Part::Wide { natural, rows, .. }] = &parts[..] else {
+            panic!("expected one wide block");
+        };
+        let widest = rows.iter().map(Line::width).max().unwrap();
+        assert_eq!(*natural, widest);
+        assert!(widest > 12 && widest < 40, "{widest}");
+    }
+
+    #[test]
+    fn a_block_that_fits_the_width_is_laid_out_with_the_prose() {
+        let parts = markdown("```\nshort\n```\n\nafter", 20);
+        assert!(matches!(&parts[..], [Part::Flow(_)]));
+    }
+
+    #[test]
+    fn a_window_marks_the_edges_that_have_more_beyond_them() {
+        let row = Line::from("0123456789");
+        let at = |offset| window(&row, offset, 5, 10).to_string();
+        assert_eq!(at(0), "0123▸");
+        assert_eq!(at(2), "◂345▸");
+        assert_eq!(at(5), "◂6789");
+    }
+
+    #[test]
+    fn a_window_pads_a_row_shorter_than_the_block() {
+        let row = Line::from("01");
+        assert_eq!(window(&row, 0, 5, 10).to_string(), "01  ▸");
+        assert_eq!(window(&row, 3, 5, 10).to_string(), "◂   ▸");
+    }
+
+    #[test]
+    fn laying_out_a_block_at_a_time_matches_laying_out_the_whole_text() {
+        let text = "# Title\n\nSome *prose* with `code` that wraps around a little.\n\n\
+                    - one\n- two\n\n```rs\nfn main() {}\n```\n\n\
+                    | a | b |\n|---|---|\n| 1 | 2 |\n\n---\n\n> quoted text";
+        for width in [30, 60] {
+            let whole: Vec<Line> = cmr::render(text, width)
+                .into_iter()
+                .map(|row| {
+                    trim_end(
+                        row.into_iter()
+                            .map(|(text, style)| Span::styled(text, screen_style(style)))
+                            .collect(),
+                    )
+                })
+                .collect();
+            let parts = markdown(text, width);
+            assert!(matches!(&parts[..], [Part::Flow(_)]));
+            assert_eq!(flat(&parts), whole);
+        }
     }
 }

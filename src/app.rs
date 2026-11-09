@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 
@@ -11,6 +12,7 @@ use crossterm::event::{
     MouseEvent, MouseEventKind,
 };
 use decade_channel::{Channel, Message};
+use ratatui::layout::Position;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 
@@ -19,12 +21,19 @@ use crate::session::Transcript;
 use crate::ui;
 
 const WHEEL_LINES: usize = 3;
+const PAN_COLUMNS: isize = 4;
 
 pub struct App {
     pub transcript: Transcript,
     pub input: String,
     pub scroll: usize,
     pub show_plan: bool,
+
+    /// How far each wide block is panned, by entry and block.
+    pub pans: HashMap<(usize, usize), usize>,
+
+    /// The wide blocks on screen, set by the last draw.
+    pub wide: Vec<ui::WideBlock>,
 
     /// Rows a page scroll moves, set by the last draw.
     pub page: usize,
@@ -126,10 +135,27 @@ impl App {
     }
 
     pub fn mouse(&mut self, mouse: MouseEvent) {
-        match mouse.kind {
-            MouseEventKind::ScrollUp => self.scroll += WHEEL_LINES,
-            MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_sub(WHEEL_LINES),
-            _ => {}
+        let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+        let pan = match mouse.kind {
+            MouseEventKind::ScrollLeft => -PAN_COLUMNS,
+            MouseEventKind::ScrollUp if shift => -PAN_COLUMNS,
+            MouseEventKind::ScrollRight => PAN_COLUMNS,
+            MouseEventKind::ScrollDown if shift => PAN_COLUMNS,
+            MouseEventKind::ScrollUp => {
+                self.scroll += WHEEL_LINES;
+                return;
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll = self.scroll.saturating_sub(WHEEL_LINES);
+                return;
+            }
+            _ => return,
+        };
+        let position = Position::new(mouse.column, mouse.row);
+        if let Some(block) = self.wide.iter().find(|block| block.area.contains(position)) {
+            let offset = self.pans.get(&block.key).copied().unwrap_or(0) as isize;
+            let offset = (offset + pan).clamp(0, block.max as isize) as usize;
+            self.pans.insert(block.key, offset);
         }
     }
 
@@ -213,6 +239,8 @@ pub async fn run(
         input: String::new(),
         scroll: 0,
         show_plan: false,
+        pans: HashMap::new(),
+        wide: Vec::new(),
         page: 1,
         lines_seen: 0,
         agent,
@@ -313,4 +341,82 @@ fn key_thread() -> UnboundedReceiver<io::Result<TermEvent>> {
         }
     });
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::MouseEventKind;
+    use ratatui::layout::Rect;
+
+    use super::*;
+    use crate::ui::WideBlock;
+
+    fn app() -> App {
+        App {
+            transcript: Transcript::default(),
+            input: String::new(),
+            scroll: 0,
+            show_plan: false,
+            pans: HashMap::new(),
+            wide: vec![WideBlock {
+                area: Rect::new(2, 5, 20, 3),
+                key: (1, 0),
+                max: 6,
+            }],
+            page: 1,
+            lines_seen: 0,
+            agent: String::new(),
+            session: SessionId::new("s"),
+            decade_pane: None,
+            permission: None,
+            rendered: ui::Rendered::default(),
+            cwd: PathBuf::new(),
+            auto_allow: false,
+        }
+    }
+
+    fn wheel(kind: MouseEventKind, modifiers: KeyModifiers, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn a_horizontal_wheel_over_a_wide_block_pans_it_four_columns_and_stops_at_the_ends() {
+        let mut app = app();
+        app.mouse(wheel(MouseEventKind::ScrollRight, KeyModifiers::NONE, 3, 6));
+        assert_eq!(app.pans[&(1, 0)], 4);
+        app.mouse(wheel(MouseEventKind::ScrollRight, KeyModifiers::NONE, 3, 6));
+        assert_eq!(app.pans[&(1, 0)], 6);
+        for _ in 0..3 {
+            app.mouse(wheel(MouseEventKind::ScrollLeft, KeyModifiers::NONE, 3, 6));
+        }
+        assert_eq!(app.pans[&(1, 0)], 0);
+    }
+
+    #[test]
+    fn shift_with_the_wheel_pans_and_a_plain_wheel_scrolls_the_conversation() {
+        let mut app = app();
+        app.mouse(wheel(MouseEventKind::ScrollDown, KeyModifiers::SHIFT, 3, 6));
+        assert_eq!(app.pans[&(1, 0)], 4);
+        assert_eq!(app.scroll, 0);
+        app.mouse(wheel(MouseEventKind::ScrollUp, KeyModifiers::NONE, 3, 6));
+        assert_eq!(app.scroll, 3);
+        assert_eq!(app.pans[&(1, 0)], 4);
+    }
+
+    #[test]
+    fn panning_away_from_every_wide_block_does_nothing() {
+        let mut app = app();
+        app.mouse(wheel(
+            MouseEventKind::ScrollRight,
+            KeyModifiers::NONE,
+            40,
+            20,
+        ));
+        assert!(app.pans.is_empty());
+    }
 }

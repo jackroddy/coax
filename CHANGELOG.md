@@ -33,6 +33,11 @@ command line, the keys, and the scenario format the fake agent reads.
   ANSI colour name. A name left out keeps its ANSI colour, and without
   `muted` dim text uses the terminal's dim attribute. A bad value is an error
   naming the file.
+- Wide code blocks and tables in the agent's text keep their full width, where
+  before a code line was cut with `…` and a table was squeezed or stacked. A
+  block wider than the box shows a window onto it, with a dim `◂` or `▸` at
+  the edge that has more. Shift with the wheel, or a horizontal wheel, over
+  the block pans it four columns at a time.
 - Ctrl+t shows or hides the plan, as a list above the prompt. It is hidden
   until then.
 - `--prompt <text>` sends a first prompt as soon as the session opens.
