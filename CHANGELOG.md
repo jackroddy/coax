@@ -77,7 +77,9 @@ command line, the keys, and the scenario format the fake agent reads.
   Text from a subagent no longer joins the main agent's reply, and the main
   agent's later text no longer joins the subagent's. coax reads the Claude
   adapter's `_meta.claudeCode.parentToolUseId` tag to tell which call a
-  subagent's output belongs to. The scenario format is unchanged: an `update`
+  subagent's output belongs to. coax declares the `subagent-transcript` client
+  capability, which the adapter needs before it sends a subagent's text. The
+  scenario format is unchanged: an `update`
   step already carries `_meta` as it does on the wire, and
   `scenarios/subagents.json` shows two parallel subagents.
 - Choosing a different model after the first turn does not apply it at once.

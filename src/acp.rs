@@ -57,7 +57,13 @@ impl Link {
             .fs(FileSystemCapabilities::new()
                 .read_text_file(true)
                 .write_text_file(true))
-            .terminal(false);
+            .terminal(false)
+            // the Claude adapter sends a subagent's text only to a client
+            // that declares this
+            .meta(serde_json::Map::from_iter([(
+                "subagent-transcript".to_string(),
+                serde_json::Value::Bool(true),
+            )]));
         let request = InitializeRequest::new(ProtocolVersion::V1)
             .client_capabilities(capabilities)
             .client_info(Implementation::new("coax", env!("CARGO_PKG_VERSION")));
