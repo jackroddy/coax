@@ -3,20 +3,20 @@
   "title": "Agent text is rendered as markdown",
   "body": "`ui::draw_transcript` draws an `Entry::Agent` through `wrapped`, which splits the text on newlines and wraps each paragraph with `textwrap::wrap`. The agent's markdown shows as typed: fences, `#` headings and table pipes are all visible.\n\n## Proposal\n\n- coax depends on the renderer crate split out of foam (foam-000075 in foam's tracker) and draws agent text with its `render(text, width)`.\n- A message still streaming is rendered again on each new chunk. A finished message keeps its lines until the width changes.\n\n## Open\n\n- Whether thoughts are rendered as markdown too, or stay dimmed plain text.\n- Bold, italics, links and blockquotes come out literal in foam's renderer today. Which of them the renderer learns depends on the coax output style (see that issue).",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/4d38e22a",
-  "lease_expires": "2026-11-09T05:55:03.981824854Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T04:57:35.225536913Z",
-  "updated_at": "2026-11-09T05:43:13.011024649Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T05:43:13.019358525Z",
+  "closed_at": "2026-11-09T05:43:13.019358525Z",
+  "close_reason": "Agent text renders through cmr in `src/ui.rs` (`Rendered`, `markdown`), on dev; see the last note.",
+  "resolution": "done",
   "notes": [
     {
       "id": "9a7949c3",
@@ -40,6 +40,9 @@
       "commit": "e9ae3c8",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "90242c8",
+      "branch": "dev"
+    }
   }
 }
