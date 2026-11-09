@@ -3,7 +3,7 @@
   "title": "coax runs a real agent through Claude Code's ACP adapter",
   "body": "Every session so far ran against `coax-fake-agent`. No real agent has been\nbehind coax, because no ACP agent is installed on this machine: there is no\nnode, and the Claude Code ACP adapter is an npm package.\n\n## Proposal\n\nInstall nodejs and the adapter, with Jack's say-so on the installs, then run\n`coax <adapter command>` inside decade with `--code` set, so the agent sees\ndecade's MCP tools. Expect protocol surprises on first contact and file each\none. Jack asked to hold this until the work that needs no tokens was done;\non 2026-11-06 that point is close.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:28:08.259442572Z",
-  "updated_at": "2026-11-09T04:43:33.53743599Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T09:02:28.033980264Z",
+  "closed_at": "2026-11-09T09:02:28.033980264Z",
+  "close_reason": "coax runs the Claude adapter's standalone release build with no node (memory claude-adapter-install). Jack uses it day to day through the picker; problems found in use get their own issues.",
+  "resolution": "done",
   "notes": [
     {
       "id": "a201ae37",
@@ -40,6 +40,9 @@
       "commit": "0548ccc",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "1fd2c24",
+      "branch": "dev"
+    }
   }
 }
