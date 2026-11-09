@@ -183,6 +183,20 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- An agent that exits no longer takes coax with it. The conversation stays on
+  screen and scrolls and copies as before, with a notice `agent exited:` and
+  the agent's status and last stderr lines. Sending is off, and the rule under
+  the prompt says the agent has exited. ^c ^c and ^d ^d still quit. A call
+  still running when the agent exits or a turn is cancelled shows `cancelled`
+  in place of `running…`.
+- A blank terminal no longer shows while the agent starts or a session loads.
+  coax draws `starting <agent>…` or `loading session…`, and ^c quits from it.
+- An agent that does not start names its command in the error. In the picker,
+  its row says `failed:` with the reason and Enter on it does nothing, and a
+  row whose session list failed says `sessions failed:`. A failure before the
+  session opens no longer prints terminal reset codes.
+- The scenario format has an `exit` step that ends the fake agent's process
+  with a code and optional stderr text.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

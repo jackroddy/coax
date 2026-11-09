@@ -55,6 +55,19 @@ pub enum Step {
     Permission(Permission),
     DelayMs(u64),
     Stop(StopReason),
+
+    /// End the process the agent runs in. Use it only with the fake agent
+    /// binary.
+    Exit(Exit),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Exit {
+    pub code: i32,
+
+    /// Text written to stderr first.
+    #[serde(default)]
+    pub stderr: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

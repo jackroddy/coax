@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -172,6 +172,9 @@ pub struct App {
     pub rendered: ui::Rendered,
     pub cwd: PathBuf,
     auto_allow: bool,
+
+    /// Whether the agent's connection has ended.
+    pub exited: bool,
 }
 
 pub struct Permission {
@@ -303,7 +306,15 @@ impl App {
             Event::Done(Ok(stop)) => self.transcript.finished(stop),
             Event::Done(Err(error)) => {
                 self.transcript.in_flight = false;
+                self.transcript.cancel_running();
                 self.transcript.notice(format!("prompt failed: {error}"));
+            }
+            Event::Exited(reason) => {
+                self.exited = true;
+                self.permission = None;
+                self.menu = None;
+                self.confirm = None;
+                self.transcript.agent_exited(&reason);
             }
         }
     }
@@ -631,7 +642,7 @@ impl App {
                 Action::Edit(text)
             }
             Kind::Agent { name } => {
-                if self.transcript.in_flight {
+                if self.transcript.in_flight || self.exited {
                     return Action::None;
                 }
                 let input = match command::parse(&self.input) {
@@ -665,6 +676,9 @@ impl App {
                 let Some(confirm) = self.confirm.take() else {
                     return Action::None;
                 };
+                if self.exited {
+                    return Action::None;
+                }
                 let text = confirm.text();
                 self.remember(&text);
                 self.clear_input();
@@ -945,7 +959,7 @@ impl App {
                 self.enter_command()
             }
             KeyCode::Enter => {
-                if self.transcript.in_flight || self.input.trim().is_empty() {
+                if self.transcript.in_flight || self.exited || self.input.trim().is_empty() {
                     return Action::None;
                 }
                 let text = std::mem::take(&mut self.input);
@@ -1061,6 +1075,26 @@ fn flip(id: &str, on: bool) -> Change {
 }
 
 pub async fn run(
+    link: Link,
+    init: InitializeResponse,
+    name: Option<String>,
+    opening: Opening,
+) -> Result<(), Error> {
+    let mut terminal = ratatui::init();
+    enter_input_modes();
+    let restore_terminal = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        leave_input_modes();
+        restore_terminal(info);
+    }));
+    let result = session(&mut terminal, link, init, name, opening).await;
+    restore();
+    result
+}
+
+/// Open the session on the terminal `run` set up, and drive it.
+async fn session(
+    terminal: &mut ratatui::DefaultTerminal,
     mut link: Link,
     init: InitializeResponse,
     name: Option<String>,
@@ -1077,16 +1111,31 @@ pub async fn run(
         .unwrap_or_else(|| "agent".to_string());
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
     let mut settings = Settings::default();
-    let session = match start {
-        Start::New => {
-            let response = link.new_session(cwd.clone()).await?;
-            settings.open(response.config_options, response.modes);
-            response.session_id
-        }
-        Start::Load(id) => {
-            let response = link.load_session(id.clone(), cwd.clone()).await?;
-            settings.open(response.config_options, response.modes);
-            id
+    let waiting = match &start {
+        Start::New => format!("starting {agent}…"),
+        Start::Load(_) => "loading session…".to_string(),
+    };
+    let session = {
+        let opened = open_session(&link, start, &cwd, &mut settings);
+        tokio::pin!(opened);
+        loop {
+            terminal
+                .draw(|frame| ui::draw_waiting(frame, &waiting))
+                .map_err(Error::into_internal_error)?;
+            tokio::select! {
+                session = &mut opened => break session?,
+                key = keys.recv() => match key {
+                    Some(Ok(TermEvent::Key(key)))
+                        if key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        return Ok(());
+                    }
+                    Some(Err(error)) => return Err(Error::into_internal_error(error)),
+                    None => return Ok(()),
+                    Some(Ok(_)) => {}
+                },
+            }
         }
     };
 
@@ -1133,6 +1182,7 @@ pub async fn run(
         rendered: ui::Rendered::default(),
         cwd,
         auto_allow,
+        exited: false,
     };
     // a loaded session's history arrives before its load response
     while let Ok(event) = link.events.try_recv() {
@@ -1142,16 +1192,9 @@ pub async fn run(
         app.transcript.prompt(text.clone());
         link.prompt(app.session.clone(), text)?;
     }
-    let mut terminal = ratatui::init();
-    enter_input_modes();
-    let restore_terminal = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        leave_input_modes();
-        restore_terminal(info);
-    }));
     let mut spin = tokio::time::interval(SPIN_INTERVAL);
     spin.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let result = loop {
+    loop {
         if let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
             break Err(Error::into_internal_error(error));
         }
@@ -1198,6 +1241,10 @@ pub async fn run(
                 Action::None
             },
         };
+        let action = match action {
+            Action::Prompt(_) | Action::Cancel | Action::Change(_) if app.exited => Action::None,
+            action => action,
+        };
         let outcome = match action {
             Action::None => Ok(()),
             Action::Copy(text) => {
@@ -1213,8 +1260,7 @@ pub async fn run(
             Action::Edit(text) => {
                 let editor =
                     editor::pick(std::env::var("VISUAL").ok(), std::env::var("EDITOR").ok());
-                let result =
-                    with_terminal_suspended(&mut terminal, || editor::edit(&editor, &text));
+                let result = with_terminal_suspended(terminal, || editor::edit(&editor, &text));
                 app.finish_edit(result);
                 Ok(())
             }
@@ -1222,9 +1268,27 @@ pub async fn run(
         if let Err(error) = outcome {
             break Err(error);
         }
-    };
-    restore();
-    result
+    }
+}
+
+async fn open_session(
+    link: &Link,
+    start: Start,
+    cwd: &Path,
+    settings: &mut Settings,
+) -> Result<SessionId, Error> {
+    match start {
+        Start::New => {
+            let response = link.new_session(cwd.to_path_buf()).await?;
+            settings.open(response.config_options, response.modes);
+            Ok(response.session_id)
+        }
+        Start::Load(id) => {
+            let response = link.load_session(id.clone(), cwd.to_path_buf()).await?;
+            settings.open(response.config_options, response.modes);
+            Ok(id)
+        }
+    }
 }
 
 /// Hand the terminal to a child process: leave the alternate screen and raw
@@ -1256,7 +1320,7 @@ fn leave_input_modes() {
     let _ = crossterm::execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
 }
 
-pub fn restore() {
+fn restore() {
     leave_input_modes();
     ratatui::restore();
 }
@@ -1366,6 +1430,7 @@ mod tests {
             rendered: ui::Rendered::default(),
             cwd: PathBuf::new(),
             auto_allow: false,
+            exited: false,
         }
     }
 
@@ -1611,6 +1676,7 @@ mod tests {
             status: ToolCallStatus::Completed,
             locations: Vec::new(),
             content: vec![ToolCallContent::Diff(diff)],
+            cancelled: false,
             children: Vec::new(),
         };
         app.transcript.entries.push(Entry::Tool(tool));
@@ -2913,5 +2979,62 @@ mod tests {
         assert!(screen.contains('…'));
         let area = app.menu_area.expect("the box is drawn");
         assert!(area.width <= 60);
+    }
+
+    #[test]
+    fn an_exited_agent_cannot_be_sent_a_prompt_and_the_rule_says_so() {
+        let mut app = with_settings();
+        app.event(Event::Exited(
+            "Process exited with exit status: 3: boom".to_string(),
+        ));
+        type_text(&mut app, "hello");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert_eq!(app.input, "hello");
+        let screen = header_rows_all(&mut app, 100);
+        assert!(
+            screen.contains("agent exited: exit status: 3: boom"),
+            "{screen}"
+        );
+        assert!(screen.contains("the agent has exited"), "{screen}");
+    }
+
+    #[test]
+    fn an_exit_closes_the_permission_box_and_ctrl_c_twice_still_quits() {
+        let mut app = with_settings();
+        open_permission(&mut app);
+        app.event(Event::Exited("gone".to_string()));
+        assert!(app.permission.is_none());
+        let start = Instant::now();
+        app.key(ctrl('c'), start);
+        assert!(matches!(app.key(ctrl('c'), start), Action::Quit));
+    }
+
+    #[test]
+    fn an_exit_while_the_agent_works_ends_the_turn_and_cancels_the_running_call() {
+        use agent_client_protocol::v1::schema::{SessionUpdate, ToolCall, ToolCallStatus};
+
+        let mut app = with_settings();
+        app.transcript.prompt("go".to_string());
+        app.event(Event::Update(Box::new(SessionUpdate::ToolCall(
+            ToolCall::new("c1", "Read it").status(ToolCallStatus::InProgress),
+        ))));
+        app.event(Event::Exited("gone".to_string()));
+        assert!(!app.transcript.in_flight);
+        let screen = header_rows_all(&mut app, 100);
+        assert!(screen.contains("cancelled"), "{screen}");
+        assert!(!screen.contains("running"), "{screen}");
+    }
+
+    #[test]
+    fn the_waiting_screen_shows_its_message_in_the_middle() {
+        let mut terminal = Terminal::new(TestBackend::new(40, 11)).unwrap();
+        terminal
+            .draw(|frame| ui::draw_waiting(frame, "starting claude…"))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let row: String = (0..40)
+            .map(|x| buffer[(x, 5)].symbol().to_string())
+            .collect();
+        assert!(row.contains("starting claude…"), "{row}");
     }
 }

@@ -28,6 +28,9 @@ pub enum Event {
     Tokens(Usage),
     Setting(Result<Applied, Error>),
     Done(Result<StopReason, Error>),
+
+    /// The agent's connection ended, with the reason as text.
+    Exited(String),
 }
 
 /// A setting to change.
@@ -164,14 +167,30 @@ fn mcp_servers() -> Vec<McpServer> {
     }
 }
 
+/// The text of an error, with the detail the SDK puts in `data` when that is
+/// a string.
+pub fn describe(error: &Error) -> String {
+    match &error.data {
+        Some(serde_json::Value::String(detail)) => detail.clone(),
+        _ => error.to_string(),
+    }
+}
+
+/// Connect to `agent` and run `app` on the link. The app keeps running when
+/// the agent's connection ends first: it gets an `Event::Exited` and the
+/// requests it sends fail. An error from the connection names `command`.
 pub async fn run(
     agent: impl ConnectTo<Client> + 'static,
+    command: &str,
     app: impl AsyncFnOnce(Link) -> Result<(), Error>,
 ) -> Result<(), Error> {
     let (tx, events) = mpsc::unbounded_channel();
     let updates = tx.clone();
     let permissions = tx.clone();
-    Client
+    let exits = tx.clone();
+    let (link_tx, link_rx) = oneshot::channel();
+    let (finish_tx, finish_rx) = oneshot::channel::<()>();
+    let connection = Client
         .v1()
         .name("coax")
         .on_receive_notification(
@@ -214,8 +233,47 @@ pub async fn run(
             },
             on_receive_request!(),
         )
-        .connect_with(agent, async |cx: ConnectionTo<Agent>| {
-            app(Link { cx, events, tx }).await
-        })
-        .await
+        .connect_with(agent, async move |cx: ConnectionTo<Agent>| {
+            let _ = link_tx.send(cx);
+            let _ = finish_rx.await;
+            Ok(())
+        });
+    let app = async {
+        let cx = link_rx
+            .await
+            .map_err(|_| Error::internal_error().data("the connection never opened"))?;
+        app(Link { cx, events, tx }).await
+    };
+    tokio::pin!(connection, app);
+
+    let mut ended = None;
+    let result = loop {
+        tokio::select! {
+            result = &mut app => break result,
+            result = &mut connection, if ended.is_none() => {
+                let error = match &result {
+                    Ok(()) => "the agent closed the connection".to_string(),
+                    Err(error) => describe(error),
+                };
+                let _ = exits.send(Event::Exited(error));
+                ended = Some(result);
+            }
+        }
+    };
+    let _ = finish_tx.send(());
+    let showed_exit = ended.is_some();
+    let connection = match ended {
+        Some(result) => result,
+        None => connection.await,
+    };
+    match (result, connection) {
+        (Ok(()), _) if showed_exit => Ok(()),
+        (Ok(()), connection) => connection.map_err(|error| named(&error, command)),
+        (Err(_), Err(error)) => Err(named(&error, command)),
+        (Err(error), Ok(())) => Err(error),
+    }
+}
+
+fn named(error: &Error, command: &str) -> Error {
+    Error::internal_error().data(format!("{command}: {}", describe(error)))
 }

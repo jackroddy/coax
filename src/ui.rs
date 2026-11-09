@@ -65,11 +65,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_menu(frame, app);
 }
 
+/// A screen that says only `message`, centred and dim, while a session opens.
+pub fn draw_waiting(frame: &mut Frame, message: &str) {
+    let area = frame.area();
+    let row = Rect::new(
+        area.x,
+        area.y + area.height / 2,
+        area.width,
+        1.min(area.height),
+    );
+    frame.render_widget(
+        Paragraph::new(cut(message, area.width as usize))
+            .centered()
+            .style(dim()),
+        row,
+    );
+}
+
 /// The rule under the prompt, carrying the exit guard's message while armed.
 fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
     let Some(guard) = app.guard else {
         return match &app.unknown {
             Some(message) => draw_notice_rule(frame, area, message),
+            None if app.exited => draw_notice_rule(frame, area, "the agent has exited"),
             None => draw_rule(frame, area),
         };
     };
@@ -840,6 +858,11 @@ fn tool_rows(
             Style::new().fg(palette::get().red),
         ),
         _ => (dim(), "pending", dim()),
+    };
+    let (dot, status, status_style) = if tool.cancelled {
+        (dim(), "cancelled", dim())
+    } else {
+        (dot, status, status_style)
     };
     let head = [
         Span::styled("● ", dot),
@@ -1680,6 +1703,7 @@ mod tests {
             status: ToolCallStatus::Completed,
             locations: vec![location],
             content: Vec::new(),
+            cancelled: false,
             children: Vec::new(),
         }
     }

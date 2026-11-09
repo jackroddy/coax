@@ -13,6 +13,9 @@ pub struct Tool {
     pub locations: Vec<ToolCallLocation>,
     pub content: Vec<ToolCallContent>,
 
+    /// Whether the turn ended or the agent exited before the call finished.
+    pub cancelled: bool,
+
     /// What a subagent started by this call did, in arrival order.
     pub children: Vec<Child>,
 }
@@ -42,6 +45,9 @@ pub enum Entry {
     Notice(String),
 }
 
+/// How many of the agent's last stderr lines an exit notice shows.
+const STDERR_LINES: usize = 3;
+
 #[derive(Default)]
 pub struct Transcript {
     pub entries: Vec<Entry>,
@@ -59,6 +65,49 @@ impl Transcript {
     pub fn finished(&mut self, stop: StopReason) {
         self.in_flight = false;
         self.last_stop = Some(stop);
+        if stop == StopReason::Cancelled {
+            self.cancel_running();
+        }
+    }
+
+    /// End the turn after the agent's connection ended. `reason` is the
+    /// agent's last words: a status on its first line, then what it wrote
+    /// to stderr.
+    pub fn agent_exited(&mut self, reason: &str) {
+        self.in_flight = false;
+        self.cancel_running();
+        let reason = reason
+            .strip_prefix("Process exited with ")
+            .unwrap_or(reason);
+        let mut lines = reason.lines().filter(|line| !line.trim().is_empty());
+        let head = lines.next().unwrap_or_default();
+        self.notice(format!("agent exited: {head}"));
+        let rest: Vec<&str> = lines.collect();
+        for line in &rest[rest.len().saturating_sub(STDERR_LINES)..] {
+            self.notice(line.trim().to_string());
+        }
+    }
+
+    /// Mark every call that has not finished as cancelled.
+    pub fn cancel_running(&mut self) {
+        fn mark(tool: &mut Tool) {
+            if matches!(
+                tool.status,
+                ToolCallStatus::Pending | ToolCallStatus::InProgress
+            ) {
+                tool.cancelled = true;
+            }
+            for child in &mut tool.children {
+                if let Child::Tool(child) = child {
+                    mark(child);
+                }
+            }
+        }
+        for entry in &mut self.entries {
+            if let Entry::Tool(tool) = entry {
+                mark(tool);
+            }
+        }
     }
 
     pub fn permission(&mut self, update: ToolCallUpdate, choice: String) {
@@ -159,6 +208,7 @@ impl Transcript {
         }
         if let Some(status) = fields.status {
             tool.status = status;
+            tool.cancelled = false;
         }
         if let Some(locations) = fields.locations {
             tool.locations = locations;
@@ -212,6 +262,7 @@ fn tool(call: ToolCall) -> Tool {
         status: call.status,
         locations: call.locations,
         content: call.content,
+        cancelled: false,
         children: Vec::new(),
     }
 }
@@ -340,5 +391,43 @@ mod tests {
             unreachable!()
         };
         assert!(matches!(&task.children[0], Child::Tool(call) if call.title == "Read it"));
+    }
+
+    #[test]
+    fn a_cancelled_turn_marks_the_calls_still_running_cancelled() {
+        let mut transcript = Transcript::default();
+        transcript.apply(SessionUpdate::ToolCall(
+            ToolCall::new("t1", "Task").status(ToolCallStatus::InProgress),
+        ));
+        let mut child = ToolCall::new("c1", "Read").status(ToolCallStatus::Pending);
+        child.meta = Some(tagged("t1"));
+        transcript.apply(SessionUpdate::ToolCall(child));
+        transcript.apply(SessionUpdate::ToolCall(
+            ToolCall::new("t2", "Done").status(ToolCallStatus::Completed),
+        ));
+        transcript.finished(StopReason::Cancelled);
+        let Entry::Tool(task) = &transcript.entries[0] else {
+            unreachable!()
+        };
+        assert!(task.cancelled);
+        assert!(matches!(&task.children[0], Child::Tool(call) if call.cancelled));
+        assert!(matches!(&transcript.entries[1], Entry::Tool(call) if !call.cancelled));
+    }
+
+    #[test]
+    fn an_exit_notice_gives_the_status_and_the_last_stderr_lines() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("go".to_string());
+        transcript.agent_exited("Process exited with exit status: 1: a\nb\nc\nd\ne");
+        assert!(!transcript.in_flight);
+        let notices: Vec<&str> = transcript
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Notice(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices, ["agent exited: exit status: 1: a", "c", "d", "e"]);
     }
 }

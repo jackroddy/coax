@@ -36,7 +36,7 @@ async fn one_prompt(mut link: Link, text: &str) -> Result<Transcript, Error> {
                     .unwrap();
                 transcript.permission(*update, allow.name.clone());
             }
-            Event::Tokens(_) | Event::Setting(_) => {}
+            Event::Tokens(_) | Event::Setting(_) | Event::Exited(_) => {}
             Event::Done(result) => {
                 transcript.finished(result?);
                 break;
@@ -97,7 +97,7 @@ fn check_hello(transcript: &Transcript) {
 #[tokio::test]
 async fn the_hello_scenario_builds_the_expected_transcript_in_process() {
     let scenario = Scenario::parse(HELLO).unwrap();
-    let transcript = acp::run(fake::agent(scenario), async |link| {
+    let transcript = acp::run(fake::agent(scenario), "fake", async |link| {
         one_prompt(link, "hello").await.map(|t| {
             check_hello(&t);
         })
@@ -110,7 +110,7 @@ async fn the_hello_scenario_builds_the_expected_transcript_in_process() {
 async fn the_fake_agent_binary_speaks_the_same_scenario_over_stdio() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/hello.json");
     let agent = AcpAgent::from_args([env!("CARGO_BIN_EXE_coax-fake-agent"), path]).unwrap();
-    acp::run(agent, async |link| {
+    acp::run(agent, "fake", async |link| {
         let transcript = one_prompt(link, "hello").await?;
         check_hello(&transcript);
         Ok(())
@@ -122,7 +122,7 @@ async fn the_fake_agent_binary_speaks_the_same_scenario_over_stdio() {
 #[tokio::test]
 async fn a_prompt_past_the_last_act_gets_a_message_and_ends_the_turn() {
     let scenario = Scenario::parse(r#"{"acts": []}"#).unwrap();
-    acp::run(fake::agent(scenario), async |link| {
+    acp::run(fake::agent(scenario), "fake", async |link| {
         let transcript = one_prompt(link, "anyone there").await?;
         assert!(
             matches!(&transcript.entries[1], Entry::Agent(text) if text.contains("no more acts"))
@@ -145,7 +145,7 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
         ]}]}"#,
     )
     .unwrap();
-    acp::run(fake::agent(scenario), async |mut link| {
+    acp::run(fake::agent(scenario), "fake", async |mut link| {
         link.initialize().await?;
         let session = link.new_session(std::env::temp_dir()).await?.session_id;
         link.prompt(session.clone(), "go".to_string())?;
@@ -161,7 +161,7 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
                     }
                 }
                 Event::Permission { .. } => {}
-                Event::Tokens(_) | Event::Setting(_) => {}
+                Event::Tokens(_) | Event::Setting(_) | Event::Exited(_) => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
@@ -191,7 +191,7 @@ const RESUME: &str = include_str!("../scenarios/resume.json");
 #[tokio::test]
 async fn the_fake_agent_lists_the_sessions_in_its_scenario() {
     let scenario = Scenario::parse(RESUME).unwrap();
-    acp::run(fake::agent(scenario), async |link| {
+    acp::run(fake::agent(scenario), "fake", async |link| {
         let init = link.initialize().await?;
         assert!(init.agent_capabilities.load_session);
         assert!(init.agent_capabilities.session_capabilities.list.is_some());
@@ -215,7 +215,7 @@ async fn the_fake_agent_lists_the_sessions_in_its_scenario() {
 #[tokio::test]
 async fn a_scenario_with_no_sessions_advertises_neither_list_nor_load() {
     let scenario = Scenario::parse(HELLO).unwrap();
-    acp::run(fake::agent(scenario), async |link| {
+    acp::run(fake::agent(scenario), "fake", async |link| {
         let init = link.initialize().await?;
         assert!(!init.agent_capabilities.load_session);
         assert!(init.agent_capabilities.session_capabilities.list.is_none());
@@ -229,7 +229,7 @@ async fn a_scenario_with_no_sessions_advertises_neither_list_nor_load() {
 async fn loading_a_session_replays_its_history_into_the_transcript() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/resume.json");
     let agent = AcpAgent::from_args([env!("CARGO_BIN_EXE_coax-fake-agent"), path]).unwrap();
-    acp::run(agent, async |mut link| {
+    acp::run(agent, "fake", async |mut link| {
         link.initialize().await?;
         link.load_session("earlier-1".into(), std::env::temp_dir())
             .await?;
@@ -253,7 +253,7 @@ async fn loading_a_session_replays_its_history_into_the_transcript() {
 #[tokio::test]
 async fn loading_an_unknown_session_is_an_error() {
     let scenario = Scenario::parse(RESUME).unwrap();
-    acp::run(fake::agent(scenario), async |link| {
+    acp::run(fake::agent(scenario), "fake", async |link| {
         link.initialize().await?;
         let loaded = link
             .load_session("missing".into(), std::env::temp_dir())
@@ -268,7 +268,7 @@ async fn loading_an_unknown_session_is_an_error() {
 #[tokio::test]
 async fn a_prompt_after_loading_plays_the_scenarios_acts() {
     let scenario = Scenario::parse(RESUME).unwrap();
-    acp::run(fake::agent(scenario), async |mut link| {
+    acp::run(fake::agent(scenario), "fake", async |mut link| {
         link.initialize().await?;
         link.load_session("earlier-2".into(), std::env::temp_dir())
             .await?;
@@ -285,7 +285,7 @@ async fn a_prompt_after_loading_plays_the_scenarios_acts() {
                         ))
                         .unwrap();
                 }
-                Event::Tokens(_) | Event::Setting(_) => {}
+                Event::Tokens(_) | Event::Setting(_) | Event::Exited(_) => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
@@ -302,7 +302,7 @@ async fn a_prompt_after_loading_plays_the_scenarios_acts() {
 #[tokio::test]
 async fn a_new_session_offers_the_scenarios_settings_in_header_order() {
     let scenario = Scenario::parse(RESUME).unwrap();
-    acp::run(fake::agent(scenario), async |link| {
+    acp::run(fake::agent(scenario), "fake", async |link| {
         link.initialize().await?;
         let response = link.new_session(std::env::temp_dir()).await?;
         let mut settings = Settings::default();
@@ -319,7 +319,7 @@ async fn a_new_session_offers_the_scenarios_settings_in_header_order() {
 #[tokio::test]
 async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error() {
     let scenario = Scenario::parse(RESUME).unwrap();
-    acp::run(fake::agent(scenario), async |mut link| {
+    acp::run(fake::agent(scenario), "fake", async |mut link| {
         link.initialize().await?;
         let session = link.new_session(std::env::temp_dir()).await?.session_id;
         let choose = |id: &str, value: &str| Change::Config {
@@ -363,7 +363,7 @@ async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error(
 #[tokio::test]
 async fn a_turn_reports_the_context_the_cost_and_the_session_tokens() {
     let scenario = Scenario::parse(RESUME).unwrap();
-    acp::run(fake::agent(scenario), async |mut link| {
+    acp::run(fake::agent(scenario), "fake", async |mut link| {
         link.initialize().await?;
         let session = link.new_session(std::env::temp_dir()).await?.session_id;
         link.prompt(session, "hello".to_string())?;
@@ -380,7 +380,7 @@ async fn a_turn_reports_the_context_the_cost_and_the_session_tokens() {
                         .unwrap();
                 }
                 Event::Done(_) => break,
-                Event::Setting(_) => {}
+                Event::Setting(_) | Event::Exited(_) => {}
             }
         }
         let context = settings.context.unwrap();
@@ -400,7 +400,7 @@ async fn subagent_transcript() -> Transcript {
     let scenario = Scenario::parse(SUBAGENTS).unwrap();
     let saved = std::sync::Arc::new(std::sync::Mutex::new(None));
     let keep = saved.clone();
-    acp::run(fake::agent(scenario), async move |link| {
+    acp::run(fake::agent(scenario), "fake", async move |link| {
         *keep.lock().unwrap() = Some(one_prompt(link, "go").await?);
         Ok(())
     })
@@ -457,7 +457,7 @@ async fn text_never_merges_across_a_subagent_boundary() {
 #[tokio::test]
 async fn a_new_session_advertises_the_scenarios_commands() {
     let scenario = Scenario::parse(RESUME).unwrap();
-    acp::run(fake::agent(scenario), async |mut link| {
+    acp::run(fake::agent(scenario), "fake", async |mut link| {
         link.initialize().await?;
         link.new_session(std::env::temp_dir()).await?;
         let Some(Event::Update(update)) = link.events.recv().await else {
@@ -482,7 +482,7 @@ async fn an_edits_diff_and_a_runs_output_arrive_in_the_calls_content() {
     let scenario = Scenario::parse(BLOCKS).unwrap();
     let saved = std::sync::Arc::new(std::sync::Mutex::new(None));
     let keep = saved.clone();
-    acp::run(fake::agent(scenario), async move |link| {
+    acp::run(fake::agent(scenario), "fake", async move |link| {
         *keep.lock().unwrap() = Some(one_prompt(link, "go").await?);
         Ok(())
     })
@@ -517,4 +517,45 @@ async fn an_edits_diff_and_a_runs_output_arrive_in_the_calls_content() {
     assert!(
         matches!(&content.content, ContentBlock::Text(text) if text.text.starts_with("```console"))
     );
+}
+
+#[tokio::test]
+async fn an_agent_that_exits_mid_turn_ends_the_link_with_its_status_and_stderr() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/exits.json");
+    let agent = AcpAgent::from_args([env!("CARGO_BIN_EXE_coax-fake-agent"), path]).unwrap();
+    let mut reason = String::new();
+    acp::run(agent, "fake", async |mut link| {
+        link.initialize().await?;
+        let session = link.new_session(std::env::temp_dir()).await?.session_id;
+        link.prompt(session, "go".to_string())?;
+        while let Some(event) = link.events.recv().await {
+            match event {
+                Event::Exited(text) => {
+                    reason = text;
+                    return Ok(());
+                }
+                Event::Done(_) => panic!("a dead agent answered the prompt"),
+                _ => {}
+            }
+        }
+        panic!("the events ended without an exit");
+    })
+    .await
+    .unwrap();
+    assert!(reason.contains("exit status: 3"), "{reason}");
+    assert!(reason.contains("second line"), "{reason}");
+}
+
+#[tokio::test]
+async fn a_command_that_does_not_exist_is_named_in_the_error() {
+    let agent = AcpAgent::from_args(["coax-no-such-agent"]).unwrap();
+    let error = acp::run(agent, "coax-no-such-agent", async |link| {
+        link.initialize().await?;
+        Ok(())
+    })
+    .await
+    .unwrap_err();
+    let text = acp::describe(&error);
+    assert!(text.contains("coax-no-such-agent"), "{text}");
+    assert!(text.contains("No such file"), "{text}");
 }

@@ -110,13 +110,13 @@ async fn main() {
         }
     };
     if let Err(error) = result {
-        app::restore();
         fail(1, &error.to_string());
     }
 }
 
 async fn open(agent: AcpAgent, name: Option<String>, opening: Opening) -> Result<(), Error> {
-    acp::run(agent, async |link| {
+    let command = agent.config().command().display().to_string();
+    acp::run(agent, &command, async |link| {
         let init = link.initialize().await?;
         app::run(link, init, name, opening).await
     })

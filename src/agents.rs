@@ -15,6 +15,16 @@ use crate::config::Config;
 pub struct Listing {
     pub agent: String,
     pub sessions: Vec<SessionInfo>,
+    pub failure: Option<Failure>,
+}
+
+/// Why an agent has no sessions to show.
+pub enum Failure {
+    /// The agent did not start or did not initialize, so it cannot be opened.
+    Start(String),
+
+    /// The agent started and could not list its sessions.
+    List(String),
 }
 
 /// Every configured agent, started at once. Each runs on a local task that
@@ -72,22 +82,23 @@ async fn connect(
     listings: mpsc::UnboundedSender<Listing>,
     opening: oneshot::Receiver<Opening>,
 ) -> Result<(), Error> {
-    let result = acp::run(agent, async |link: Link| {
-        let init = match link.initialize().await {
-            Ok(init) => init,
-            Err(error) => {
-                none_listed(&listings, &name);
-                return Err(error);
+    let command = agent.config().command().display().to_string();
+    let listed = std::cell::Cell::new(false);
+    let result = acp::run(agent, &command, async |link: Link| {
+        let init = link.initialize().await?;
+        let (sessions, failure) = if can_list_and_load(&init) {
+            match link.list_sessions(cwd).await {
+                Ok(sessions) => (sessions, None),
+                Err(error) => (Vec::new(), Some(Failure::List(acp::describe(&error)))),
             }
-        };
-        let sessions = if can_list_and_load(&init) {
-            link.list_sessions(cwd).await.unwrap_or_default()
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
+        listed.set(true);
         let _ = listings.send(Listing {
             agent: name.clone(),
             sessions,
+            failure,
         });
         match opening.await {
             Ok(opening) => app::run(link, init, Some(name.clone()), opening).await,
@@ -95,17 +106,16 @@ async fn connect(
         }
     })
     .await;
-    if result.is_err() {
-        none_listed(&listings, &name);
+    if let Err(error) = &result
+        && !listed.get()
+    {
+        let _ = listings.send(Listing {
+            agent: name,
+            sessions: Vec::new(),
+            failure: Some(Failure::Start(acp::describe(error))),
+        });
     }
     result
-}
-
-fn none_listed(listings: &mpsc::UnboundedSender<Listing>, name: &str) {
-    let _ = listings.send(Listing {
-        agent: name.to_string(),
-        sessions: Vec::new(),
-    });
 }
 
 fn can_list_and_load(init: &InitializeResponse) -> bool {

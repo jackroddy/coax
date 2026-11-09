@@ -246,6 +246,12 @@ async fn play(
                     }
                 }
             }
+            Step::Exit(exit) => {
+                if let Some(text) = exit.stderr {
+                    eprintln!("{text}");
+                }
+                std::process::exit(exit.code);
+            }
             Step::Stop(reason) => {
                 return responder.respond(PromptResponse::new(reason).usage(usage));
             }

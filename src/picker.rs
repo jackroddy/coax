@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{Instant, timeout_at};
 use unicode_width::UnicodeWidthStr;
 
-use crate::agents::Listing;
+use crate::agents::{Failure, Listing};
 use crate::app::Keys;
 use crate::config::Config;
 use crate::header;
@@ -32,6 +32,9 @@ const RECENT_DAYS: i64 = 7;
 pub struct Picker<'a> {
     names: Vec<&'a str>,
     commands: Vec<String>,
+
+    /// Why each agent has no sessions, when it has none for a reason.
+    failures: Vec<Option<Failure>>,
     default: Option<usize>,
     sessions: Vec<SessionRow>,
     selected: Selected,
@@ -88,6 +91,7 @@ impl<'a> Picker<'a> {
             .as_deref()
             .and_then(|default| names.iter().position(|name| *name == default));
         Picker {
+            failures: names.iter().map(|_| None).collect(),
             names,
             commands,
             default,
@@ -103,6 +107,7 @@ impl<'a> Picker<'a> {
         let Some(agent) = self.names.iter().position(|name| *name == listing.agent) else {
             return;
         };
+        self.failures[agent] = listing.failure;
         self.sessions.retain(|row| row.agent != agent);
         self.sessions
             .extend(listing.sessions.into_iter().map(|info| SessionRow {
@@ -181,6 +186,11 @@ impl<'a> Picker<'a> {
                     agent: self.names[*agent],
                     id: id.clone(),
                 }),
+                Selected::Agent(index)
+                    if matches!(self.failures.get(*index), Some(Some(Failure::Start(_)))) =>
+                {
+                    None
+                }
                 Selected::Agent(index) => self.names.get(*index).map(|name| Choice::Agent(name)),
             },
             _ => None,
@@ -315,7 +325,12 @@ impl<'a> Picker<'a> {
             ""
         };
         let room = width.saturating_sub(2 + name_width + 2 + tail.width());
-        let command = ui::cut(&self.commands[index], room);
+        let command = match &self.failures[index] {
+            Some(Failure::Start(error)) => format!("failed: {}", first_line(error)),
+            Some(Failure::List(error)) => format!("sessions failed: {}", first_line(error)),
+            None => self.commands[index].clone(),
+        };
+        let command = ui::cut(&command, room);
         let used = 2 + name_width + 2 + command.width() + tail.width();
         let line = Line::from(vec![
             Span::raw(gutter),
@@ -333,6 +348,10 @@ impl<'a> Picker<'a> {
             line
         }
     }
+}
+
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or_default()
 }
 
 fn home_as_tilde(path: &str) -> String {
@@ -527,6 +546,7 @@ mod tests {
 
     fn listing_of(agent: &str, sessions: &[(&str, &str, &str)]) -> Listing {
         Listing {
+            failure: None,
             agent: agent.to_string(),
             sessions: sessions
                 .iter()
@@ -673,5 +693,58 @@ mod tests {
         assert_eq!(age(&at, start + 5 * 3_600), "5h ago");
         assert_eq!(age(&at, start + 2 * 86_400), "2d ago");
         assert_eq!(age(&at, start + 9 * 86_400), "2026-11-03");
+    }
+
+    fn failed(agent: &str, failure: Failure) -> Listing {
+        Listing {
+            failure: Some(failure),
+            ..listing_of(agent, &[])
+        }
+    }
+
+    fn screen(picker: &Picker) -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal.draw(|frame| picker.draw(frame, 0)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..20)
+            .map(|y| {
+                (0..80)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn an_agent_that_failed_to_start_shows_why_and_cannot_be_chosen() {
+        let config = config(None);
+        let mut picker = Picker::new(&config, Path::new("config.toml"));
+        picker.listing(failed(
+            "alpha",
+            Failure::Start("a: No such file".to_string()),
+        ));
+        assert!(screen(&picker).contains("failed: a: No such file"));
+        assert_eq!(picker.key(press(KeyCode::Enter)), None);
+        picker.key(press(KeyCode::Down));
+        assert_eq!(
+            picker.key(press(KeyCode::Enter)),
+            Some(Choice::Agent("beta"))
+        );
+    }
+
+    #[test]
+    fn an_agent_that_failed_to_list_still_starts() {
+        let config = config(None);
+        let mut picker = Picker::new(&config, Path::new("config.toml"));
+        picker.listing(failed("alpha", Failure::List("bad cursor".to_string())));
+        assert!(screen(&picker).contains("sessions failed: bad cursor"));
+        assert_eq!(
+            picker.key(press(KeyCode::Enter)),
+            Some(Choice::Agent("alpha"))
+        );
     }
 }
