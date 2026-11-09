@@ -3037,4 +3037,29 @@ mod tests {
             .collect();
         assert!(row.contains("starting claude…"), "{row}");
     }
+
+    #[test]
+    fn a_transcript_that_is_shorter_one_column_narrower_never_panics_the_scroll_bar() {
+        use agent_client_protocol::v1::schema::{ToolCall, ToolCallLocation, ToolKind};
+
+        let mut app = with_settings();
+        for n in 0..6 {
+            let call = ToolCall::new(format!("c{n}"), format!("Read file {n}"))
+                .kind(ToolKind::Read)
+                .status(agent_client_protocol::v1::schema::ToolCallStatus::Completed)
+                .locations(vec![ToolCallLocation::new(format!(
+                    "src/module_{n}/file.rs"
+                ))]);
+            app.transcript
+                .apply(agent_client_protocol::v1::schema::SessionUpdate::ToolCall(
+                    call,
+                ));
+        }
+        for width in 12..70 {
+            for height in 6..24 {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+            }
+        }
+    }
 }

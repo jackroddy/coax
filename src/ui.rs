@@ -548,8 +548,12 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
     let mut area = outer;
     let mut built = build_transcript(app, (area.width as usize).max(4));
     if built.lines.len() > height && area.width > 1 {
-        area.width -= 1;
-        built = build_transcript(app, (area.width as usize).max(4));
+        // a narrower layout can be shorter, as a tool row drops its location
+        let narrower = build_transcript(app, (area.width as usize - 1).max(4));
+        if narrower.lines.len() > height {
+            area.width -= 1;
+            built = narrower;
+        }
     }
     let Built {
         lines,
@@ -632,7 +636,7 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
     if area.width < outer.width {
         let bar = VBar {
             area: Rect::new(area.right(), area.y, 1, outer.height),
-            max: app.lines_seen - height,
+            max: app.lines_seen.saturating_sub(height),
         };
         draw_v_bar(frame, &bar, app);
         app.v_bar = Some(bar);
