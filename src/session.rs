@@ -20,6 +20,10 @@ pub struct Tool {
     /// The lines the call's diffs add and remove.
     pub changed: (usize, usize),
 
+    /// How many times `content` has been replaced, so a layout of it can be
+    /// reused until it changes.
+    pub revision: u32,
+
     /// Whether the call starts a subagent, though it may have no children
     /// yet, or none at all after a replay.
     pub agent: bool,
@@ -251,6 +255,7 @@ impl Transcript {
         if let Some(content) = fields.content {
             tool.changed = diff::size(&content);
             tool.content = content;
+            tool.revision += 1;
         }
     }
 }
@@ -300,6 +305,7 @@ fn tool(call: ToolCall) -> Tool {
         changed: diff::size(&call.content),
         content: call.content,
         cancelled: false,
+        revision: 0,
         agent: starts_subagent(call.meta.as_ref()),
         children: Vec::new(),
     }
@@ -571,5 +577,18 @@ mod tests {
         for entry in &transcript.entries {
             assert!(matches!(entry, Entry::Tool(tool) if tool.changed == (1, 1)));
         }
+    }
+
+    #[test]
+    fn a_call_counts_each_time_its_content_is_replaced() {
+        let mut transcript = Transcript::default();
+        transcript.apply(SessionUpdate::ToolCall(ToolCall::new("c1", "Run")));
+        for text in ["one", "two"] {
+            transcript.apply(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                "c1",
+                ToolCallUpdateFields::new().content(vec![ToolCallContent::from(text)]),
+            )));
+        }
+        assert!(matches!(&transcript.entries[0], Entry::Tool(tool) if tool.revision == 2));
     }
 }

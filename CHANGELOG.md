@@ -233,6 +233,12 @@ command line, the keys, and the scenario format the fake agent reads.
 - Panning a code block or table counts display columns. A wide character cut
   by the window's edge shows as a space, where before the rows came out a
   column or more off.
+- A long session no longer slows down. A transcript of 150 sections with code,
+  a table and two command calls each cost 15 ms a frame, and every event or
+  keystroke drew one. The transcript lays out only the entries on screen, keeps
+  the text layouts for both widths it measures, and caches the rows under
+  expanded edits and commands. A mouse move redraws only when the pointer
+  enters or leaves something it highlights.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

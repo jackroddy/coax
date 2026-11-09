@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::time::Instant;
@@ -164,7 +165,18 @@ fn draw_plan(frame: &mut Frame, area: Rect, app: &App) {
 /// Agent text laid out as markdown, kept per transcript entry.
 #[derive(Default)]
 pub struct Rendered {
-    entries: Vec<Option<Markdown>>,
+    /// The rows under an expanded edit or command call, by call.
+    expanded: HashMap<ToolCallId, ExpandedRows>,
+
+    /// Each entry's layouts at the two widths the transcript measures a
+    /// frame at, the latest first.
+    entries: Vec<[Option<Markdown>; 2]>,
+}
+
+struct ExpandedRows {
+    width: usize,
+    revision: u32,
+    rows: Vec<Line<'static>>,
 }
 
 struct Markdown {
@@ -206,7 +218,7 @@ const TABLE_WIDTH: usize = 1000;
 impl Rendered {
     /// The text a copy of block `key` (an entry and a block within it) takes.
     pub fn copy_text(&self, key: (usize, usize)) -> Option<&str> {
-        let markdown = self.entries.get(key.0)?.as_ref()?;
+        let markdown = self.entries.get(key.0)?.iter().flatten().next()?;
         markdown.parts.iter().find_map(|part| match part {
             Part::Block {
                 block,
@@ -217,20 +229,51 @@ impl Rendered {
         })
     }
 
+    /// The diff or output rows under an expanded call, indented, laid out
+    /// again only when the call's content or the width changes.
+    fn expanded(&mut self, tool: &Tool, inner: usize) -> &[Line<'static>] {
+        let fresh = matches!(
+            self.expanded.get(&tool.id),
+            Some(done) if done.width == inner && done.revision == tool.revision
+        );
+        if !fresh {
+            let mut rows = match tool.kind {
+                ToolKind::Edit => diff_rows(&tool.content, inner),
+                _ => output_rows(&tool.content, inner),
+            };
+            for row in &mut rows {
+                row.spans.insert(0, Span::raw(SUBAGENT_INDENT));
+            }
+            let done = ExpandedRows {
+                width: inner,
+                revision: tool.revision,
+                rows,
+            };
+            self.expanded.insert(tool.id.clone(), done);
+        }
+        &self.expanded[&tool.id].rows
+    }
+
     fn agent(&mut self, index: usize, text: &str, width: usize) -> &[Part] {
         if self.entries.len() <= index {
-            self.entries.resize_with(index + 1, || None);
+            self.entries.resize_with(index + 1, Default::default);
         }
-        let slot = &mut self.entries[index];
-        let fresh = matches!(slot, Some(done) if done.width == width && done.len == text.len());
+        let pair = &mut self.entries[index];
+        let at = pair
+            .iter()
+            .position(|slot| matches!(slot, Some(done) if done.width == width))
+            .unwrap_or(1);
+        let fresh =
+            matches!(&pair[at], Some(done) if done.width == width && done.len == text.len());
         if !fresh {
-            *slot = Some(Markdown {
+            pair[at] = Some(Markdown {
                 width,
                 len: text.len(),
                 parts: markdown(text, width),
             });
         }
-        slot.as_ref().map_or(&[], |done| &done.parts)
+        pair.swap(0, at);
+        pair[0].as_ref().map_or(&[], |done| &done.parts)
     }
 }
 
@@ -460,7 +503,10 @@ struct Built {
     folds: Vec<Fold>,
 }
 
-fn build_transcript(app: &mut App, width: usize) -> Built {
+/// The transcript laid out at `width`. Only the entries that reach the
+/// lines in `visible` get their rows, and the others get blank lines of the
+/// same height, since the screen never reads them.
+fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built {
     let usable = width - width / 10;
     let mut lines: Vec<Line> = Vec::new();
     let mut wides: Vec<Wide> = Vec::new();
@@ -476,9 +522,28 @@ fn build_transcript(app: &mut App, width: usize) -> Built {
             Entry::User(text) => lines.extend(bubble(text, width)),
             Entry::Agent(text) => {
                 let widest = (width * 9 / 10).max(5);
-                let visible = widest - 4;
+                let visible_width = widest - 4;
+                let parts = app.rendered.agent(index, text, visible_width);
+
+                // a frame's two border rows, then each part's rows and the
+                // scroll bar row under a block that pans
+                let height = 2 + parts
+                    .iter()
+                    .map(|part| match part {
+                        Part::Flow(flow) => flow.len(),
+                        Part::Block { rows, natural, .. } => {
+                            rows.len() + usize::from(*natural > visible_width)
+                        }
+                    })
+                    .sum::<usize>();
+                let first = lines.len();
+                if first >= visible.end || first + height <= visible.start {
+                    lines.extend(std::iter::repeat_n(Line::default(), height));
+                    lines.push(Line::default());
+                    continue;
+                }
                 let mut rows: Vec<Line<'static>> = Vec::new();
-                for part in app.rendered.agent(index, text, visible) {
+                for part in parts {
                     match part {
                         Part::Flow(flow) => rows.extend(flow.iter().cloned()),
                         Part::Block {
@@ -487,7 +552,7 @@ fn build_transcript(app: &mut App, width: usize) -> Built {
                             natural,
                             copy,
                         } => {
-                            let shown = (*natural).min(visible);
+                            let shown = (*natural).min(visible_width);
                             let max = natural - shown;
                             let key = (index, *block);
                             let offset = app.pans.get(&key).copied().unwrap_or(0).min(max);
@@ -538,7 +603,8 @@ fn build_transcript(app: &mut App, width: usize) -> Built {
             Entry::Tool(tool) => {
                 let expanded = app.expanded.contains(&tool.id);
                 let hovered = app.hover_fold.as_ref() == Some(&tool.id);
-                let (rows, head) = tool_view(tool, &app.cwd, usable, expanded, hovered);
+                let (rows, head) =
+                    tool_view(tool, &app.cwd, usable, expanded, hovered, &mut app.rendered);
                 if expandable(tool) {
                     folds.push(Fold {
                         id: tool.id.clone(),
@@ -576,29 +642,34 @@ fn build_transcript(app: &mut App, width: usize) -> Built {
 fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
     let height = outer.height as usize;
     let mut area = outer;
-    let mut built = build_transcript(app, (area.width as usize).max(4));
-    if built.lines.len() > height && area.width > 1 {
+    let mut width = (area.width as usize).max(4);
+    let mut total = build_transcript(app, width, 0..0).lines.len();
+    if total > height && area.width > 1 {
         // a narrower layout can be shorter, as a tool row drops its location
-        let narrower = build_transcript(app, (area.width as usize - 1).max(4));
-        if narrower.lines.len() > height {
+        let narrower = build_transcript(app, (area.width as usize - 1).max(4), 0..0)
+            .lines
+            .len();
+        if narrower > height {
             area.width -= 1;
-            built = narrower;
+            width = (area.width as usize).max(4);
+            total = narrower;
         }
     }
+    app.page = height.saturating_sub(1).max(1);
+    if app.scroll > 0 {
+        app.scroll += total.saturating_sub(app.lines_seen);
+    }
+    app.lines_seen = total;
+    app.scroll = app.scroll.min(total.saturating_sub(height));
+    let end = total - app.scroll;
+    let start = end.saturating_sub(height);
     let Built {
         lines,
         wides,
         copies,
         folds,
-    } = built;
-    app.page = height.saturating_sub(1).max(1);
-    if app.scroll > 0 {
-        app.scroll += lines.len().saturating_sub(app.lines_seen);
-    }
-    app.lines_seen = lines.len();
-    app.scroll = app.scroll.min(lines.len().saturating_sub(height));
-    let end = lines.len() - app.scroll;
-    let start = end.saturating_sub(height);
+    } = build_transcript(app, width, start..end);
+    debug_assert_eq!(lines.len(), total);
     app.folds = folds
         .iter()
         .filter_map(|fold| {
@@ -983,6 +1054,7 @@ fn tool_view(
     width: usize,
     expanded: bool,
     hovered: bool,
+    rendered: &mut Rendered,
 ) -> (Vec<Line<'static>>, usize) {
     if !expandable(tool) {
         let lines = tool_block(tool, cwd, width);
@@ -1003,14 +1075,7 @@ fn tool_view(
     lines[0] = with_marker(lines[0].clone(), width, expanded, hovered);
     if expanded && tool.children.is_empty() {
         let inner = width.saturating_sub(SUBAGENT_INDENT.len());
-        let mut rows = match tool.kind {
-            ToolKind::Edit => diff_rows(&tool.content, inner),
-            _ => output_rows(&tool.content, inner),
-        };
-        for row in &mut rows {
-            row.spans.insert(0, Span::raw(SUBAGENT_INDENT));
-        }
-        lines.extend(rows);
+        lines.extend_from_slice(rendered.expanded(tool, inner));
     }
     (lines, head)
 }
@@ -1674,6 +1739,7 @@ mod tests {
             content: Vec::new(),
             cancelled: false,
             changed: (0, 0),
+            revision: 0,
             agent: false,
             children: Vec::new(),
         }
@@ -2146,9 +2212,9 @@ mod tests {
         edit.content = diff_of(Some("a"), "b");
         edit.changed = crate::diff::size(&edit.content);
         let cwd = Path::new("/work");
-        let (folded, head) = tool_view(&edit, cwd, 60, false, false);
+        let (folded, head) = tool_view(&edit, cwd, 60, false, false, &mut Rendered::default());
         assert_eq!((folded.len(), head), (2, 2));
-        let (open, head) = tool_view(&edit, cwd, 60, true, false);
+        let (open, head) = tool_view(&edit, cwd, 60, true, false, &mut Rendered::default());
         assert_eq!(head, 2);
         assert_eq!(&plain(&open)[2..], ["    - a", "    + b"]);
     }
@@ -2163,7 +2229,14 @@ mod tests {
         run.kind = ToolKind::Execute;
         run.locations.clear();
         run.content = text_content("```console\n$ cargo run\nhello\n```");
-        let (open, head) = tool_view(&run, Path::new("/work"), 60, true, false);
+        let (open, head) = tool_view(
+            &run,
+            Path::new("/work"),
+            60,
+            true,
+            false,
+            &mut Rendered::default(),
+        );
         assert_eq!(head, 1);
         assert_eq!(
             &plain(&open)[1..],
@@ -2182,7 +2255,14 @@ mod tests {
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
         edit.changed = crate::diff::size(&edit.content);
-        let (rows, _) = tool_view(&edit, Path::new("/work"), 40, false, false);
+        let (rows, _) = tool_view(
+            &edit,
+            Path::new("/work"),
+            40,
+            false,
+            false,
+            &mut Rendered::default(),
+        );
         assert_eq!(rows[0].width(), 40);
         assert_eq!(last_cell(&rows[0]), ("▸".to_string(), dim()));
     }
@@ -2193,7 +2273,14 @@ mod tests {
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
         edit.changed = crate::diff::size(&edit.content);
-        let (rows, _) = tool_view(&edit, Path::new("/work"), 40, true, true);
+        let (rows, _) = tool_view(
+            &edit,
+            Path::new("/work"),
+            40,
+            true,
+            true,
+            &mut Rendered::default(),
+        );
         let (glyph, style) = last_cell(&rows[0]);
         assert_eq!(glyph, "▾");
         assert_eq!(style.fg, Some(palette::get().accent));
@@ -2201,12 +2288,26 @@ mod tests {
 
     #[test]
     fn a_subagent_call_has_the_marker_and_a_call_with_nothing_to_expand_has_none() {
-        let (rows, head) = tool_view(&task(), Path::new("/work"), 60, false, false);
+        let (rows, head) = tool_view(
+            &task(),
+            Path::new("/work"),
+            60,
+            false,
+            false,
+            &mut Rendered::default(),
+        );
         assert_eq!(head, 2);
         assert!(rows[0].to_string().ends_with('▸'));
         assert_eq!(rows[0].width(), 60);
         let read = tool("Read src/main.rs", "/work/src/main.rs", None);
-        let (rows, _) = tool_view(&read, Path::new("/work"), 60, false, false);
+        let (rows, _) = tool_view(
+            &read,
+            Path::new("/work"),
+            60,
+            false,
+            false,
+            &mut Rendered::default(),
+        );
         assert!(!rows[0].to_string().ends_with(['▸', '▾']));
     }
 
@@ -2216,7 +2317,14 @@ mod tests {
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
         edit.changed = crate::diff::size(&edit.content);
-        let (rows, _) = tool_view(&edit, Path::new("/work"), 24, false, false);
+        let (rows, _) = tool_view(
+            &edit,
+            Path::new("/work"),
+            24,
+            false,
+            false,
+            &mut Rendered::default(),
+        );
         assert_eq!(rows[0].width(), 24);
         assert!(rows[0].to_string().contains('…'));
         assert!(rows[0].to_string().ends_with('▸'));
@@ -2317,7 +2425,14 @@ mod tests {
         replayed.children.clear();
         replayed.agent = true;
         replayed.status = ToolCallStatus::Completed;
-        let (lines, head) = tool_view(&replayed, Path::new("/work"), 60, false, false);
+        let (lines, head) = tool_view(
+            &replayed,
+            Path::new("/work"),
+            60,
+            false,
+            false,
+            &mut Rendered::default(),
+        );
         let text = plain(&lines);
         assert!(text[0].starts_with("● agent"), "{text:?}");
         assert!(!text[0].contains('▸'), "{text:?}");
@@ -2325,7 +2440,32 @@ mod tests {
         assert!(!expandable(&replayed));
 
         replayed.agent = false;
-        let (lines, _) = tool_view(&replayed, Path::new("/work"), 60, false, false);
+        let (lines, _) = tool_view(
+            &replayed,
+            Path::new("/work"),
+            60,
+            false,
+            false,
+            &mut Rendered::default(),
+        );
         assert!(plain(&lines)[0].starts_with("● think"));
+    }
+
+    #[test]
+    fn an_expanded_calls_rows_are_laid_out_again_only_when_its_content_or_width_changes() {
+        let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
+        edit.kind = ToolKind::Edit;
+        edit.content = diff_of(Some("a"), "b");
+        let mut rendered = Rendered::default();
+        let first = rendered.expanded(&edit, 40).as_ptr();
+        assert_eq!(rendered.expanded(&edit, 40).as_ptr(), first);
+        assert_eq!(plain(rendered.expanded(&edit, 40)), ["    - a", "    + b"]);
+
+        edit.content = diff_of(Some("a"), "c");
+        edit.revision += 1;
+        assert_eq!(plain(rendered.expanded(&edit, 40)), ["    - a", "    + c"]);
+        let second = rendered.expanded(&edit, 40).as_ptr();
+        rendered.expanded(&edit, 30);
+        assert_ne!(rendered.expanded(&edit, 30).as_ptr(), second);
     }
 }

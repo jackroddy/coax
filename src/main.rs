@@ -110,7 +110,7 @@ async fn main() {
         }
     };
     if let Err(error) = result {
-        fail(1, &error.to_string());
+        fail(1, &acp::describe(&error));
     }
 }
 

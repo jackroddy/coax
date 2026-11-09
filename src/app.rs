@@ -191,6 +191,16 @@ pub struct Permission {
     reply: oneshot::Sender<RequestPermissionOutcome>,
 }
 
+/// What the pointer is over, so a move that changes none of it is not drawn.
+#[derive(PartialEq)]
+struct Hovered {
+    chip: Option<ChipTarget>,
+    copy: Option<(usize, usize)>,
+    v_bar: bool,
+    bar: Option<(usize, usize)>,
+    fold: Option<ToolCallId>,
+}
+
 /// A header chip on screen.
 pub struct ChipArea {
     pub area: Rect,
@@ -405,6 +415,26 @@ impl App {
     fn close_permissions(&mut self) {
         while self.permission.is_some() {
             self.decide(None);
+        }
+    }
+
+    /// Handle a mouse event, and say whether the screen needs a redraw. A
+    /// move that changes nothing under the pointer does not.
+    pub fn pointer(&mut self, mouse: MouseEvent) -> (Action, bool) {
+        let before = self.hovered();
+        let action = self.mouse(mouse);
+        let redraw = mouse.kind != MouseEventKind::Moved || self.hovered() != before;
+        (action, redraw)
+    }
+
+    /// What the pointer is over, as a draw shows it.
+    fn hovered(&self) -> Hovered {
+        Hovered {
+            chip: self.hover,
+            copy: self.hover_copy,
+            v_bar: self.hover_v_bar,
+            bar: self.hover_bar,
+            fold: self.hover_fold.clone(),
         }
     }
 
@@ -1255,10 +1285,12 @@ async fn session(
     }
     let mut spin = tokio::time::interval(SPIN_INTERVAL);
     spin.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut redraw = true;
     loop {
-        if let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
+        if redraw && let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
             break Err(Error::into_internal_error(error));
         }
+        redraw = true;
         let expiry = app.guard.map(|guard| guard.until);
         let copied_until = app.copied.map(|(_, until)| until);
         let action = tokio::select! {
@@ -1276,7 +1308,9 @@ async fn session(
                     Action::None
                 }
                 Some(Ok(TermEvent::Mouse(mouse))) => {
-                    app.mouse(mouse)
+                    let (action, needs_draw) = app.pointer(mouse);
+                    redraw = needs_draw;
+                    action
                 }
                 Some(Ok(_)) => Action::None,
                 Some(Err(error)) => break Err(Error::into_internal_error(error)),
@@ -1740,6 +1774,7 @@ mod tests {
             content: vec![ToolCallContent::Diff(diff)],
             cancelled: false,
             changed: (0, 0),
+            revision: 0,
             agent: false,
             children: Vec::new(),
         };
@@ -3272,5 +3307,23 @@ mod tests {
             let area = app.menu_area.unwrap();
             assert!(area.bottom() <= height, "{area:?} on {height} rows");
         }
+    }
+
+    #[test]
+    fn a_mouse_move_asks_for_a_redraw_only_when_what_is_under_the_pointer_changes() {
+        let mut app = app();
+        app.wide.clear();
+        app.folds = vec![ui::FoldArea {
+            area: Rect::new(0, 4, 60, 2),
+            id: ToolCallId::new("t1"),
+        }];
+        let moved = |column, row| wheel(MouseEventKind::Moved, KeyModifiers::NONE, column, row);
+        assert!(!app.pointer(moved(3, 9)).1);
+        assert!(app.pointer(moved(3, 5)).1);
+        assert!(!app.pointer(moved(4, 5)).1);
+        assert!(app.pointer(moved(3, 9)).1);
+
+        let wheel_down = wheel(MouseEventKind::ScrollUp, KeyModifiers::NONE, 3, 9);
+        assert!(app.pointer(wheel_down).1);
     }
 }
