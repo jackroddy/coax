@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T08:14:59.733252049Z",
-  "updated_at": "2026-11-09T08:14:59.733252049Z",
+  "updated_at": "2026-11-09T08:25:04.763419545Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "d1e55d49",
+      "at": "2026-11-09T08:25:04.763418815Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Landed in 4a2d95f. `Settings` in `src/settings.rs` holds the config options, the modes fallback, the context, the cost and the session tokens in one place on `App`. `Settings::settings` builds the chips in category order, with each choice's display name. `HeaderParts::fit` in `src/ui.rs` decides what the header drops, in this order: session id, tokens and cost, context, plan summary, then chips from the right into `⋯`. The first chip (the mode) stays.\n\nClicks, hover and the picker box live in `App::mouse` and `Menu` in `src/app.rs`. A change goes out through `Link::change` and comes back as `Event::Setting`. The token totals are the latest prompt response's numbers, taken at the schema's word that they cover every turn. The cost is the `Tokens` line in `draw_header`, so it can be removed there alone. `src/ui.rs` shows a chip as the choice name for the mode and model settings, and as the setting's name plus the choice for the rest.\n\nNot done: the question of whether the Claude adapter fills `Usage` on a subscription was settled by the probe in the request, not by a run from this commit.",
+      "commit": "4a2d95f",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "f8a9596",
