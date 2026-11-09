@@ -240,7 +240,7 @@ pub async fn run(
 
 fn connect_decade() -> (Option<Channel>, UnboundedReceiver<Message>) {
     let (tx, rx) = mpsc::unbounded_channel();
-    match Channel::from_env("coax", &[], &[]) {
+    match Channel::from_env("coax", &[], &[], None) {
         Some(Ok((channel, messages))) => {
             std::thread::spawn(move || {
                 for message in messages {
