@@ -1,0 +1,28 @@
+{
+  "id": "coax-49a978",
+  "title": "Wide code blocks and tables pan sideways in coax",
+  "body": "coax draws agent text with `cmr::render(text, width)` at the message's layout width (`markdown` and `Rendered` in `src/ui.rs`). cmr never lets a block run past that width. A code line that is too long is cut and ends in a dim `…`, and a fence with no language takes the same path. A table narrows its widest column down to 8 characters and wraps cells. If it still does not fit, cmr draws it stacked, as `header: value` lines per row. The cut part of a code line is lost from the screen.\n\n## Proposal\n\n- coax lays agent text out a block at a time with `cmr::parse` and `cmr::layout`. Prose goes at the layout width. A `Block::Code` or `Block::Table` goes at its natural width: the longest code line plus the gutter, or the table laid out wide with its trailing padding trimmed. coax adds the blank row cmr puts between blocks.\n- A block wider than the message shows a window onto its rows, with `◂` or `▸` at the edge that has more.\n- Shift+wheel, or a horizontal wheel, over a wide block pans it. coax keeps an offset per block and finds the block under the mouse from where it drew it.\n\n## Rejected\n\n- A new block API in cmr. `parse` and `layout` are public already, so the change needs nothing from cmr, and cmr 0.1.0 can publish as it is.\n\n## Open\n\n- Whether a table laid out wide should still narrow or stack on a very narrow pane, or always pan.\n- A keyboard way to pan: a key that steps focus between wide blocks, then arrows.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T07:04:06.088488326Z",
+  "updated_at": "2026-11-09T07:04:06.088488326Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "be5017b",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
