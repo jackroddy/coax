@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-09T05:55:03.981824854Z",
   "defer_until": null,
   "created_at": "2026-11-09T04:57:35.225536913Z",
-  "updated_at": "2026-11-09T05:40:03.981824854Z",
+  "updated_at": "2026-11-09T05:43:13.011024649Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/4d38e22a",
       "text": "cmr now exists at ../cmr: `cmr::render(text, width)` returns rows of `(String, cmr::Style)` pieces, `cmr::text(text, width, color)` returns plain or ANSI strings, and `parse` and `layout` are public. It has no dependencies, so an app converts the rows to its own ratatui `Line`s; `markdown` and `screen_style` in foam's `src/tui.rs` are the conversion to copy.",
       "commit": "e9ae3c8",
+      "branch": "dev"
+    },
+    {
+      "id": "82bfc041",
+      "at": "2026-11-09T05:43:13.011023949Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Landed in the commit \"Draw agent text as markdown through cmr\" on dev. Thoughts stay dimmed plain text. Bold, italics, links and blockquotes still come out literal, pending the coax output style (coax-3d286f).",
+      "commit": "90242c8",
       "branch": "dev"
     }
   ],
