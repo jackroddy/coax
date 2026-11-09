@@ -10,6 +10,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, ExitKey, MenuTarget};
 use crate::command;
@@ -76,7 +77,7 @@ fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
         ExitKey::CtrlC => "press ^c again to quit",
         ExitKey::CtrlD => "press ^d again to quit",
     };
-    let rest = (area.width as usize).saturating_sub(message.chars().count() + 4);
+    let rest = (area.width as usize).saturating_sub(message.width() + 4);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("── ", dim()),
@@ -89,7 +90,7 @@ fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
 
 /// The rule under the prompt, carrying a dim `message`.
 fn draw_notice_rule(frame: &mut Frame, area: Rect, message: &str) {
-    let rest = (area.width as usize).saturating_sub(message.chars().count() + 4);
+    let rest = (area.width as usize).saturating_sub(message.width() + 4);
     frame.render_widget(
         Paragraph::new(format!("── {message} {}", "─".repeat(rest))).style(dim()),
         area,
@@ -268,8 +269,8 @@ fn kept_whole(
 ) -> Option<(Vec<Line<'static>>, usize, Option<String>)> {
     match block {
         cmr::Block::Code { lang, lines } => {
-            let longest = lines.iter().map(|line| line.chars().count());
-            let header = lang.iter().map(|lang| lang.chars().count());
+            let longest = lines.iter().map(|line| line.width());
+            let header = lang.iter().map(|lang| lang.width());
 
             // the gutter is two columns: `│ ` on a line, `┌ ` before the language
             let natural = longest.chain(header).max().unwrap_or(0) + 2 + COPY_ROOM;
@@ -500,7 +501,7 @@ fn build_transcript(app: &mut App, width: usize) -> Built {
                 lines.extend(rows);
             }
             Entry::Permission { choice, .. } => {
-                let pad = width.saturating_sub(choice.chars().count());
+                let pad = width.saturating_sub(choice.width());
                 lines.push(Line::from(vec![
                     Span::raw(" ".repeat(pad)),
                     Span::styled(choice.clone(), Style::new().fg(palette::get().accent)),
@@ -508,7 +509,7 @@ fn build_transcript(app: &mut App, width: usize) -> Built {
             }
             Entry::Notice(text) => {
                 let text = cut(text, width);
-                let pad = (width - text.chars().count()) / 2;
+                let pad = (width - text.width()) / 2;
                 lines.push(Line::from(format!("{}{text}", " ".repeat(pad))).style(dim()));
             }
         }
@@ -794,7 +795,7 @@ fn wrapped(
     style: Style,
     out: &mut Vec<Line>,
 ) {
-    let inner = width.saturating_sub(first.chars().count()).max(1);
+    let inner = width.saturating_sub(first.width()).max(1);
     let mut lead = first;
     for paragraph in text.split('\n') {
         let pieces = textwrap::wrap(paragraph, inner);
@@ -845,8 +846,7 @@ fn tool_rows(
         Span::styled(format!("{word:<6}"), bold()),
         Span::raw(" "),
     ];
-    let room =
-        width.saturating_sub(head.iter().map(Span::width).sum::<usize>() + suffix.chars().count());
+    let room = width.saturating_sub(head.iter().map(Span::width).sum::<usize>() + suffix.width());
     let mut first = head.to_vec();
     first.push(Span::raw(cut(&tool.title, room)));
     first.push(Span::styled(suffix.to_string(), dim()));
@@ -860,13 +860,13 @@ fn tool_rows(
     if added + removed > 0 {
         let plus = format!("+{added}");
         let minus = format!(" −{removed}");
-        used = plus.chars().count() + minus.chars().count();
+        used = plus.width() + minus.width();
         detail.push(Span::styled(plus, Style::new().fg(palette::get().green)));
         detail.push(Span::styled(minus, Style::new().fg(palette::get().red)));
     }
 
     // the location gives way when the row cannot hold it
-    let place = location(tool, cwd).filter(|place| place.chars().count() + 2 + used <= room);
+    let place = location(tool, cwd).filter(|place| place.width() + 2 + used <= room);
     if let Some(place) = place {
         second.push(Span::styled(place, dim()));
         if used > 0 {
@@ -1201,15 +1201,37 @@ fn diff_size(content: &[ToolCallContent]) -> (usize, usize) {
 }
 
 pub fn cut(text: &str, room: usize) -> String {
-    if text.chars().count() <= room {
+    if text.width() <= room {
         return text.to_string();
     }
     if room == 0 {
         return String::new();
     }
-    let mut out: String = text.chars().take(room - 1).collect();
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let width = ch.width().unwrap_or(0);
+        if used + width > room - 1 {
+            break;
+        }
+        out.push(ch);
+        used += width;
+    }
     out.push('…');
+    used += 1;
+    // a wide char that did not fit leaves the row one column short
+    out.push_str(&" ".repeat(room - used));
     out
+}
+
+/// `text` followed by spaces to `width` columns.
+pub fn pad_right(text: &str, width: usize) -> String {
+    format!("{text}{}", " ".repeat(width.saturating_sub(text.width())))
+}
+
+/// `text` preceded by spaces to `width` columns.
+pub fn pad_left(text: &str, width: usize) -> String {
+    format!("{}{text}", " ".repeat(width.saturating_sub(text.width())))
 }
 
 fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
@@ -1233,7 +1255,7 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
         ]));
     }
     let content_width = lines.iter().map(Line::width).max().unwrap_or(0);
-    let wanted = content_width.max(permission.title.chars().count() + 2) + 4;
+    let wanted = content_width.max(permission.title.width() + 2) + 4;
     let width = (wanted as u16).clamp(24.min(over.width), over.width);
     let height = (lines.len() as u16 + 2).min(over.height);
     let area = Rect {
@@ -1306,7 +1328,7 @@ fn draw_commands(frame: &mut Frame, app: &App, above: Rect) {
     let inner = (width as usize).saturating_sub(4);
     let name_width = list
         .iter()
-        .map(|entry| entry.fill.trim_end().chars().count())
+        .map(|entry| entry.fill.trim_end().width())
         .max()
         .unwrap_or(0);
     let lines: Vec<Line> = list
@@ -1315,7 +1337,7 @@ fn draw_commands(frame: &mut Frame, app: &App, above: Rect) {
         .skip(first)
         .take(shown)
         .map(|(index, entry)| {
-            let name = format!("{:<name_width$}", entry.fill.trim_end());
+            let name = pad_right(entry.fill.trim_end(), name_width);
             let room = inner.saturating_sub(name_width + 2);
             let line = Line::from(vec![
                 Span::styled(name, Style::new().fg(colour)),
@@ -1391,7 +1413,7 @@ fn input_view(text: &str, cursor: usize, width: usize, max_rows: usize) -> Input
         .iter()
         .map(|row| text[row.clone()].to_string())
         .collect();
-    let column = text[all[cursor_row].start..cursor].chars().count();
+    let column = text[all[cursor_row].start..cursor].width();
     let cursor = (
         (PROMPT_LEAD.len() + column.min(width.max(1) - 1)) as u16,
         (cursor_row - skipped) as u16,
@@ -1417,7 +1439,7 @@ fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
     }
     if rows
         .last()
-        .is_some_and(|row| text[row.clone()].chars().count() == width)
+        .is_some_and(|row| text[row.clone()].width() == width)
     {
         rows.push(text.len()..text.len());
     }
@@ -1426,23 +1448,27 @@ fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
 
 /// Push the rows of one line, which starts at byte `offset` of the text.
 fn wrap_line(line: &str, offset: usize, width: usize, rows: &mut Vec<Range<usize>>) {
-    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let chars: Vec<(usize, char, usize)> = line
+        .char_indices()
+        .map(|(i, ch)| (i, ch, ch.width().unwrap_or(0)))
+        .collect();
     let mut start = 0;
     let mut used = 0;
     for token in chars.chunk_by(|a, b| (a.1 == ' ') == (b.1 == ' ')) {
         let is_space = token[0].1 == ' ';
-        if used + token.len() > width && !is_space && used > 0 {
+        let token_width: usize = token.iter().map(|&(_, _, w)| w).sum();
+        if used + token_width > width && !is_space && used > 0 {
             rows.push(offset + start..offset + token[0].0);
             start = token[0].0;
             used = 0;
         }
-        for &(i, _) in token {
-            if used == width {
+        for &(i, _, w) in token {
+            if used + w > width && used > 0 {
                 rows.push(offset + start..offset + i);
                 start = i;
                 used = 0;
             }
-            used += 1;
+            used += w;
         }
     }
     rows.push(offset + start..offset + line.len());
@@ -1494,14 +1520,14 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
     };
     let screen = frame.area();
     let row_width = |(name, note, _): &(String, Option<String>, bool)| {
-        2 + name.chars().count() + note.as_ref().map_or(0, |note| 2 + note.chars().count())
+        2 + name.width() + note.as_ref().map_or(0, |note| 2 + note.width())
     };
     let wanted = rows
         .iter()
         .map(row_width)
         .max()
         .unwrap_or(0)
-        .max(title.chars().count() + 2)
+        .max(title.width() + 2)
         + 4;
     let width = (wanted as u16).min(60).min(screen.width);
     let warning = menu.confirm.as_ref().and_then(|value| match &menu.target {
@@ -1552,7 +1578,7 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
             let mark = if *current { "● " } else { "  " };
             let mut spans = vec![Span::raw(mark), Span::raw(name.clone())];
             if let Some(note) = note {
-                let room = inner.saturating_sub(2 + name.chars().count() + 2);
+                let room = inner.saturating_sub(2 + name.width() + 2);
                 spans.push(Span::styled(format!("  {}", cut(note, room)), dim()));
             }
             let line = Line::from(spans);
@@ -1742,6 +1768,39 @@ mod tests {
         let view = input_view(&text, 0, 4, 5);
         assert!(view.starts_here);
         assert_eq!(view.cursor, (2, 0));
+    }
+
+    #[test]
+    fn cut_counts_columns_and_never_splits_a_wide_char() {
+        assert_eq!(cut("日本語", 6), "日本語");
+        assert_eq!(cut("日本語", 5), "日本…");
+        assert_eq!(cut("日本語", 4), "日… ");
+        assert_eq!(cut("日本語", 4).width(), 4);
+        assert_eq!(cut("a😀bc", 3), "a… ");
+        assert_eq!(cut("abc", 2), "a…");
+        assert_eq!(cut("日本語", 0), "");
+        assert_eq!(cut("日本語", 1), "…");
+    }
+
+    #[test]
+    fn input_rows_wrap_by_display_width() {
+        assert_eq!(wrap_input("日本語日本", 6), ["日本語", "日本"]);
+        assert_eq!(wrap_input("ab日本", 5), ["ab日", "本"]);
+        assert_eq!(wrap_input("😀😀😀", 4), ["😀😀", "😀"]);
+        for row in wrap_input("日本語 日本語 日本語", 7) {
+            assert!(row.width() <= 7);
+        }
+    }
+
+    #[test]
+    fn the_cursor_column_is_the_display_width_before_it() {
+        let text = "日本語";
+        let view = input_view(text, 6, 20, 10);
+        assert_eq!(view.cursor, (2 + 4, 0));
+        let view = input_view("a😀b", 5, 20, 10);
+        assert_eq!(view.cursor, (2 + 3, 0));
+        let view = input_view("日本語日", 12, 6, 10);
+        assert_eq!(view.cursor, (2 + 2, 1));
     }
 
     #[test]

@@ -12,6 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{Instant, timeout_at};
+use unicode_width::UnicodeWidthStr;
 
 use crate::agents::Listing;
 use crate::app::Keys;
@@ -241,7 +242,7 @@ impl<'a> Picker<'a> {
         let agent_width = self
             .names
             .iter()
-            .map(|name| name.chars().count())
+            .map(|name| name.width())
             .max()
             .unwrap_or(0);
         let ages: Vec<String> = self
@@ -254,24 +255,20 @@ impl<'a> Picker<'a> {
                     .unwrap_or_default()
             })
             .collect();
-        let age_width = ages
-            .iter()
-            .map(|age| age.chars().count())
-            .max()
-            .unwrap_or(0);
+        let age_width = ages.iter().map(|age| age.width()).max().unwrap_or(0);
         let title_width = width.saturating_sub(2 + 2 + agent_width + 2 + age_width);
         let title = ui::cut(&row.title, title_width);
         let line = Line::from(vec![
             Span::raw(gutter),
             Span::styled(
-                format!("{title:<title_width$}  "),
+                format!("{}  ", ui::pad_right(&title, title_width)),
                 Style::new().fg(palette::get().cyan),
             ),
             Span::styled(
-                format!("{:<agent_width$}  ", self.names[row.agent]),
+                format!("{}  ", ui::pad_right(self.names[row.agent], agent_width)),
                 ui::dim(),
             ),
-            Span::styled(format!("{:>age_width$}", ages[index]), ui::dim()),
+            Span::styled(ui::pad_left(&ages[index], age_width), ui::dim()),
         ]);
         if chosen {
             line.style(Style::new().bg(palette::get().selection))
@@ -307,7 +304,7 @@ impl<'a> Picker<'a> {
         let name_width = self
             .names
             .iter()
-            .map(|name| name.chars().count())
+            .map(|name| name.width())
             .max()
             .unwrap_or(0);
         let chosen = self.selected == Selected::Agent(index);
@@ -317,13 +314,13 @@ impl<'a> Picker<'a> {
         } else {
             ""
         };
-        let room = width.saturating_sub(2 + name_width + 2 + tail.chars().count());
+        let room = width.saturating_sub(2 + name_width + 2 + tail.width());
         let command = ui::cut(&self.commands[index], room);
-        let used = 2 + name_width + 2 + command.chars().count() + tail.chars().count();
+        let used = 2 + name_width + 2 + command.width() + tail.width();
         let line = Line::from(vec![
             Span::raw(gutter),
             Span::styled(
-                format!("{:<name_width$}  ", self.names[index]),
+                format!("{}  ", ui::pad_right(self.names[index], name_width)),
                 Style::new().fg(palette::get().cyan),
             ),
             Span::styled(command, ui::dim()),

@@ -162,6 +162,11 @@ command line, the keys, and the scenario format the fake agent reads.
   kept, and never sends it. coax turns on bracketed paste for this and turns
   it off again on exit, so a terminal without bracketed paste behaves as
   before.
+- Text is measured in terminal columns. A CJK character or an emoji counts as
+  two columns, so the prompt's cursor, the wrapping of the prompt, the
+  `…` cut of long titles and the padding of lists and rules line up. A joined
+  emoji (a ZWJ sequence or one with a skin tone) is measured by its parts, so
+  it can still be off by a column or two.
 
 ### Changed
 

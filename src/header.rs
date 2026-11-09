@@ -4,6 +4,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, ChipArea, ChipTarget};
 use crate::palette;
@@ -61,21 +62,21 @@ impl Item {
     }
 
     fn width(&self) -> usize {
-        self.text.chars().count()
+        self.text.width()
     }
 }
 
 fn items_width(items: &[Item]) -> usize {
     let sum: usize = items.iter().map(Item::width).sum();
-    sum + SEPARATOR.chars().count() * items.len().saturating_sub(1)
+    sum + SEPARATOR.width() * items.len().saturating_sub(1)
 }
 
 /// The columns the first `widths` settings take, and the `⋯` that stands for
 /// the rest when `hidden`.
 fn settings_width(widths: &[usize], hidden: bool) -> usize {
-    let gap = SEPARATOR.chars().count();
+    let gap = SEPARATOR.width();
     let overflow = if hidden {
-        gap + OVERFLOW_CHIP.chars().count()
+        gap + OVERFLOW_CHIP.width()
     } else {
         0
     };
@@ -188,7 +189,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|setting| setting.label.to_lowercase())
         .collect();
-    let widths: Vec<usize> = texts.iter().map(|text| text.chars().count()).collect();
+    let widths: Vec<usize> = texts.iter().map(|text| text.width()).collect();
     let (shown, hidden, items) = fit_line(&widths, status(app), area.width as usize);
 
     let mut spans = vec![Span::raw(" ")];
@@ -197,7 +198,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
     let mut place = |spans: &mut Vec<Span<'static>>, width: usize, target: ChipTarget| {
         if spans.len() > 1 {
             spans.push(Span::styled(SEPARATOR, dim()));
-            x += SEPARATOR.chars().count() as u16;
+            x += SEPARATOR.width() as u16;
         }
         app.chips.push(ChipArea {
             area: Rect::new(x, area.y, width as u16, 1),
