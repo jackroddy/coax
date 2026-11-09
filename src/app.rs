@@ -83,6 +83,9 @@ pub struct App {
 
     /// The cursor's byte index into `input`, always on a char boundary.
     pub cursor: usize,
+
+    /// The prompts sent in this run, oldest first.
+    pub history: Vec<String>,
     pub scroll: usize,
     pub show_plan: bool,
 
@@ -232,6 +235,9 @@ pub enum MenuTarget {
 
     /// The settings from this index on, which did not fit in the header.
     Overflow(usize),
+
+    /// The prompts sent earlier, newest first.
+    History,
 }
 
 pub enum Action {
@@ -602,6 +608,21 @@ impl App {
                     .map_or(0, |chip| chip.area.x);
                 self.activate(index, anchor)
             }
+            Kind::History => {
+                self.clear_input();
+                if self.history.is_empty() {
+                    self.transcript.notice("no earlier prompts".to_string());
+                    return Action::None;
+                }
+                self.menu = Some(Menu {
+                    target: MenuTarget::History,
+                    cursor: 0,
+                    anchor: 0,
+                    error: None,
+                    confirm: None,
+                });
+                Action::None
+            }
             Kind::Edit => {
                 let text = match command::parse(&self.input) {
                     command::Typed::Coax { input, .. } => input.to_string(),
@@ -645,6 +666,7 @@ impl App {
                     return Action::None;
                 };
                 let text = confirm.text();
+                self.remember(&text);
                 self.clear_input();
                 self.transcript.prompt(text.clone());
                 self.scroll = 0;
@@ -655,6 +677,13 @@ impl App {
                 Action::None
             }
             _ => Action::None,
+        }
+    }
+
+    /// Keep a sent prompt for `/history`, unless it repeats the last one.
+    fn remember(&mut self, text: &str) {
+        if self.history.last().is_none_or(|last| last != text) {
+            self.history.push(text.to_string());
         }
     }
 
@@ -725,6 +754,7 @@ impl App {
                 },
             ),
             MenuTarget::Overflow(first) => settings.len().saturating_sub(*first),
+            MenuTarget::History => self.history.len(),
         }
     }
 
@@ -782,6 +812,16 @@ impl App {
                 } else if let Some(menu) = &mut self.menu {
                     menu.confirm = Some(choice.value.clone());
                 }
+                Action::None
+            }
+            MenuTarget::History => {
+                let cursor = menu.cursor;
+                let Some(text) = self.history.iter().rev().nth(cursor).cloned() else {
+                    return Action::None;
+                };
+                self.menu = None;
+                self.set_input(text);
+                self.edited();
                 Action::None
             }
             MenuTarget::Overflow(first) => {
@@ -910,6 +950,7 @@ impl App {
                 }
                 let text = std::mem::take(&mut self.input);
                 self.cursor = 0;
+                self.remember(&text);
                 self.transcript.prompt(text.clone());
                 self.scroll = 0;
                 Action::Prompt(text)
@@ -1054,6 +1095,7 @@ pub async fn run(
         transcript: Transcript::default(),
         input: String::new(),
         cursor: 0,
+        history: Vec::new(),
         scroll: 0,
         show_plan: false,
         command_cursor: 0,
@@ -1282,6 +1324,7 @@ mod tests {
             transcript: Transcript::default(),
             input: String::new(),
             cursor: 0,
+            history: Vec::new(),
             scroll: 0,
             show_plan: false,
             command_cursor: 0,
@@ -2769,5 +2812,106 @@ mod tests {
             app.transcript.entries.last(),
             Some(Entry::Notice(text)) if text.contains("prompt unchanged")
         ));
+    }
+
+    fn send(app: &mut App, text: &str) {
+        app.set_input(text.to_string());
+        press(app, KeyCode::Enter);
+        app.transcript.in_flight = false;
+    }
+
+    fn open_history(app: &mut App) {
+        type_text(app, "/history");
+        press(app, KeyCode::Enter);
+    }
+
+    #[test]
+    fn up_and_down_never_recall_earlier_prompts() {
+        let mut app = app();
+        send(&mut app, "first");
+        send(&mut app, "second");
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.input, "");
+        type_text(&mut app, "draft");
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.input, "draft");
+    }
+
+    #[test]
+    fn sent_prompts_are_kept_in_order_and_a_repeat_is_kept_once() {
+        let mut app = app();
+        send(&mut app, "first");
+        send(&mut app, "second");
+        send(&mut app, "second");
+        assert_eq!(app.history, ["first", "second"]);
+    }
+
+    #[test]
+    fn history_is_listed_in_the_slash_popup() {
+        let mut app = app();
+        type_text(&mut app, "/hi");
+        let list = app.popup();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].fill, "/history");
+    }
+
+    #[test]
+    fn history_with_nothing_sent_says_so_and_opens_no_box() {
+        let mut app = app();
+        open_history(&mut app);
+        assert!(app.menu.is_none());
+        assert!(matches!(
+            app.transcript.entries.last(),
+            Some(Entry::Notice(text)) if text == "no earlier prompts"
+        ));
+    }
+
+    #[test]
+    fn the_history_box_lists_newest_first_and_enter_puts_the_full_text_in_the_prompt() {
+        let mut app = app();
+        send(&mut app, "oldest");
+        send(&mut app, "middle\nwith a second line");
+        send(&mut app, "newest");
+        open_history(&mut app);
+        assert!(matches!(
+            app.menu.as_ref().map(|menu| &menu.target),
+            Some(MenuTarget::History)
+        ));
+        assert_eq!(app.menu_rows(), 3);
+        let screen = header_rows_all(&mut app, 100);
+        let area = app.menu_area.expect("the box is drawn");
+        let boxed: Vec<&str> = screen.lines().skip(area.y as usize).collect();
+        let row = |word: &str| boxed.iter().position(|line| line.contains(word));
+        assert!(row("newest") < row("middle"));
+        assert!(row("middle") < row("oldest"));
+        assert!(row("newest").is_some());
+        assert!(!boxed.iter().any(|line| line.contains("second line")));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.menu.is_none());
+        assert_eq!(app.input, "middle\nwith a second line");
+        assert_eq!(app.cursor, app.input.len());
+    }
+
+    #[test]
+    fn escape_closes_the_history_box_and_leaves_the_prompt_empty() {
+        let mut app = app();
+        send(&mut app, "earlier");
+        open_history(&mut app);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.menu.is_none());
+        assert_eq!(app.input, "");
+    }
+
+    #[test]
+    fn a_long_earlier_prompt_is_cut_to_fit_the_box() {
+        let mut app = app();
+        send(&mut app, &"日本語 ".repeat(40));
+        open_history(&mut app);
+        let screen = header_rows_all(&mut app, 100);
+        assert!(screen.contains('…'));
+        let area = app.menu_area.expect("the box is drawn");
+        assert!(area.width <= 60);
     }
 }

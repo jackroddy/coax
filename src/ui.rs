@@ -1482,6 +1482,14 @@ fn wrap_input(text: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
+/// The first line of `text` that has something on it.
+fn first_line(text: &str) -> &str {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+}
+
 /// The picker box hanging under a header chip.
 fn draw_menu(frame: &mut Frame, app: &mut App) {
     app.menu_area = None;
@@ -1517,6 +1525,15 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
                 .collect();
             ("settings".to_string(), rows)
         }
+        MenuTarget::History => {
+            let rows = app
+                .history
+                .iter()
+                .rev()
+                .map(|text| (first_line(text).to_string(), None, false))
+                .collect();
+            ("history".to_string(), rows)
+        }
     };
     let screen = frame.area();
     let row_width = |(name, note, _): &(String, Option<String>, bool)| {
@@ -1542,7 +1559,7 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
                 app.settings.context.as_ref().map(|c| c.used),
             ))
         }
-        MenuTarget::Overflow(_) => None,
+        MenuTarget::Overflow(_) | MenuTarget::History => None,
     });
     let width = if warning.is_some() {
         width.max(60.min(screen.width))
@@ -1576,6 +1593,7 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
         .take(visible)
         .map(|(index, (name, note, current))| {
             let mark = if *current { "● " } else { "  " };
+            let name = cut(name, inner.saturating_sub(2));
             let mut spans = vec![Span::raw(mark), Span::raw(name.clone())];
             if let Some(note) = note {
                 let room = inner.saturating_sub(2 + name.width() + 2);

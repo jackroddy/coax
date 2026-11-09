@@ -78,9 +78,27 @@ pub enum Kind {
 
     /// `/edit`, which is not a setting.
     Edit,
+
+    /// `/history`, which is not a setting.
+    History,
     Agent {
         name: String,
     },
+}
+
+/// The coax commands that are not settings, whose names start with `typed`.
+fn builtins(typed: &str) -> impl Iterator<Item = Candidate> + '_ {
+    [
+        ("edit", Kind::Edit, "edit the prompt in $EDITOR"),
+        ("history", Kind::History, "pick an earlier prompt"),
+    ]
+    .into_iter()
+    .filter(move |(name, ..)| name.starts_with(typed))
+    .map(|(name, kind, description)| Candidate {
+        fill: format!("/{name}"),
+        description: description.to_string(),
+        kind,
+    })
 }
 
 /// The commands whose names start with what is typed, coax's for `/` and the
@@ -102,11 +120,7 @@ pub fn matches(text: &str, settings: &[Setting], agent: &[AvailableCommand]) -> 
                         .unwrap_or_else(|| format!("now {}", setting.label)),
                     kind: Kind::Coax(index),
                 })
-                .chain("edit".starts_with(&typed).then(|| Candidate {
-                    fill: "/edit".to_string(),
-                    description: "edit the prompt in $EDITOR".to_string(),
-                    kind: Kind::Edit,
-                }))
+                .chain(builtins(&typed))
                 .collect()
         }
         Typed::Agent { name, .. } => {
@@ -203,19 +217,22 @@ mod tests {
             .map(|candidate| candidate.fill)
             .collect();
         assert_eq!(names, ["/mode", "/model"]);
-        assert_eq!(matches("/", &settings, &[]).len(), 4);
+        assert_eq!(matches("/", &settings, &[]).len(), 5);
         assert!(matches("/x", &settings, &[]).is_empty());
         assert_eq!(matches("/MO", &settings, &[]).len(), 2);
     }
 
     #[test]
-    fn edit_is_listed_after_the_settings_and_matches_by_prefix() {
+    fn edit_and_history_are_listed_after_the_settings_and_match_by_prefix() {
         let settings = [setting("Mode")];
         let found = matches("/", &settings, &[]);
-        assert_eq!(found.len(), 2);
+        assert_eq!(found.len(), 3);
         assert_eq!(found[1].fill, "/edit");
         assert_eq!(found[1].kind, Kind::Edit);
         assert_eq!(found[1].description, "edit the prompt in $EDITOR");
+        assert_eq!(found[2].fill, "/history");
+        assert_eq!(found[2].kind, Kind::History);
+        assert_eq!(matches("/h", &settings, &[]).len(), 1);
         assert_eq!(matches("/ed", &settings, &[]).len(), 1);
         assert!(
             matches("/mo", &settings, &[])

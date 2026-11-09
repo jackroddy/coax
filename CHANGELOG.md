@@ -174,6 +174,12 @@ command line, the keys, and the scenario format the fake agent reads.
   replaces the prompt with the cursor at the end, and is not sent. When the
   editor exits with an error the prompt stays as it was and a dim line says
   so.
+- `/history` opens a box over the status line that lists the prompts sent in
+  this run, newest first, each as its first line cut to fit. Up and Down (or
+  `k` and `j`) and a click choose a row, Enter puts the prompt's full text
+  in the prompt with the cursor at the end, and Esc closes the box. The
+  list is not saved between runs. Up and Down on a one-line prompt still do
+  nothing, so no key recalls an earlier prompt.
 
 ### Changed
 
