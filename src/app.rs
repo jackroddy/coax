@@ -1,23 +1,18 @@
 use std::io;
-use std::time::{Duration, Instant};
 
 use agent_client_protocol::Error;
 use agent_client_protocol::v1::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome,
-    SessionId, SessionUpdate, ToolCall, ToolCallUpdate,
+    SessionId, ToolCallUpdate,
 };
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
-use decade_channel::code::{MARK, SHOW};
 use decade_channel::{Channel, Message};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 
 use crate::acp::{Event, Link};
-use crate::follow::{self, Action as Follow};
 use crate::session::Transcript;
 use crate::ui;
-
-const FOLLOW_QUIET: Duration = Duration::from_millis(150);
 
 pub struct App {
     pub transcript: Transcript,
@@ -29,9 +24,6 @@ pub struct App {
     pub permission: Option<Permission>,
     pub rendered: ui::Rendered,
     auto_allow: bool,
-    calls: Vec<ToolCall>,
-    pending: Vec<Follow>,
-    flush_at: Option<Instant>,
 }
 
 pub struct Permission {
@@ -51,30 +43,12 @@ pub enum Action {
 impl App {
     pub fn event(&mut self, event: Event) {
         match event {
-            Event::Update(update) => {
-                self.track(&update);
-                let actions = follow::from_update(&update, &self.calls);
-                self.follow(actions);
-                self.transcript.apply(*update);
-            }
-            Event::FileRead { path, line } => self.follow(vec![follow::from_read(path, line)]),
+            Event::Update(update) => self.transcript.apply(*update),
             Event::Permission {
                 update,
                 options,
                 reply,
             } => {
-                if !self
-                    .calls
-                    .iter()
-                    .any(|call| call.tool_call_id == update.tool_call_id)
-                {
-                    let mut call = ToolCall::new(
-                        update.tool_call_id.clone(),
-                        update.fields.title.clone().unwrap_or_default(),
-                    );
-                    call.update(update.fields.clone());
-                    self.calls.push(call);
-                }
                 let title = update
                     .fields
                     .title
@@ -104,49 +78,6 @@ impl App {
         }
     }
 
-    fn track(&mut self, update: &SessionUpdate) {
-        match update {
-            SessionUpdate::ToolCall(call) => self.calls.push(call.clone()),
-            SessionUpdate::ToolCallUpdate(update) => {
-                if let Some(call) = self
-                    .calls
-                    .iter_mut()
-                    .find(|call| call.tool_call_id == update.tool_call_id)
-                {
-                    call.update(update.fields.clone());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn follow(&mut self, actions: Vec<Follow>) {
-        if actions.is_empty() || self.decade_pane.is_none() {
-            return;
-        }
-        self.pending = actions;
-        self.flush_at = Some(Instant::now() + FOLLOW_QUIET);
-    }
-
-    pub fn flush(&mut self, decade: &mut Option<Channel>) {
-        self.flush_at = None;
-        let Some(channel) = decade else {
-            return;
-        };
-        for action in std::mem::take(&mut self.pending) {
-            let sent = match action {
-                Follow::Show(show) => channel.send("code", SHOW, show),
-                Follow::Mark(mark) => channel.send("code", MARK, mark),
-            };
-            if let Err(error) = sent {
-                self.transcript.notice(format!("decade: {error}"));
-                *decade = None;
-                self.decade_pane = None;
-                return;
-            }
-        }
-    }
-
     pub fn decade(&mut self, message: Message) {
         match message {
             Message::Welcome { pane, .. } => self.decade_pane = pane.or(Some(String::new())),
@@ -155,7 +86,11 @@ impl App {
                 self.decade_pane = None;
                 self.transcript.notice("decade went away".to_string());
             }
-            Message::Panes(_) | Message::Verb { .. } => {}
+            Message::Panes(_)
+            | Message::Verb { .. }
+            | Message::Show { .. }
+            | Message::Highlight { .. }
+            | Message::Clear { .. } => {}
         }
     }
 
@@ -242,7 +177,7 @@ pub async fn run(
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
     let session = link.new_session(cwd).await?.session_id;
 
-    let (mut decade, mut decade_messages) = connect_decade();
+    let (decade, mut decade_messages) = connect_decade();
     let mut app = App {
         transcript: Transcript::default(),
         input: String::new(),
@@ -253,9 +188,6 @@ pub async fn run(
         permission: None,
         rendered: ui::Rendered::default(),
         auto_allow,
-        calls: Vec::new(),
-        pending: Vec::new(),
-        flush_at: None,
     };
     if let Some(text) = first_prompt {
         app.transcript.prompt(text.clone());
@@ -288,10 +220,6 @@ pub async fn run(
                 }
                 Action::None
             },
-            _ = tokio::time::sleep_until(app.flush_at.map(Into::into).unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(3600))), if app.flush_at.is_some() => {
-                app.flush(&mut decade);
-                Action::None
-            },
         };
         let outcome = match action {
             Action::None => Ok(()),
@@ -309,7 +237,7 @@ pub async fn run(
 
 fn connect_decade() -> (Option<Channel>, UnboundedReceiver<Message>) {
     let (tx, rx) = mpsc::unbounded_channel();
-    match Channel::from_env("coax", &[]) {
+    match Channel::from_env("coax", &[], &[]) {
         Some(Ok((channel, messages))) => {
             std::thread::spawn(move || {
                 for message in messages {

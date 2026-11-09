@@ -20,12 +20,8 @@ command line, the keys, and the scenario format the fake agent reads.
   highlighted agent, and Esc or Ctrl+c quits. `default = "<name>"` in the
   config sets which agent starts highlighted. With no agents configured, the
   picker names the file to create.
-- Follow-along into decade. Started inside a decade pane, coax joins the
-  decade socket and, with no agent involved, tells the code pane what the
-  agent is looking at: a read tool call with a location becomes `show`, a
-  completed edit with a diff becomes `show` and `mark` of the changed lines,
-  and a file the agent asks coax to read becomes `show`. The last action in a
-  150 ms quiet window wins. The status line says when coax is connected.
+- Started inside a decade pane, coax joins the decade socket. The status
+  line says when it is connected.
 - Permission requests from the agent pause on screen above the input, with
   the options numbered; a digit answers, Esc cancels. `--allow` answers every
   request with the first allow option instead, for scripted runs.

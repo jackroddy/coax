@@ -35,7 +35,6 @@ async fn one_prompt(mut link: Link, text: &str) -> Result<Transcript, Error> {
                     .unwrap();
                 transcript.permission(*update, allow.name.clone());
             }
-            Event::FileRead { .. } => {}
             Event::Done(result) => {
                 transcript.finished(result?);
                 break;
@@ -159,7 +158,7 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
                         cancelled = true;
                     }
                 }
-                Event::Permission { .. } | Event::FileRead { .. } => {}
+                Event::Permission { .. } => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
