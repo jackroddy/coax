@@ -4,16 +4,19 @@ use std::path::Path;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::config::Config;
+use crate::palette;
+use crate::ui;
 
 /// The agent picker shown on a bare launch.
 pub struct Picker<'a> {
     names: Vec<&'a str>,
     commands: Vec<String>,
+    default: Option<usize>,
     selected: usize,
     path: &'a Path,
 }
@@ -32,20 +35,20 @@ impl<'a> Picker<'a> {
             .agents
             .values()
             .map(|agent| {
-                let mut words = vec![agent.command().display().to_string()];
+                let mut words = vec![home_as_tilde(&agent.command().display().to_string())];
                 words.extend(agent.arguments().iter().cloned());
                 words.join(" ")
             })
             .collect();
-        let selected = config
+        let default = config
             .default
             .as_deref()
-            .and_then(|default| names.iter().position(|name| *name == default))
-            .unwrap_or(0);
+            .and_then(|default| names.iter().position(|name| *name == default));
         Picker {
             names,
             commands,
-            selected,
+            default,
+            selected: default.unwrap_or(0),
             path,
         }
     }
@@ -74,42 +77,82 @@ impl<'a> Picker<'a> {
     }
 
     fn draw(&self, frame: &mut Frame) {
-        let [title_area, list_area] =
-            Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(frame.area());
-        frame.render_widget(
-            Paragraph::new(" pick an agent: Enter starts, Esc quits")
-                .style(Style::default().add_modifier(Modifier::REVERSED)),
-            title_area,
-        );
-        let lines: Vec<Line> = if self.names.is_empty() {
-            vec![Line::from(format!(
-                " no agents configured; add one to {}",
-                self.path.display()
-            ))]
+        let [header_area, list_area, footer_area] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .areas(frame.area());
+        ui::title_bar(frame, header_area, "pick an agent", Line::default());
+        let block = ui::pane("agents", true);
+        let inner = block.inner(list_area);
+        frame.render_widget(block, list_area);
+        let lines = if self.names.is_empty() {
+            vec![
+                Line::styled("no agents configured", ui::dim()),
+                Line::styled(
+                    format!(
+                        "add one to {}",
+                        home_as_tilde(&self.path.display().to_string())
+                    ),
+                    ui::dim(),
+                ),
+            ]
         } else {
-            self.names
-                .iter()
-                .zip(&self.commands)
-                .enumerate()
-                .map(|(index, (name, command))| {
-                    let marker = if index == self.selected { ">" } else { " " };
-                    let name = Span::styled(
-                        format!("{marker} {name}  "),
-                        if index == self.selected {
-                            Style::default().add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                        },
-                    );
-                    let command = Span::styled(
-                        command.clone(),
-                        Style::default().add_modifier(Modifier::DIM),
-                    );
-                    Line::from(vec![name, command])
-                })
+            (0..self.names.len())
+                .map(|index| self.row(index, inner.width as usize))
                 .collect()
         };
-        frame.render_widget(Paragraph::new(lines), list_area);
+        frame.render_widget(Paragraph::new(lines), inner);
+        let hints = if self.names.is_empty() {
+            "esc quit"
+        } else {
+            "j/k move   enter start   esc quit"
+        };
+        frame.render_widget(Paragraph::new(hints), footer_area);
+    }
+
+    fn row(&self, index: usize, width: usize) -> Line<'static> {
+        let name_width = self
+            .names
+            .iter()
+            .map(|name| name.chars().count())
+            .max()
+            .unwrap_or(0);
+        let chosen = index == self.selected;
+        let gutter = if chosen { "› " } else { "  " };
+        let tail = if self.default == Some(index) {
+            "  default"
+        } else {
+            ""
+        };
+        let room = width.saturating_sub(2 + name_width + 2 + tail.chars().count());
+        let command = ui::cut(&self.commands[index], room);
+        let used = 2 + name_width + 2 + command.chars().count() + tail.chars().count();
+        let line = Line::from(vec![
+            Span::raw(gutter),
+            Span::styled(
+                format!("{:<name_width$}  ", self.names[index]),
+                Style::new().fg(palette::REF),
+            ),
+            Span::styled(command, ui::dim()),
+            Span::raw(" ".repeat(width.saturating_sub(used))),
+            Span::styled(tail, ui::dim()),
+        ]);
+        if chosen {
+            line.style(Style::new().bg(palette::SHADE))
+        } else {
+            line
+        }
+    }
+}
+
+fn home_as_tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
+            format!("~{}", &path[home.len()..])
+        }
+        _ => path.to_string(),
     }
 }
 

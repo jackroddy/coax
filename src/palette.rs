@@ -18,5 +18,8 @@ pub const AGENT: Color = Color::Magenta;
 /// The focused pane's title.
 pub const FOCUS: Color = Color::LightBlue;
 
+/// The background under the chosen row.
+pub const SHADE: Color = Color::DarkGray;
+
 /// Text on a filled badge.
 pub const INK: Color = Color::Black;

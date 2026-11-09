@@ -51,7 +51,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_footer(frame, footer_area, app);
 }
 
-fn pane(title: &str, focused: bool) -> Block<'static> {
+pub fn pane(title: &str, focused: bool) -> Block<'static> {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .padding(Padding::horizontal(1));
@@ -65,7 +65,9 @@ fn pane(title: &str, focused: bool) -> Block<'static> {
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
+/// The two header rows: the coax badge and `title` on the left, `right`
+/// against the right edge, and a dim rule below.
+pub fn title_bar(frame: &mut Frame, area: Rect, title: &str, right: Line) {
     let [top, rule] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
     let badge = Style::new()
         .fg(palette::INK)
@@ -74,9 +76,22 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let left = Line::from(vec![
         Span::styled(" coax ", badge),
         Span::raw("  "),
-        Span::styled(app.agent.clone(), bold()),
+        Span::styled(title.to_string(), bold()),
     ]);
+    let gap = (area.width as usize)
+        .saturating_sub(left.width() + right.width())
+        .max(1);
+    let mut spans = left.spans;
+    spans.push(Span::raw(" ".repeat(gap)));
+    spans.extend(right.spans);
+    frame.render_widget(Paragraph::new(Line::from(spans)), top);
+    frame.render_widget(
+        Paragraph::new("─".repeat(area.width as usize)).style(dim()),
+        rule,
+    );
+}
 
+fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let state = if app.transcript.in_flight {
         Span::styled("◐ working", Style::new().fg(palette::WORKING))
     } else {
@@ -95,19 +110,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     }
     let session: String = app.session.to_string().chars().take(8).collect();
     right.push(Span::styled(format!("   session {session} "), dim()));
-    let right = Line::from(right);
-
-    let gap = (area.width as usize)
-        .saturating_sub(left.width() + right.width())
-        .max(1);
-    let mut spans = left.spans;
-    spans.push(Span::raw(" ".repeat(gap)));
-    spans.extend(right.spans);
-    frame.render_widget(Paragraph::new(Line::from(spans)), top);
-    frame.render_widget(
-        Paragraph::new("─".repeat(area.width as usize)).style(dim()),
-        rule,
-    );
+    title_bar(frame, area, &app.agent, Line::from(right));
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
@@ -398,7 +401,7 @@ fn diff_size(content: &[ToolCallContent]) -> (usize, usize) {
     (added, removed)
 }
 
-fn cut(text: &str, room: usize) -> String {
+pub fn cut(text: &str, room: usize) -> String {
     if text.chars().count() <= room {
         return text.to_string();
     }
@@ -455,7 +458,7 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
     frame.set_cursor_position((column, inner.y));
 }
 
-fn dim() -> Style {
+pub fn dim() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 

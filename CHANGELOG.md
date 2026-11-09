@@ -19,7 +19,8 @@ command line, the keys, and the scenario format the fake agent reads.
   and no command. Up and Down (or `k` and `j`) move, Enter starts the
   highlighted agent, and Esc or Ctrl+c quits. `default = "<name>"` in the
   config sets which agent starts highlighted. With no agents configured, the
-  picker names the file to create.
+  picker names the file to create. The picker shares the session screen's header and
+  rounded panes, and marks the chosen row with `›` and a shaded background.
 - Started inside a decade pane, coax joins the decade socket. The status
   line says when it is connected.
 - Permission requests from the agent open a box over the conversation, with
