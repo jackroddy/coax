@@ -15,8 +15,8 @@ use coax::settings::Settings;
 
 const HELLO: &str = include_str!("../scenarios/hello.json");
 
-fn socket_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("coax-decade-test-{}", std::process::id()));
+fn socket_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("coax-decade-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -69,7 +69,7 @@ async fn one_turn(mut link: Link, mut reporter: Reporter) -> Result<(), Error> {
 
 #[tokio::test]
 async fn a_turn_with_a_tool_call_and_a_permission_reaches_decade_as_these_lines() {
-    let path = socket_dir().join("decade.sock");
+    let path = socket_dir("turn").join("decade.sock");
     let listener = UnixListener::bind(&path).unwrap();
     let lines = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
@@ -112,5 +112,38 @@ async fn a_turn_with_a_tool_call_and_a_permission_reaches_decade_as_these_lines(
             r#"{"agent":{"state":"done"}}"#,
             r#"{"ended":{}}"#,
         ]
+    );
+}
+
+#[test]
+fn a_show_reaches_the_named_pane_with_its_kind_target_and_line() {
+    let path = socket_dir("show").join("show.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let lines = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        BufReader::new(stream)
+            .lines()
+            .map(|line| line.unwrap())
+            .take(2)
+            .collect::<Vec<_>>()
+    });
+    let identity = decade_channel::Agent {
+        name: "fake".to_string(),
+        version: "1".to_string(),
+        session: "s".to_string(),
+    };
+    let (mut reporter, _messages) = report::connect(&path, Some("chat"), &identity).unwrap();
+    let show = decade_channel::Show {
+        kind: "file".to_string(),
+        target: "/work/src/ui.rs".to_string(),
+        at: Some(serde_json::json!(40)),
+    };
+    reporter.show("code", &show).unwrap();
+    let lines = lines.join().unwrap();
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"to": "code", "show": {"kind": "file", "target": "/work/src/ui.rs", "at": 40}})
     );
 }

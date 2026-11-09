@@ -5,6 +5,7 @@ use agent_client_protocol::{AcpAgent, Error};
 use coax::agents::Agents;
 use coax::app::{Opening, Start};
 use coax::config::Config;
+use coax::links::LinksConfig;
 use coax::log;
 use coax::picker::Choice;
 use coax::{acp, app, picker};
@@ -116,11 +117,12 @@ async fn main() {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
-    let opening = Opening {
+    let mut opening = Opening {
         start: Start::New,
         first_prompt: options.first_prompt,
         auto_allow: options.auto_allow,
         keys: app::key_thread(),
+        links: LinksConfig::default(),
     };
     let result = match options.launch {
         Launch::Command(words) => match AcpAgent::from_args(words.clone()) {
@@ -135,6 +137,7 @@ async fn main() {
             match config.agents.get(&name) {
                 Some(agent) => {
                     log::info("agent.chosen", json!({"name": name}));
+                    opening.links = config.links.clone();
                     open(AcpAgent::new(agent.clone()), Some(name), opening).await
                 }
                 None => fail(2, &format!("no agent named {name} in {}", path.display())),
@@ -170,6 +173,7 @@ async fn open(agent: AcpAgent, name: Option<String>, opening: Opening) -> Result
 /// Start every configured agent, show the picker over their sessions and
 /// open the one chosen.
 async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), Error> {
+    opening.links = config.links.clone();
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
     let mut agents = Agents::start(config, &cwd);
     let choice = picker::pick(config, path, &mut agents.listings, &mut opening.keys)

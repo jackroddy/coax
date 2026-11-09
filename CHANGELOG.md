@@ -198,6 +198,29 @@ command line, the keys, and the scenario format the fake agent reads.
   in the prompt with the cursor at the end, and Esc closes the box. The
   list is not saved between runs. Up and Down on a one-line prompt still do
   nothing, so no key recalls an earlier prompt.
+- Links in agent text, written `[text](target)` with an optional `"title"`.
+  The scheme of the target decides what the link does.
+  - `color:<name>` draws the text in that palette colour (`accent`, `muted`,
+    `selection`, `foreground`, `red`, `yellow`, `orange`, `green`, `cyan`,
+    `blue`, `magenta`) without an underline. An unknown name is plain text.
+    The link has no hover and no click.
+  - `file:<path>` or `file:<path>#<line>` draws the text underlined in blue.
+    Hovering opens a popup with the path relative to the folder coax runs in,
+    the line, and the title. A click sends decade `show` with kind `file`, the
+    absolute path and the line, to the pane named by `[links] decade_pane`
+    (default `code`). With no decade connection the line under the prompt
+    says so.
+  - `http:` and `https:` links show the URL and title on hover. A click runs
+    `xdg-open` only with `[links] open_urls = true`, which defaults to false.
+  - Any other scheme named in `[links.schemes.<scheme>]` runs its `hover`
+    command on hover, with `{target}` replaced by the part after the scheme,
+    in coax's folder with a two second limit. The popup shows `loading…`,
+    then the first 15 lines of output with escape sequences removed, or the
+    error. Output is kept per target for the run. An optional `click` command
+    runs detached on a click. A target that starts with `-` runs nothing.
+  - A hovered link turns accent, and its popup closes when the pointer leaves.
+    Links inside a table or code block that is wider than the screen are
+    drawn but get no hover or click.
 
 ### Changed
 

@@ -26,6 +26,7 @@ use crate::clipboard;
 use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
+use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
 use crate::prompt;
 use crate::report::{self, Reporter, Snapshot};
@@ -164,6 +165,16 @@ pub struct App {
     /// The block just copied and when its glyph stops saying so.
     pub copied: Option<((usize, usize), Instant)>,
 
+    /// The links on screen, set by the last draw.
+    pub link_areas: Vec<ui::LinkArea>,
+
+    /// The link the pointer is over.
+    pub hover_link: Option<HoverLink>,
+
+    /// What the hover commands gave, by link target.
+    pub link_cache: HashMap<String, Loaded>,
+    pub links: LinksConfig,
+
     /// Rows a page scroll moves, set by the last draw.
     pub page: usize,
 
@@ -194,6 +205,15 @@ pub struct Permission {
     reply: oneshot::Sender<RequestPermissionOutcome>,
 }
 
+/// The link under the pointer, and where the pointer met it.
+pub struct HoverLink {
+    /// The entry and the link within it.
+    pub key: (usize, usize),
+    pub target: String,
+    pub title: Option<String>,
+    pub at: Position,
+}
+
 /// What the pointer is over, so a move that changes none of it is not drawn.
 #[derive(PartialEq)]
 struct Hovered {
@@ -202,6 +222,7 @@ struct Hovered {
     v_bar: bool,
     bar: Option<(usize, usize)>,
     fold: Option<ToolCallId>,
+    link: Option<(usize, usize)>,
 }
 
 /// A header chip on screen.
@@ -273,6 +294,21 @@ pub enum Action {
     /// Open this text in the user's editor, then hand the result to
     /// `App::finish_edit`.
     Edit(String),
+
+    /// Run a link's hover command and keep its output under `target`.
+    Load {
+        target: String,
+        argv: Vec<String>,
+    },
+
+    /// Send decade's `show` to the pane `to`.
+    Show {
+        to: String,
+        show: decade_channel::Show,
+    },
+
+    /// Run this command detached.
+    Run(Vec<String>),
     Prompt(String),
     Cancel,
     Quit,
@@ -441,6 +477,7 @@ impl App {
             v_bar: self.hover_v_bar,
             bar: self.hover_bar,
             fold: self.hover_fold.clone(),
+            link: self.hover_link.as_ref().map(|hover| hover.key),
         }
     }
 
@@ -463,7 +500,7 @@ impl App {
                     .iter()
                     .find(|fold| fold.area.contains(position))
                     .map(|fold| fold.id.clone());
-                return Action::None;
+                return self.hover_over(position);
             }
             MouseEventKind::Down(MouseButton::Left) => return self.click(position),
             MouseEventKind::Drag(MouseButton::Left) => {
@@ -501,6 +538,67 @@ impl App {
             self.pans.insert(block.key, offset);
         }
         Action::None
+    }
+
+    /// Move the hover to the link at `position`, and ask for its hover
+    /// command to run when it has not been.
+    fn hover_over(&mut self, position: Position) -> Action {
+        let covered = self.permission.is_some() || self.confirm.is_some() || self.menu.is_some();
+        let area = self
+            .link_areas
+            .iter()
+            .find(|link| link.area.contains(position))
+            .filter(|_| !covered);
+        let Some(area) = area else {
+            self.hover_link = None;
+            return Action::None;
+        };
+        if self.hover_link.as_ref().map(|hover| hover.key) == Some(area.key) {
+            return Action::None;
+        }
+        let target = area.target.clone();
+        self.hover_link = Some(HoverLink {
+            key: area.key,
+            target: target.clone(),
+            title: area.title.clone(),
+            at: position,
+        });
+        if self.link_cache.contains_key(&target) {
+            return Action::None;
+        }
+        match links::hover_command(&target, &self.links) {
+            Some(argv) => {
+                self.link_cache.insert(target.clone(), Loaded::Loading);
+                Action::Load { target, argv }
+            }
+            None => Action::None,
+        }
+    }
+
+    /// Keep what a hover command gave.
+    pub fn loaded(&mut self, target: String, result: Result<String, String>) {
+        let loaded = match result {
+            Ok(text) => Loaded::Text(text),
+            Err(error) => Loaded::Failed(error),
+        };
+        self.link_cache.insert(target, loaded);
+    }
+
+    /// What a click on the link at `position` does, if it is on one.
+    fn click_link(&mut self, position: Position) -> Option<Action> {
+        let area = self
+            .link_areas
+            .iter()
+            .find(|link| link.area.contains(position))?;
+        let action = match links::click(&area.target, &self.links, &self.cwd)? {
+            Click::Run(argv) => Action::Run(argv),
+            Click::Show { .. } if self.decade_pane.is_none() => {
+                self.unknown = Some("no decade connection".to_string());
+                Action::None
+            }
+            Click::Show { to, show } => Action::Show { to, show },
+        };
+        Some(action)
     }
 
     /// The scroll bar under `position`, and how far into its thumb that is
@@ -603,6 +701,9 @@ impl App {
             return Action::None;
         }
         let Some(chip) = self.chips.iter().find(|chip| chip.area.contains(position)) else {
+            if let Some(action) = self.click_link(position) {
+                return action;
+            }
             if let Some(key) = self.copy_at(position) {
                 let Some(text) = self.rendered.copy_text(key) else {
                     return Action::None;
@@ -1173,6 +1274,7 @@ pub struct Opening {
     pub first_prompt: Option<String>,
     pub auto_allow: bool,
     pub keys: Keys,
+    pub links: LinksConfig,
 }
 
 fn flip(id: &str, on: bool) -> Change {
@@ -1213,6 +1315,7 @@ async fn session(
         first_prompt,
         auto_allow,
         mut keys,
+        links,
     } = opening;
     let version = init
         .agent_info
@@ -1307,6 +1410,10 @@ async fn session(
         hover_copy: None,
         hover_fold: None,
         copied: None,
+        link_areas: Vec::new(),
+        hover_link: None,
+        link_cache: HashMap::new(),
+        links,
         page: 1,
         lines_seen: 0,
         agent,
@@ -1330,6 +1437,7 @@ async fn session(
         app.transcript.prompt(text.clone());
         link.prompt(app.session.clone(), text)?;
     }
+    let (loaded_tx, mut loaded) = mpsc::unbounded_channel::<(String, Result<String, String>)>();
     let mut spin = tokio::time::interval(SPIN_INTERVAL);
     spin.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut redraw = true;
@@ -1376,6 +1484,10 @@ async fn session(
                 app.copied = None;
                 Action::None
             },
+            Some((target, result)) = loaded.recv() => {
+                app.loaded(target, result);
+                Action::None
+            },
             message = async { decade_messages.as_mut().unwrap().recv().await }, if decade_messages.is_some() => {
                 match message {
                     Some(message) => app.decade(message),
@@ -1397,6 +1509,27 @@ async fn session(
                     .map_err(Error::into_internal_error)
             }
             Action::Quit => break Ok(()),
+            Action::Load { target, argv } => {
+                let cwd = app.cwd.clone();
+                let done = loaded_tx.clone();
+                tokio::spawn(async move {
+                    let result = links::run(&argv, &cwd, links::HOVER_TIMEOUT).await;
+                    let _ = done.send((target, result));
+                });
+                Ok(())
+            }
+            Action::Show { to, show } => {
+                if let Some(reporter) = &mut reporter
+                    && let Err(error) = reporter.show(&to, &show)
+                {
+                    app.unknown = Some(format!("decade: {error}"));
+                }
+                Ok(())
+            }
+            Action::Run(argv) => {
+                links::detach(&argv, &app.cwd);
+                Ok(())
+            }
             Action::Prompt(text) => link.prompt(app.session.clone(), text),
             Action::Cancel => link.cancel(app.session.clone()),
             Action::Change(change) => link.change(app.session.clone(), change),
@@ -1568,6 +1701,10 @@ mod tests {
             hover_copy: None,
             hover_fold: None,
             copied: None,
+            link_areas: Vec::new(),
+            hover_link: None,
+            link_cache: HashMap::new(),
+            links: LinksConfig::default(),
             wide: vec![WideBlock {
                 area: Rect::new(2, 5, 20, 3),
                 key: (1, 0),
@@ -1646,6 +1783,91 @@ mod tests {
 
     fn mouse_at(app: &mut App, kind: MouseEventKind, column: u16) {
         app.mouse(wheel(kind, KeyModifiers::NONE, column, 8));
+    }
+
+    fn with_links() -> App {
+        let mut app = app();
+        app.links =
+            toml::from_str("[schemes.foam]\nhover = [\"foam\", \"show\", \"{target}\"]\n").unwrap();
+        app.cwd = PathBuf::from("/work");
+        let area = |x, key, target: &str| ui::LinkArea {
+            area: Rect::new(x, 3, 4, 1),
+            key,
+            target: target.to_string(),
+            title: None,
+        };
+        app.link_areas = vec![
+            area(2, (0, 0), "foam:a"),
+            area(10, (0, 1), "file:src/ui.rs#4"),
+            area(20, (0, 2), "https://x.test"),
+        ];
+        app
+    }
+
+    fn at(app: &mut App, kind: MouseEventKind, column: u16) -> Action {
+        app.mouse(wheel(kind, KeyModifiers::NONE, column, 3))
+    }
+
+    #[test]
+    fn hovering_a_scheme_link_asks_for_its_command_once() {
+        let mut app = with_links();
+        let Action::Load { target, argv } = at(&mut app, MouseEventKind::Moved, 3) else {
+            panic!("no load");
+        };
+        assert_eq!(target, "foam:a");
+        assert_eq!(argv, ["foam", "show", "a"]);
+        assert_eq!(app.hover_link.as_ref().unwrap().key, (0, 0));
+        assert!(matches!(
+            at(&mut app, MouseEventKind::Moved, 4),
+            Action::None
+        ));
+        assert!(matches!(
+            at(&mut app, MouseEventKind::Moved, 40),
+            Action::None
+        ));
+        assert!(app.hover_link.is_none());
+        assert!(matches!(
+            at(&mut app, MouseEventKind::Moved, 3),
+            Action::None
+        ));
+        app.loaded("foam:a".to_string(), Ok("text".to_string()));
+        assert_eq!(app.link_cache["foam:a"], Loaded::Text("text".to_string()));
+    }
+
+    #[test]
+    fn hovering_a_file_link_runs_nothing_and_opens_the_popup() {
+        let mut app = with_links();
+        assert!(matches!(
+            at(&mut app, MouseEventKind::Moved, 11),
+            Action::None
+        ));
+        assert_eq!(app.hover_link.as_ref().unwrap().target, "file:src/ui.rs#4");
+        assert!(app.link_cache.is_empty());
+    }
+
+    #[test]
+    fn clicking_a_file_link_shows_it_in_decade_or_says_there_is_no_connection() {
+        let mut app = with_links();
+        let down = MouseEventKind::Down(MouseButton::Left);
+        assert!(matches!(at(&mut app, down, 11), Action::None));
+        assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
+        app.decade_pane = Some(String::new());
+        let Action::Show { to, show } = at(&mut app, down, 11) else {
+            panic!("no show");
+        };
+        assert_eq!(to, "code");
+        assert_eq!(show.target, "/work/src/ui.rs");
+        assert_eq!(show.at, Some(serde_json::json!(4)));
+    }
+
+    #[test]
+    fn clicking_a_url_or_a_scheme_with_no_click_command_does_nothing_by_default() {
+        let mut app = with_links();
+        let down = MouseEventKind::Down(MouseButton::Left);
+        assert!(matches!(at(&mut app, down, 21), Action::None));
+        assert!(matches!(at(&mut app, down, 3), Action::None));
+        app.links.open_urls = true;
+        assert!(matches!(at(&mut app, down, 21), Action::Run(_)));
     }
 
     #[test]

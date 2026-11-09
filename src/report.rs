@@ -2,7 +2,7 @@ use std::io;
 use std::path::Path;
 
 use agent_client_protocol::v1::schema::{StopReason, ToolCallStatus};
-use decade_channel::{Agent, AgentState, AgentUpdate, Channel, Context, Message, Tokens};
+use decade_channel::{Agent, AgentState, AgentUpdate, Channel, Context, Message, Show, Tokens};
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
@@ -174,6 +174,15 @@ impl Reporter {
         }
         self.sent = now;
         Ok(())
+    }
+
+    /// Ask the decade pane `to` to show `show`.
+    pub fn show(&mut self, to: &str, show: &Show) -> io::Result<()> {
+        log::info(
+            "decade.send",
+            json!({"line": json!({"to": to, "show": show}).to_string()}),
+        );
+        self.channel.send(to, "show", show)
     }
 
     pub fn end(mut self) {

@@ -25,6 +25,26 @@ pub struct Palette {
     pub magenta: Color,
 }
 
+impl Palette {
+    /// The colour called `name`, or `None` for a name outside the palette.
+    pub fn named(&self, name: &str) -> Option<Color> {
+        Some(match name {
+            "accent" => self.accent,
+            "muted" => self.muted.unwrap_or(Color::DarkGray),
+            "selection" => self.selection,
+            "foreground" => self.foreground,
+            "red" => self.red,
+            "yellow" => self.yellow,
+            "orange" => self.orange,
+            "green" => self.green,
+            "cyan" => self.cyan,
+            "blue" => self.blue,
+            "magenta" => self.magenta,
+            _ => return None,
+        })
+    }
+}
+
 /// The `[palette]` table of `config.toml`, before the fallbacks are filled in.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]

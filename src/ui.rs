@@ -17,6 +17,7 @@ use crate::app::{App, ExitKey, MenuTarget};
 use crate::command;
 use crate::diff::line_diff;
 use crate::header;
+use crate::links::{self, Kind};
 use crate::palette;
 use crate::session::{Child, Entry, Tool};
 use crate::settings::{self, Control};
@@ -65,6 +66,51 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_guard_rule(frame, lower_rule, app);
     header::draw_status(frame, status_area, app);
     draw_menu(frame, app);
+    draw_link_popup(frame, app);
+}
+
+/// The popup over the link the pointer is on, below the pointer or above it
+/// when there is no room.
+fn draw_link_popup(frame: &mut Frame, app: &App) {
+    let Some(hover) = &app.hover_link else {
+        return;
+    };
+    let shown = links::popup(
+        &hover.target,
+        hover.title.as_deref(),
+        &app.links,
+        &app.cwd,
+        &app.link_cache,
+    );
+    let Some(lines) = shown else {
+        return;
+    };
+    let screen = frame.area();
+    let inner = lines
+        .iter()
+        .map(|line| line.width())
+        .max()
+        .unwrap_or(0)
+        .min(72)
+        .min((screen.width as usize).saturating_sub(4));
+    let width = (inner as u16 + 4).min(screen.width);
+    let height = (lines.len() as u16 + 2).min(screen.height);
+    let x = hover.at.x.min(screen.width - width);
+    let y = if hover.at.y + 1 + height <= screen.height {
+        hover.at.y + 1
+    } else {
+        hover.at.y.saturating_sub(height)
+    };
+    let area = Rect::new(x, y, width, height);
+    let rows: Vec<Line> = lines
+        .iter()
+        .map(|line| Line::raw(cut(line, inner)))
+        .collect();
+    let block = Block::bordered()
+        .border_style(dim())
+        .padding(Padding::horizontal(1));
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(rows).block(block), area);
 }
 
 /// A screen that says only `message`, centred and dim, while a session opens.
@@ -191,7 +237,12 @@ struct Markdown {
 /// A run of agent text: rows that fit the layout width, or one code block or
 /// table kept at its natural width.
 enum Part {
-    Flow(Vec<Line<'static>>),
+    Flow {
+        rows: Vec<Line<'static>>,
+
+        /// Where the links of the rows are drawn.
+        runs: Vec<Run>,
+    },
     Block {
         /// Which block of the entry this is.
         block: usize,
@@ -203,6 +254,17 @@ enum Part {
         /// The text a copy takes, for a literal block.
         copy: Option<String>,
     },
+}
+
+/// A link's text on one row of a part, by column.
+struct Run {
+    row: usize,
+    col: usize,
+    width: usize,
+
+    /// The link's place among the links of the whole entry.
+    index: usize,
+    link: cmr::Link,
 }
 
 /// Columns a code block keeps free after its longest line, where the copy
@@ -282,44 +344,98 @@ impl Rendered {
 /// `Part::Block`, and the screen windows one wider than `width`.
 fn markdown(text: &str, width: usize) -> Vec<Part> {
     let mut parts: Vec<Part> = Vec::new();
-    for (block, item) in cmr::parse(text).iter().enumerate() {
+    let blocks = cmr::parse(text);
+
+    // a link's index counts across the entry's blocks, and a block laid out
+    // alone keeps the index the whole parse gave it
+    let links = cmr::links(&blocks);
+    for (block, item) in blocks.iter().enumerate() {
         if block > 0 {
-            flow(&mut parts).push(Line::default());
+            flow(&mut parts).0.push(Line::default());
         }
-        match kept_whole(item, width) {
+        match kept_whole(item, width, &links) {
             Some((rows, natural, copy)) => parts.push(Part::Block {
                 block,
                 rows,
                 natural,
                 copy,
             }),
-            None => flow(&mut parts).extend(block_rows(item, width)),
+            None => {
+                let (rows, runs) = block_rows(item, width, &links);
+                let (flow_rows, flow_runs) = flow(&mut parts);
+                let base = flow_rows.len();
+                flow_runs.extend(runs.into_iter().map(|run| Run {
+                    row: run.row + base,
+                    ..run
+                }));
+                flow_rows.extend(rows);
+            }
         }
     }
     parts
 }
 
-fn flow(parts: &mut Vec<Part>) -> &mut Vec<Line<'static>> {
-    if !matches!(parts.last(), Some(Part::Flow(_))) {
-        parts.push(Part::Flow(Vec::new()));
+fn flow(parts: &mut Vec<Part>) -> (&mut Vec<Line<'static>>, &mut Vec<Run>) {
+    if !matches!(parts.last(), Some(Part::Flow { .. })) {
+        parts.push(Part::Flow {
+            rows: Vec::new(),
+            runs: Vec::new(),
+        });
     }
     match parts.last_mut() {
-        Some(Part::Flow(rows)) => rows,
+        Some(Part::Flow { rows, runs }) => (rows, runs),
         _ => unreachable!(),
     }
 }
 
-fn block_rows(block: &cmr::Block, width: usize) -> Vec<Line<'static>> {
-    cmr::layout(std::slice::from_ref(block), width)
+/// The rows of one block, and where the links that act on a click sit in
+/// them. `links` are the links of the whole entry.
+fn block_rows(
+    block: &cmr::Block,
+    width: usize,
+    links: &[cmr::Link],
+) -> (Vec<Line<'static>>, Vec<Run>) {
+    let rows = cmr::layout(std::slice::from_ref(block), width);
+    let mut runs: Vec<Run> = Vec::new();
+    for (row, pieces) in rows.iter().enumerate() {
+        let mut col = 0;
+        for (text, style) in pieces {
+            let piece = text.width();
+            if let Some(index) = style.link
+                && let Some(link) = links.get(index)
+                && !matches!(links::classify(&link.target), Kind::Color(_))
+            {
+                match runs.last_mut() {
+                    Some(last)
+                        if last.row == row
+                            && last.index == index
+                            && last.col + last.width == col =>
+                    {
+                        last.width += piece
+                    }
+                    _ => runs.push(Run {
+                        row,
+                        col,
+                        width: piece,
+                        index,
+                        link: link.clone(),
+                    }),
+                }
+            }
+            col += piece;
+        }
+    }
+    let lines = rows
         .into_iter()
         .map(|row| {
             trim_end(
                 row.into_iter()
-                    .map(|(text, style)| Span::styled(text, screen_style(style)))
+                    .map(|(text, style)| Span::styled(text, link_style(style, links)))
                     .collect(),
             )
         })
-        .collect()
+        .collect();
+    (lines, runs)
 }
 
 /// The rows, natural width and copy text of a code block, or the rows and
@@ -327,6 +443,7 @@ fn block_rows(block: &cmr::Block, width: usize) -> Vec<Line<'static>> {
 fn kept_whole(
     block: &cmr::Block,
     width: usize,
+    links: &[cmr::Link],
 ) -> Option<(Vec<Line<'static>>, usize, Option<String>)> {
     match block {
         cmr::Block::Code { lang, lines } => {
@@ -335,10 +452,14 @@ fn kept_whole(
 
             // the gutter is two columns: `│ ` on a line, `┌ ` before the language
             let natural = longest.chain(header).max().unwrap_or(0) + 2 + COPY_ROOM;
-            Some((block_rows(block, natural), natural, Some(lines.join("\n"))))
+            Some((
+                block_rows(block, natural, links).0,
+                natural,
+                Some(lines.join("\n")),
+            ))
         }
         cmr::Block::Table { .. } => {
-            let rows = block_rows(block, TABLE_WIDTH);
+            let rows = block_rows(block, TABLE_WIDTH, links).0;
             let natural = rows.iter().map(Line::width).max().unwrap_or(0);
             (natural > width).then_some((rows, natural, None))
         }
@@ -460,6 +581,36 @@ fn cells_line(cells: Vec<(char, Style)>) -> Line<'static> {
     Line::from(spans)
 }
 
+/// `screen_style`, with a link drawn as its target says: text of a
+/// `color:` link in that palette colour and not underlined, and a `file:`
+/// link in blue.
+fn link_style(style: cmr::Style, links: &[cmr::Link]) -> Style {
+    let out = screen_style(style);
+    let Some(link) = style.link.and_then(|index| links.get(index)) else {
+        return out;
+    };
+    match links::classify(&link.target) {
+        Kind::Color(name) => {
+            let out = out.remove_modifier(Modifier::UNDERLINED);
+            match palette::get().named(name) {
+                Some(colour) => out.fg(colour),
+                None => out,
+            }
+        }
+        Kind::File { .. } => out.fg(palette::get().blue),
+        _ => out,
+    }
+}
+
+/// `row` with `width` columns from `col` in `colour`.
+fn paint(row: &mut Line<'static>, col: usize, width: usize, colour: Color) {
+    let mut cells = window_cells(row, 0, row.width());
+    for cell in cells.iter_mut().skip(col).take(width) {
+        cell.1 = cell.1.fg(colour);
+    }
+    *row = cells_line(cells);
+}
+
 fn screen_style(style: cmr::Style) -> Style {
     let mut out = Style::new();
     if let Some(color) = style.fg {
@@ -501,6 +652,16 @@ struct Built {
     wides: Vec<Wide>,
     copies: Vec<Copy>,
     folds: Vec<Fold>,
+    links: Vec<LinkSpot>,
+}
+
+/// A link's text drawn this frame, by its place among the transcript lines.
+struct LinkSpot {
+    key: (usize, usize),
+    line: usize,
+    col: usize,
+    width: usize,
+    link: cmr::Link,
 }
 
 /// The transcript laid out at `width`. Only the entries that reach the
@@ -512,6 +673,8 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
     let mut wides: Vec<Wide> = Vec::new();
     let mut copies: Vec<Copy> = Vec::new();
     let mut folds: Vec<Fold> = Vec::new();
+    let mut spots: Vec<LinkSpot> = Vec::new();
+    let hovered = app.hover_link.as_ref().map(|hover| hover.key);
     let copied = app
         .copied
         .as_ref()
@@ -530,7 +693,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 let height = 2 + parts
                     .iter()
                     .map(|part| match part {
-                        Part::Flow(flow) => flow.len(),
+                        Part::Flow { rows, .. } => rows.len(),
                         Part::Block { rows, natural, .. } => {
                             rows.len() + usize::from(*natural > visible_width)
                         }
@@ -545,7 +708,25 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 let mut rows: Vec<Line<'static>> = Vec::new();
                 for part in parts {
                     match part {
-                        Part::Flow(flow) => rows.extend(flow.iter().cloned()),
+                        Part::Flow { rows: flow, runs } => {
+                            let start = rows.len();
+                            let top = lines.len() + 1 + start;
+                            rows.extend(flow.iter().cloned());
+                            for run in runs {
+                                let key = (index, run.index);
+                                if hovered == Some(key) {
+                                    let row = &mut rows[start + run.row];
+                                    paint(row, run.col, run.width, palette::get().accent);
+                                }
+                                spots.push(LinkSpot {
+                                    key,
+                                    line: top + run.row,
+                                    col: run.col,
+                                    width: run.width,
+                                    link: run.link.clone(),
+                                });
+                            }
+                        }
                         Part::Block {
                             block,
                             rows: block_rows,
@@ -634,6 +815,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
         wides,
         copies,
         folds,
+        links: spots,
     }
 }
 
@@ -668,6 +850,7 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
         wides,
         copies,
         folds,
+        links: spots,
     } = build_transcript(app, width, start..end);
     debug_assert_eq!(lines.len(), total);
     app.folds = folds
@@ -684,6 +867,21 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
                 },
                 id: fold.id.clone(),
             })
+        })
+        .collect();
+    app.link_areas = spots
+        .into_iter()
+        .filter(|spot| (start..end).contains(&spot.line))
+        .map(|spot| LinkArea {
+            area: Rect::new(
+                area.x + 2 + spot.col as u16,
+                area.y + (spot.line - start) as u16,
+                spot.width as u16,
+                1,
+            ),
+            key: spot.key,
+            target: spot.link.target,
+            title: spot.link.title,
         })
         .collect();
     app.copies = copies
@@ -808,6 +1006,16 @@ pub struct CopyArea {
 
     /// The entry and the block within it.
     pub key: (usize, usize),
+}
+
+/// A link's text on screen, found by the mouse.
+pub struct LinkArea {
+    pub area: Rect,
+
+    /// The entry and the link within it.
+    pub key: (usize, usize),
+    pub target: String,
+    pub title: Option<String>,
 }
 
 /// An expandable tool call's head rows on screen, which a click folds or
@@ -1701,7 +1909,7 @@ mod tests {
         parts
             .iter()
             .flat_map(|part| match part {
-                Part::Flow(rows) | Part::Block { rows, .. } => rows.clone(),
+                Part::Flow { rows, .. } | Part::Block { rows, .. } => rows.clone(),
             })
             .collect()
     }
@@ -2000,7 +2208,7 @@ mod tests {
     #[test]
     fn a_table_that_fits_the_width_is_laid_out_with_the_prose() {
         let parts = markdown("| a | b |\n|---|---|\n| 1 | 2 |\n\nafter", 20);
-        assert!(matches!(&parts[..], [Part::Flow(_)]));
+        assert!(matches!(&parts[..], [Part::Flow { .. }]));
     }
 
     #[test]
@@ -2009,7 +2217,12 @@ mod tests {
             "before\n\n```\nfn main() {\n    run();\n}\n```\n\nafter",
             40,
         );
-        let [Part::Flow(_), Part::Block { copy, .. }, Part::Flow(_)] = &parts[..] else {
+        let [
+            Part::Flow { .. },
+            Part::Block { copy, .. },
+            Part::Flow { .. },
+        ] = &parts[..]
+        else {
             panic!("expected prose, a block and prose");
         };
         assert_eq!(copy.as_deref(), Some("fn main() {\n    run();\n}"));
@@ -2027,6 +2240,106 @@ mod tests {
         );
         assert_eq!(rendered.copy_text((3, 1)), None);
         assert_eq!(rendered.copy_text((4, 0)), None);
+    }
+
+    fn runs_of(parts: &[Part]) -> Vec<(usize, usize, usize, usize, String)> {
+        parts
+            .iter()
+            .flat_map(|part| match part {
+                Part::Flow { runs, .. } => runs
+                    .iter()
+                    .map(|run| {
+                        (
+                            run.row,
+                            run.col,
+                            run.width,
+                            run.index,
+                            run.link.target.clone(),
+                        )
+                    })
+                    .collect(),
+                Part::Block { .. } => Vec::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_link_keeps_its_index_in_the_entry_when_blocks_are_laid_out_one_at_a_time() {
+        let text =
+            "see [a](foam:x) and [b](file:y.rs#2)\n\n```\ncode\n```\n\nthen [c](https://z.test)";
+        let parts = markdown(text, 60);
+        assert_eq!(
+            runs_of(&parts),
+            [
+                (0, 4, 1, 0, "foam:x".to_string()),
+                (0, 10, 1, 1, "file:y.rs#2".to_string()),
+                (1, 5, 1, 2, "https://z.test".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wrapped_link_has_a_run_on_each_row_it_covers() {
+        let parts = markdown("aaa [bbb ccc](foam:x) ddd", 8);
+        let runs = runs_of(&parts);
+        assert_eq!(runs.len(), 2);
+        assert_eq!((runs[0].0, runs[0].1, runs[0].2), (0, 4, 3));
+        assert_eq!((runs[1].0, runs[1].1, runs[1].2), (1, 0, 3));
+        assert!(runs.iter().all(|run| run.3 == 0));
+    }
+
+    fn style_of(text: &str, word: &str) -> Style {
+        let parts = markdown(text, 60);
+        let Part::Flow { rows, .. } = &parts[0] else {
+            panic!("no flow");
+        };
+        rows[0]
+            .spans
+            .iter()
+            .find(|span| span.content.contains(word))
+            .unwrap()
+            .style
+    }
+
+    #[test]
+    fn a_color_link_draws_its_text_in_the_palette_colour_with_no_underline() {
+        let style = style_of("[failed](color:red) ok", "failed");
+        assert_eq!(style.fg, Some(palette::get().red));
+        assert!(!style.add_modifier.contains(Modifier::UNDERLINED));
+        assert!(runs_of(&markdown("[failed](color:red) ok", 60)).is_empty());
+    }
+
+    #[test]
+    fn a_color_link_with_an_unknown_name_is_plain_text() {
+        let style = style_of("[odd](color:mauve) ok", "odd");
+        assert_eq!(style.fg, None);
+        assert!(!style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn a_file_link_is_underlined_in_blue() {
+        let style = style_of("[ui](file:src/ui.rs#4)", "ui");
+        assert_eq!(style.fg, Some(palette::get().blue));
+        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn painting_a_hovered_link_changes_only_its_columns() {
+        let mut row = Line::from(vec![Span::raw("ab "), Span::raw("cd ef")]);
+        paint(&mut row, 3, 2, Color::Magenta);
+        let cells: Vec<(String, Option<Color>)> = row
+            .spans
+            .iter()
+            .map(|span| (span.content.to_string(), span.style.fg))
+            .collect();
+        assert_eq!(
+            cells,
+            [
+                ("ab ".to_string(), None),
+                ("cd".to_string(), Some(Color::Magenta)),
+                (" ef".to_string(), None)
+            ]
+        );
     }
 
     #[test]

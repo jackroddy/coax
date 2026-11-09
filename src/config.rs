@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use agent_client_protocol::AcpAgentConfig;
 use serde::Deserialize;
 
+use crate::links::LinksConfig;
 use crate::palette::PaletteConfig;
 
 /// The settings read from `config.toml`.
@@ -21,6 +22,10 @@ pub struct Config {
     /// Colour overrides.
     #[serde(default)]
     pub palette: PaletteConfig,
+
+    /// What the links in agent text do.
+    #[serde(default)]
+    pub links: LinksConfig,
 }
 
 impl Config {
@@ -75,6 +80,18 @@ mod tests {
             config.agents["fake"],
             AcpAgentConfig::new("coax-fake-agent")
         );
+    }
+
+    #[test]
+    fn a_links_table_sets_the_pane_the_urls_and_the_scheme_commands() {
+        let config: Config = toml::from_str(
+            "[links]\nopen_urls = true\n[links.schemes.foam]\nhover = [\"foam\", \"show\", \"{target}\"]\n",
+        )
+        .unwrap();
+        assert!(config.links.open_urls);
+        assert_eq!(config.links.decade_pane, "code");
+        assert_eq!(config.links.schemes["foam"].hover[2], "{target}");
+        assert!(!Config::default().links.open_urls);
     }
 
     #[test]
