@@ -1,0 +1,28 @@
+{
+  "id": "coax-2e4b33",
+  "title": "coax picks its agent from a file of named agents",
+  "body": "coax takes the agent as a raw command after its flags: `coax [--prompt <text>] [--allow] <agent command> [args...]`. `main` hands those words to `AcpAgent::from_args`, which spawns the command and speaks ACP over its stdin and stdout. Running Claude Code's adapter (coax-4da59a) means typing `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false mise exec node@22.23.4 -- <path>/claude-agent-acp` on every launch.\n\ncoax knows nothing about any one agent, login or runtime, and this work keeps it that way. coax ships no agent entry. Jack writes the Claude one himself. The Agent SDK docs forbid third-party products from offering claude.ai login without approval. coax never handles a login, so it stays outside that rule as Jack reads it. Nobody has asked Anthropic.\n\n## Proposal\n\nA TOML file of named agents, each with a command, args and env:\n\n```toml\ndefault = \"claude\"\n\n[agents.claude]\ncommand = \"mise\"\nargs = [\"exec\", \"node@22.23.4\", \"--\", \"claude-agent-acp\"]\nenv = { CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = \"false\" }\n```\n\n- `coax --agent <name>` runs that entry.\n- A bare `coax` opens a picker over the entries. Enter starts the highlighted one.\n- The raw command form stays, so `coax target/debug/coax-fake-agent scenarios/hello.json` and the tests run as before.\n\n## Rejected\n\n- A shell alias over the raw command form. coax would have nothing to choose from.\n- The file without a picker. Jack chose the picker for a bare launch.\n\n## Cost\n\nA new flag, a new file and a new meaning for a bare `coax`. The next release moves the minor version. If the work runs past a release, it goes on its own branch under the branch rule in `CLAUDE.md`. `serde` is already a dependency; `toml` would be new.\n\n## Open\n\n- Where the file lives. The guess is `$XDG_CONFIG_HOME/coax/agents.toml`, falling back to `~/.config/coax/agents.toml`.\n- Whether `default` skips the picker on a bare launch, or only sets which entry starts highlighted.\n- What a bare `coax` does with no file: print usage, or open an empty picker that names the file to create.\n- How coax tells the raw command form from a bare launch with flags, such as `coax --prompt hi`.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T04:10:26.420154267Z",
+  "updated_at": "2026-11-09T04:10:26.420154267Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "0548ccc",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
