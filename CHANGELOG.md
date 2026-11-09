@@ -122,7 +122,10 @@ command line, the keys, and the scenario format the fake agent reads.
 - A click on an edit call shows its diff under it: removed lines in red after
   a `-`, added lines in green after a `+`, and the unchanged lines around
   them dim. A click on a command call shows its output, laid out as markdown.
-  Both are folded until clicked, and a second click folds them again.
+  Both are folded until clicked, and a second click folds them again. Each
+  expandable call, subagent calls included, ends its title row with a dim `▸`
+  when folded and `▾` when expanded. The marker turns the accent colour while
+  the pointer is over the call.
 - `scenarios/blocks.json` plays an agent message with code blocks, an edit and
   a command with output, for the fake agent.
 

@@ -453,7 +453,8 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
             Entry::Thought(text) => wrapped("✻ ", "  ", dim(), text, usable, dim(), &mut lines),
             Entry::Tool(tool) => {
                 let expanded = app.expanded.contains(&tool.id);
-                let (rows, head) = tool_view(tool, &app.cwd, usable, expanded);
+                let hovered = app.hover_fold.as_ref() == Some(&tool.id);
+                let (rows, head) = tool_view(tool, &app.cwd, usable, expanded, hovered);
                 if expandable(tool) {
                     folds.push(Fold {
                         id: tool.id.clone(),
@@ -792,14 +793,31 @@ fn output(content: &[ToolCallContent]) -> Vec<&str> {
 
 /// A top-level call's rows, and how many of them are its head. Expanded, it
 /// has its subagent's work, its diff or its output under the head.
-fn tool_view(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> (Vec<Line<'static>>, usize) {
-    if !tool.children.is_empty() {
-        let head = subagent_head(tool, cwd, width).len();
-        return (subagent_block(tool, cwd, width, expanded), head);
+fn tool_view(
+    tool: &Tool,
+    cwd: &Path,
+    width: usize,
+    expanded: bool,
+    hovered: bool,
+) -> (Vec<Line<'static>>, usize) {
+    if !expandable(tool) {
+        let lines = tool_block(tool, cwd, width);
+        let head = lines.len();
+        return (lines, head);
     }
-    let mut lines = tool_block(tool, cwd, width);
-    let head = lines.len();
-    if expanded && expandable(tool) {
+
+    // two columns go to the marker at the end of the title row
+    let room = width.saturating_sub(2);
+    let (mut lines, head) = if tool.children.is_empty() {
+        let lines = tool_block(tool, cwd, room);
+        let head = lines.len();
+        (lines, head)
+    } else {
+        let head = subagent_head(tool, cwd, room).len();
+        (subagent_block(tool, cwd, room, expanded), head)
+    };
+    lines[0] = with_marker(lines[0].clone(), width, expanded, hovered);
+    if expanded && tool.children.is_empty() {
         let inner = width.saturating_sub(SUBAGENT_INDENT.len());
         let mut rows = match tool.kind {
             ToolKind::Edit => diff_rows(&tool.content, inner),
@@ -811,6 +829,27 @@ fn tool_view(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> (Vec<Line
         lines.extend(rows);
     }
     (lines, head)
+}
+
+/// `title` with the fold marker in column `width`: `▸` folded, `▾` expanded,
+/// dim until the block is hovered.
+fn with_marker(
+    mut title: Line<'static>,
+    width: usize,
+    expanded: bool,
+    hovered: bool,
+) -> Line<'static> {
+    let style = if hovered {
+        Style::new().fg(palette::get().accent)
+    } else {
+        dim()
+    };
+    let gap = width.saturating_sub(1 + title.width());
+    title.spans.push(Span::raw(" ".repeat(gap)));
+    title
+        .spans
+        .push(Span::styled(if expanded { "▾" } else { "▸" }, style));
+    title
 }
 
 /// The unchanged lines kept either side of a change in a diff.
@@ -1799,9 +1838,9 @@ mod tests {
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
         let cwd = Path::new("/work");
-        let (folded, head) = tool_view(&edit, cwd, 60, false);
+        let (folded, head) = tool_view(&edit, cwd, 60, false, false);
         assert_eq!((folded.len(), head), (2, 2));
-        let (open, head) = tool_view(&edit, cwd, 60, true);
+        let (open, head) = tool_view(&edit, cwd, 60, true, false);
         assert_eq!(head, 2);
         assert_eq!(&plain(&open)[2..], ["    - a", "    + b"]);
     }
@@ -1816,12 +1855,60 @@ mod tests {
         run.kind = ToolKind::Execute;
         run.locations.clear();
         run.content = text_content("```console\n$ cargo run\nhello\n```");
-        let (open, head) = tool_view(&run, Path::new("/work"), 60, true);
+        let (open, head) = tool_view(&run, Path::new("/work"), 60, true, false);
         assert_eq!(head, 1);
         assert_eq!(
             &plain(&open)[1..],
             ["    ┌ console", "    │ $ cargo run", "    │ hello"]
         );
+    }
+
+    fn last_cell(line: &Line) -> (String, Style) {
+        let span = line.spans.last().unwrap();
+        (span.content.chars().last().unwrap().to_string(), span.style)
+    }
+
+    #[test]
+    fn a_folded_expandable_call_ends_its_title_row_with_a_dim_right_marker() {
+        let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
+        edit.kind = ToolKind::Edit;
+        edit.content = diff_of(Some("a"), "b");
+        let (rows, _) = tool_view(&edit, Path::new("/work"), 40, false, false);
+        assert_eq!(rows[0].width(), 40);
+        assert_eq!(last_cell(&rows[0]), ("▸".to_string(), dim()));
+    }
+
+    #[test]
+    fn an_expanded_call_shows_the_down_marker_and_a_hovered_one_the_accent() {
+        let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
+        edit.kind = ToolKind::Edit;
+        edit.content = diff_of(Some("a"), "b");
+        let (rows, _) = tool_view(&edit, Path::new("/work"), 40, true, true);
+        let (glyph, style) = last_cell(&rows[0]);
+        assert_eq!(glyph, "▾");
+        assert_eq!(style.fg, Some(palette::get().accent));
+    }
+
+    #[test]
+    fn a_subagent_call_has_the_marker_and_a_call_with_nothing_to_expand_has_none() {
+        let (rows, head) = tool_view(&task(), Path::new("/work"), 60, false, false);
+        assert_eq!(head, 2);
+        assert!(rows[0].to_string().ends_with('▸'));
+        assert_eq!(rows[0].width(), 60);
+        let read = tool("Read src/main.rs", "/work/src/main.rs", None);
+        let (rows, _) = tool_view(&read, Path::new("/work"), 60, false, false);
+        assert!(!rows[0].to_string().ends_with(['▸', '▾']));
+    }
+
+    #[test]
+    fn a_long_title_is_cut_before_the_marker() {
+        let mut edit = tool("Edit a/very/long/path/to/some/file.rs", "/work/x", None);
+        edit.kind = ToolKind::Edit;
+        edit.content = diff_of(Some("a"), "b");
+        let (rows, _) = tool_view(&edit, Path::new("/work"), 24, false, false);
+        assert_eq!(rows[0].width(), 24);
+        assert!(rows[0].to_string().contains('…'));
+        assert!(rows[0].to_string().ends_with('▸'));
     }
 
     #[test]

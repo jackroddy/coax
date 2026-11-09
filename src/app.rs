@@ -125,6 +125,9 @@ pub struct App {
     /// The copy glyphs on screen, set by the last draw.
     pub copies: Vec<ui::CopyArea>,
 
+    /// The expandable call whose head the pointer is over.
+    pub hover_fold: Option<ToolCallId>,
+
     /// The block whose copy glyph the pointer is over.
     pub hover_copy: Option<(usize, usize)>,
 
@@ -312,6 +315,11 @@ impl App {
             MouseEventKind::Moved => {
                 self.hover = self.chip_at(position);
                 self.hover_copy = self.copy_at(position);
+                self.hover_fold = self
+                    .folds
+                    .iter()
+                    .find(|fold| fold.area.contains(position))
+                    .map(|fold| fold.id.clone());
                 return Action::None;
             }
             MouseEventKind::Down(MouseButton::Left) => return self.click(position),
@@ -846,6 +854,7 @@ pub async fn run(
         drag: None,
         copies: Vec::new(),
         hover_copy: None,
+        hover_fold: None,
         copied: None,
         page: 1,
         lines_seen: 0,
@@ -1007,6 +1016,7 @@ mod tests {
             drag: None,
             copies: Vec::new(),
             hover_copy: None,
+            hover_fold: None,
             copied: None,
             wide: vec![WideBlock {
                 area: Rect::new(2, 5, 20, 3),
@@ -1190,6 +1200,20 @@ mod tests {
             .map(|x| buffer[(x, glyph.y)].symbol().to_string())
             .collect();
         assert!(row.contains("copied"), "{row}");
+    }
+
+    #[test]
+    fn hovering_an_expandable_calls_head_marks_it_hovered() {
+        let mut app = app();
+        app.wide.clear();
+        app.folds = vec![ui::FoldArea {
+            area: Rect::new(0, 4, 60, 2),
+            id: ToolCallId::new("t1"),
+        }];
+        app.mouse(wheel(MouseEventKind::Moved, KeyModifiers::NONE, 3, 5));
+        assert_eq!(app.hover_fold, Some(ToolCallId::new("t1")));
+        app.mouse(wheel(MouseEventKind::Moved, KeyModifiers::NONE, 3, 9));
+        assert_eq!(app.hover_fold, None);
     }
 
     #[test]
