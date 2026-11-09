@@ -230,6 +230,11 @@ pub async fn run(
     let mut keys = key_thread();
     let mut terminal = ratatui::init();
     let _ = crossterm::execute!(io::stdout(), EnableMouseCapture);
+    let restore_terminal = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+        restore_terminal(info);
+    }));
     let result = loop {
         if let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
             break Err(Error::into_internal_error(error));
