@@ -35,13 +35,16 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
-- The session has no panes. A header names the agent (by its config entry when
-  it has one), whether it is working,
-  decade when connected and the session, and the conversation fills the width
-  under it. Your prompts sit on a shaded row behind `>`, the agent's text
-  starts with `●` and its thoughts with a dim `✻`. A tool call is two rows: a
-  dot coloured by status, the kind and the title, then the location, the size
-  of any edit or the status. A title too long for its row is cut with `…`.
+- The session has no panes and reads like a messaging thread. A header names
+  the agent (by its config entry when it has one), whether it is working,
+  decade when connected and the session. Your messages sit in a rounded bubble
+  on a shaded background against the right edge, at most 70% of the width.
+  The agent's text starts with `●`, its thoughts with a dim `✻`, and both stay
+  left with a 10% margin on the right. A tool call is two rows: a dot coloured
+  by status, the kind and the title, then the location, the size of any edit
+  or the status. A title too long for its row is cut with `…`. Your answer to
+  a permission request is a shaded chip on the right holding the choice, and
+  notices are centred and dim.
 - The prompt sits between two rules and shows three rows. It wraps at word
   breaks and grows with the text up to half the screen. The footer under it
   lists the keys that work in the current state and, when the agent has sent a

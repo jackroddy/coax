@@ -268,30 +268,15 @@ fn screen_style(style: cmr::Style) -> Style {
 
 fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
     let width = area.width.max(4) as usize;
+    let usable = width - width / 10;
     let mut lines: Vec<Line> = Vec::new();
     for (index, entry) in app.transcript.entries.iter().enumerate() {
         match entry {
-            Entry::User(text) => {
-                let first = lines.len();
-                wrapped(
-                    "> ",
-                    "  ",
-                    bold(),
-                    text,
-                    width,
-                    Style::default(),
-                    &mut lines,
-                );
-                for line in &mut lines[first..] {
-                    let pad = width.saturating_sub(line.width());
-                    line.push_span(" ".repeat(pad));
-                    line.style = Style::new().bg(palette::SHADE);
-                }
-            }
+            Entry::User(text) => lines.extend(bubble(text, width)),
             Entry::Agent(text) => {
                 let body = app
                     .rendered
-                    .agent(index, text, width.saturating_sub(2).max(1));
+                    .agent(index, text, usable.saturating_sub(2).max(1));
                 let lead = Span::styled("● ", Style::new().fg(palette::AGENT));
                 if body.is_empty() {
                     lines.push(Line::from(lead.clone()));
@@ -307,14 +292,20 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
                     lines.push(Line::from(spans));
                 }
             }
-            Entry::Thought(text) => wrapped("✻ ", "  ", dim(), text, width, dim(), &mut lines),
-            Entry::Tool(tool) => lines.extend(tool_block(tool, &app.cwd, width)),
-            Entry::Permission { title, choice } => {
-                lines.push(Line::from(format!("  ⎿  {choice}  {title}")).style(dim()));
+            Entry::Thought(text) => wrapped("✻ ", "  ", dim(), text, usable, dim(), &mut lines),
+            Entry::Tool(tool) => lines.extend(tool_block(tool, &app.cwd, usable)),
+            Entry::Permission { choice, .. } => {
+                let chip = format!(" {choice} ");
+                let pad = width.saturating_sub(chip.chars().count());
+                lines.push(Line::from(vec![
+                    Span::raw(" ".repeat(pad)),
+                    Span::styled(chip, Style::new().bg(palette::SHADE)),
+                ]));
             }
             Entry::Notice(text) => {
-                lines
-                    .push(Line::from(format!("! {text}")).style(Style::new().fg(palette::WORKING)));
+                let text = cut(text, width);
+                let pad = (width - text.chars().count()) / 2;
+                lines.push(Line::from(format!("{}{text}", " ".repeat(pad))).style(dim()));
             }
         }
         lines.push(Line::default());
@@ -338,6 +329,46 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &mut App) {
         visible.push(Line::styled(format!("⋯ {} more below", app.scroll), dim()));
     }
     frame.render_widget(Paragraph::new(visible), area);
+}
+
+/// A message of yours as a rounded bubble against the right edge, at most
+/// 70% of `width` wide.
+fn bubble(text: &str, width: usize) -> Vec<Line<'static>> {
+    let widest = (width * 7 / 10).max(5);
+    let mut rows: Vec<String> = Vec::new();
+    for paragraph in text.split('\n') {
+        let pieces = textwrap::wrap(paragraph, widest - 4);
+        if pieces.is_empty() {
+            rows.push(String::new());
+        }
+        rows.extend(pieces.into_iter().map(|piece| piece.into_owned()));
+    }
+    let longest = rows
+        .iter()
+        .map(|row| row.chars().count())
+        .max()
+        .unwrap_or(0);
+    let inner = longest + 2;
+    let pad = " ".repeat(width.saturating_sub(inner + 2));
+    let fill = Style::new().bg(palette::SHADE);
+    let edge = |left: &str, middle: String, right: &str| {
+        Line::from(vec![
+            Span::raw(pad.clone()),
+            Span::styled(format!("{left}{middle}{right}"), dim()),
+        ])
+    };
+    let mut lines = vec![edge("╭", "─".repeat(inner), "╮")];
+    for row in rows {
+        let gap = " ".repeat(longest - row.chars().count());
+        lines.push(Line::from(vec![
+            Span::raw(pad.clone()),
+            Span::styled("│", dim()),
+            Span::styled(format!(" {row}{gap} "), fill),
+            Span::styled("│", dim()),
+        ]));
+    }
+    lines.push(edge("╰", "─".repeat(inner), "╯"));
+    lines
 }
 
 fn wrapped(
@@ -747,5 +778,41 @@ mod tests {
         assert_eq!(view.rows.len(), 5);
         assert!(!view.starts_here);
         assert_eq!(view.cursor.1, 4);
+    }
+
+    #[test]
+    fn a_short_message_gets_a_bubble_as_wide_as_its_text_plus_four() {
+        let lines = plain(&bubble("hi", 40));
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], format!("{}╭────╮", " ".repeat(34)));
+        assert_eq!(lines[1], format!("{}│ hi │", " ".repeat(34)));
+        assert_eq!(lines[2], format!("{}╰────╯", " ".repeat(34)));
+    }
+
+    #[test]
+    fn a_bubble_sits_flush_against_the_right_edge_at_any_width() {
+        for width in [20, 60, 100] {
+            for line in bubble("hello there", width) {
+                assert_eq!(line.width(), width);
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_message_wraps_inside_a_bubble_of_seventy_percent_of_the_width() {
+        let text = "one two three four five six seven eight nine ten eleven twelve";
+        let lines = bubble(text, 40);
+        assert!(lines.len() > 3);
+        for line in &lines {
+            assert_eq!(line.width(), 40);
+            assert!(line.to_string().trim_start().chars().count() <= 28);
+        }
+        let first = lines[0].to_string();
+        assert_eq!(first.trim_start().chars().count(), 28);
+        assert!(
+            plain(&lines[1..lines.len() - 1])
+                .iter()
+                .all(|row| row.trim_start().starts_with('│') && row.ends_with('│'))
+        );
     }
 }
