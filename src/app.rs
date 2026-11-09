@@ -23,6 +23,7 @@ use tokio::sync::oneshot;
 use crate::acp::{Applied, Change, Event, Link};
 use crate::clipboard;
 use crate::command::{self, Candidate, Kind};
+use crate::diff;
 use crate::editor;
 use crate::prompt;
 use crate::session::{Entry, Transcript};
@@ -182,6 +183,9 @@ pub struct App {
 
 pub struct Permission {
     pub title: String,
+
+    /// The lines the request's diffs add and remove.
+    pub changed: (usize, usize),
     pub options: Vec<PermissionOption>,
     pub update: Box<ToolCallUpdate>,
     reply: oneshot::Sender<RequestPermissionOutcome>,
@@ -304,6 +308,7 @@ impl App {
                     .clone()
                     .unwrap_or_else(|| update.tool_call_id.to_string());
                 let permission = Permission {
+                    changed: diff::size(update.fields.content.as_deref().unwrap_or(&[])),
                     title,
                     options,
                     update,
@@ -1734,6 +1739,7 @@ mod tests {
             locations: Vec::new(),
             content: vec![ToolCallContent::Diff(diff)],
             cancelled: false,
+            changed: (0, 0),
             agent: false,
             children: Vec::new(),
         };
@@ -1998,6 +2004,7 @@ mod tests {
     fn open_permission(app: &mut App) {
         let (reply, _answer) = oneshot::channel();
         app.permission = Some(Permission {
+            changed: (0, 0),
             title: "Write".to_string(),
             options: Vec::new(),
             update: Box::new(ToolCallUpdate::new("t1", Default::default())),

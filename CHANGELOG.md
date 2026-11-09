@@ -224,6 +224,9 @@ command line, the keys, and the scenario format the fake agent reads.
 - The token counts on the status line are session totals. Each turn's input,
   cached reads and writes add to the up count and its output to the down
   count. They used to show the last turn only.
+- The `+N −M` size of an edit counts the lines that changed, taken from the
+  same line diff the expanded view shows. It counted every line of the old and
+  new texts. The permission box and a loaded session count the same way.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

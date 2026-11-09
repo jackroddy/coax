@@ -1,5 +1,6 @@
 type Meta = serde_json::Map<String, serde_json::Value>;
 
+use crate::diff;
 use agent_client_protocol::v1::schema::{
     ContentBlock, ContentChunk, MessageId, PlanEntry, SessionUpdate, StopReason, ToolCall,
     ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolKind,
@@ -15,6 +16,9 @@ pub struct Tool {
 
     /// Whether the turn ended or the agent exited before the call finished.
     pub cancelled: bool,
+
+    /// The lines the call's diffs add and remove.
+    pub changed: (usize, usize),
 
     /// Whether the call starts a subagent, though it may have no children
     /// yet, or none at all after a replay.
@@ -245,6 +249,7 @@ impl Transcript {
             tool.locations = locations;
         }
         if let Some(content) = fields.content {
+            tool.changed = diff::size(&content);
             tool.content = content;
         }
     }
@@ -292,6 +297,7 @@ fn tool(call: ToolCall) -> Tool {
         kind: call.kind,
         status: call.status,
         locations: call.locations,
+        changed: diff::size(&call.content),
         content: call.content,
         cancelled: false,
         agent: starts_subagent(call.meta.as_ref()),
@@ -533,5 +539,37 @@ mod tests {
         ));
         assert!(matches!(&transcript.entries[0], Entry::Tool(tool) if tool.agent));
         assert!(matches!(&transcript.entries[1], Entry::Tool(tool) if !tool.agent));
+    }
+
+    #[test]
+    fn an_edits_size_counts_the_changed_lines_when_the_call_arrives_and_when_it_updates() {
+        use agent_client_protocol::v1::schema::Diff;
+
+        let lines = |marker: &str| {
+            (0..40)
+                .map(|n| {
+                    if n == 7 {
+                        marker.to_string()
+                    } else {
+                        format!("line {n}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let mut diff = Diff::new("a.rs", lines("new"));
+        diff.old_text = Some(lines("old"));
+        let mut transcript = Transcript::default();
+        transcript.apply(SessionUpdate::ToolCall(ToolCall::new("e1", "Edit")));
+        transcript.apply(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "e1",
+            ToolCallUpdateFields::new().content(vec![ToolCallContent::Diff(diff.clone())]),
+        )));
+        transcript.apply(SessionUpdate::ToolCall(
+            ToolCall::new("e2", "Edit").content(vec![ToolCallContent::Diff(diff)]),
+        ));
+        for entry in &transcript.entries {
+            assert!(matches!(entry, Entry::Tool(tool) if tool.changed == (1, 1)));
+        }
     }
 }

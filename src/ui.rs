@@ -14,6 +14,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, ExitKey, MenuTarget};
 use crate::command;
+use crate::diff::line_diff;
 use crate::header;
 use crate::palette;
 use crate::session::{Child, Entry, Tool};
@@ -887,7 +888,7 @@ fn tool_rows(
     let room = width.saturating_sub(lead.width());
     let mut second = vec![lead];
     let mut detail = Vec::new();
-    let (added, removed) = diff_size(&tool.content);
+    let (added, removed) = tool.changed;
     let mut used = 0;
     if added + removed > 0 {
         let plus = format!("+{added}");
@@ -1008,65 +1009,6 @@ fn with_marker(
 
 /// The unchanged lines kept either side of a change in a diff.
 const DIFF_CONTEXT: usize = 2;
-
-/// The most cells of the table that finds a diff's common lines. Past it the
-/// old lines show as removed and the new as added.
-const DIFF_CELLS: usize = 4_000_000;
-
-/// How a line of a diff stands: `' '` unchanged, `'-'` removed, `'+'` added.
-fn line_diff<'a>(old: &'a str, new: &'a str) -> Vec<(char, &'a str)> {
-    let old: Vec<&str> = old.lines().collect();
-    let new: Vec<&str> = new.lines().collect();
-    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-    let suffix = old[prefix..]
-        .iter()
-        .rev()
-        .zip(new[prefix..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let (old_mid, new_mid) = (
-        &old[prefix..old.len() - suffix],
-        &new[prefix..new.len() - suffix],
-    );
-
-    let mut out: Vec<(char, &str)> = old[..prefix].iter().map(|line| (' ', *line)).collect();
-    if old_mid.len() * new_mid.len() > DIFF_CELLS {
-        out.extend(old_mid.iter().map(|line| ('-', *line)));
-        out.extend(new_mid.iter().map(|line| ('+', *line)));
-    } else {
-        // common[i][j] is the length of the longest run of shared lines in
-        // old_mid[i..] and new_mid[j..], stored row by row
-        let columns = new_mid.len() + 1;
-        let mut common = vec![0u32; (old_mid.len() + 1) * columns];
-        for i in (0..old_mid.len()).rev() {
-            for j in (0..new_mid.len()).rev() {
-                common[i * columns + j] = if old_mid[i] == new_mid[j] {
-                    common[(i + 1) * columns + j + 1] + 1
-                } else {
-                    common[(i + 1) * columns + j].max(common[i * columns + j + 1])
-                };
-            }
-        }
-        let (mut i, mut j) = (0, 0);
-        while i < old_mid.len() && j < new_mid.len() {
-            if old_mid[i] == new_mid[j] {
-                out.push((' ', old_mid[i]));
-                i += 1;
-                j += 1;
-            } else if common[(i + 1) * columns + j] >= common[i * columns + j + 1] {
-                out.push(('-', old_mid[i]));
-                i += 1;
-            } else {
-                out.push(('+', new_mid[j]));
-                j += 1;
-            }
-        }
-        out.extend(old_mid[i..].iter().map(|line| ('-', *line)));
-        out.extend(new_mid[j..].iter().map(|line| ('+', *line)));
-    }
-    out.extend(old[old.len() - suffix..].iter().map(|line| (' ', *line)));
-    out
-}
 
 /// The rows of an edit's diffs: removed lines red after a `-`, added lines
 /// green after a `+`, and the unchanged lines around them dim. A run of
@@ -1222,21 +1164,6 @@ fn location(tool: &Tool, cwd: &Path) -> Option<String> {
     })
 }
 
-fn diff_size(content: &[ToolCallContent]) -> (usize, usize) {
-    let mut added = 0;
-    let mut removed = 0;
-    for content in content {
-        if let ToolCallContent::Diff(diff) = content {
-            added += diff.new_text.lines().count();
-            removed += diff
-                .old_text
-                .as_ref()
-                .map_or(0, |text| text.lines().count());
-        }
-    }
-    (added, removed)
-}
-
 pub fn cut(text: &str, room: usize) -> String {
     if text.width() <= room {
         return text.to_string();
@@ -1276,8 +1203,7 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
         return;
     };
     let mut lines = Vec::new();
-    let content = permission.update.fields.content.as_deref().unwrap_or(&[]);
-    let (added, removed) = diff_size(content);
+    let (added, removed) = permission.changed;
     if added + removed > 0 {
         lines.push(Line::from(vec![
             Span::styled(format!("+{added}"), Style::new().fg(palette::get().green)),
@@ -1718,6 +1644,7 @@ mod tests {
             locations: vec![location],
             content: Vec::new(),
             cancelled: false,
+            changed: (0, 0),
             agent: false,
             children: Vec::new(),
         }
@@ -1757,6 +1684,7 @@ mod tests {
     fn an_edit_shows_its_size_after_the_location() {
         let mut edit = tool("Write the notes", "/work/NOTES.md", None);
         edit.content = vec![ToolCallContent::Diff(Diff::new("NOTES.md", "a\nb\n"))];
+        edit.changed = crate::diff::size(&edit.content);
         assert_eq!(rows(&edit, 80)[1], "  ⎿  NOTES.md  +2 −0");
     }
 
@@ -2106,35 +2034,6 @@ mod tests {
     }
 
     #[test]
-    fn a_line_diff_marks_removed_added_and_unchanged_lines() {
-        assert_eq!(
-            line_diff("a\nb\nc", "a\nx\nc"),
-            [(' ', "a"), ('-', "b"), ('+', "x"), (' ', "c")]
-        );
-        assert_eq!(
-            line_diff("a\nb", "a\nb\nc"),
-            [(' ', "a"), (' ', "b"), ('+', "c")]
-        );
-        assert_eq!(line_diff("", "a"), [('+', "a")]);
-        assert_eq!(line_diff("a\nb", ""), [('-', "a"), ('-', "b")]);
-    }
-
-    #[test]
-    fn a_line_diff_keeps_the_lines_two_ends_share_when_the_middle_moved() {
-        assert_eq!(
-            line_diff("a\nb\nc\nd\ne", "a\nc\nb\nd\ne"),
-            [
-                (' ', "a"),
-                ('-', "b"),
-                (' ', "c"),
-                ('+', "b"),
-                (' ', "d"),
-                (' ', "e")
-            ]
-        );
-    }
-
-    #[test]
     fn diff_rows_show_removed_lines_red_and_added_lines_green() {
         let rows = diff_rows(&diff_of(Some("a\nb\nc"), "a\nx\nc"), 40);
         assert_eq!(plain(&rows), ["  a", "- b", "+ x", "  c"]);
@@ -2184,6 +2083,7 @@ mod tests {
         let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
+        edit.changed = crate::diff::size(&edit.content);
         let cwd = Path::new("/work");
         let (folded, head) = tool_view(&edit, cwd, 60, false, false);
         assert_eq!((folded.len(), head), (2, 2));
@@ -2220,6 +2120,7 @@ mod tests {
         let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
+        edit.changed = crate::diff::size(&edit.content);
         let (rows, _) = tool_view(&edit, Path::new("/work"), 40, false, false);
         assert_eq!(rows[0].width(), 40);
         assert_eq!(last_cell(&rows[0]), ("▸".to_string(), dim()));
@@ -2230,6 +2131,7 @@ mod tests {
         let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
+        edit.changed = crate::diff::size(&edit.content);
         let (rows, _) = tool_view(&edit, Path::new("/work"), 40, true, true);
         let (glyph, style) = last_cell(&rows[0]);
         assert_eq!(glyph, "▾");
@@ -2252,6 +2154,7 @@ mod tests {
         let mut edit = tool("Edit a/very/long/path/to/some/file.rs", "/work/x", None);
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
+        edit.changed = crate::diff::size(&edit.content);
         let (rows, _) = tool_view(&edit, Path::new("/work"), 24, false, false);
         assert_eq!(rows[0].width(), 24);
         assert!(rows[0].to_string().contains('…'));
