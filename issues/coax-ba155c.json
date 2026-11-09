@@ -3,26 +3,29 @@
   "title": "coax does not build against the current decade-channel",
   "body": "coax depends on `decade-channel` by path, at `../decade/decade-channel`. Since decade c1acc26, `decade-channel` has changed its API, and coax no longer compiles against it:\n\n- `decade_channel::code` (with `SHOW`, `MARK`, `Show`, `Mark`) is gone. `src/app.rs` and `src/follow.rs` import it.\n- `Channel::from_env` takes a third argument, `&[Shows]`, the kinds the client can show. `connect_decade` in `src/app.rs` passes two.\n- `Message` has new variants `Show`, `Highlight` and `Clear`, which the match in `App::decade` does not cover.\n\ndecade da499ce says the MCP tools `show`, `highlight` and `clear` replace `code.show`, `code.mark` and `code.clear`, and that a program lists the kinds it shows in hello's `shows` field. Follow-along in `src/follow.rs` sends `code.show` and `code.mark`, so it needs porting to the new verbs.\n\nUntil this is fixed, coax builds only with `decade-channel` taken from decade c1acc26, for example by pointing the path at a `git archive` of that commit. The archive keeps old file times, so touch the files first or cargo reuses a stale build.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/4d38e22a",
-  "lease_expires": "2026-11-09T06:06:57.451055212Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T05:43:13.002069182Z",
-  "updated_at": "2026-11-09T05:51:57.451055212Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T05:52:43.941914673Z",
+  "closed_at": "2026-11-09T05:52:43.941914673Z",
+  "close_reason": "Fixed by removing follow-along, the only code on the old `decade_channel::code` API, and passing no kinds to `Channel::from_env`. Commit \"Remove follow-along into decade's code pane\" on dev.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "90242c8",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8627874",
+      "branch": "dev"
+    }
   }
 }
