@@ -1,8 +1,8 @@
 type Meta = serde_json::Map<String, serde_json::Value>;
 
 use agent_client_protocol::v1::schema::{
-    ContentBlock, PlanEntry, SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallId,
-    ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolKind,
+    ContentBlock, ContentChunk, MessageId, PlanEntry, SessionUpdate, StopReason, ToolCall,
+    ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolKind,
 };
 
 pub struct Tool {
@@ -34,6 +34,16 @@ pub enum Child {
     Tool(Tool),
     Text(String),
     Thought(String),
+
+    /// A message sent to the subagent.
+    User(String),
+}
+
+#[derive(Clone, Copy)]
+enum Role {
+    User,
+    Agent,
+    Thought,
 }
 
 pub enum Entry {
@@ -54,12 +64,16 @@ pub struct Transcript {
     pub plan: Vec<PlanEntry>,
     pub in_flight: bool,
     pub last_stop: Option<StopReason>,
+
+    /// The id of the message the last chunk belonged to.
+    last_message: Option<MessageId>,
 }
 
 impl Transcript {
     pub fn prompt(&mut self, text: String) {
         self.entries.push(Entry::User(text));
         self.in_flight = true;
+        self.last_message = None;
     }
 
     pub fn finished(&mut self, stop: StopReason) {
@@ -125,41 +139,9 @@ impl Transcript {
 
     pub fn apply(&mut self, update: SessionUpdate) {
         match update {
-            SessionUpdate::AgentMessageChunk(chunk) => {
-                let text = content_text(&chunk.content);
-                if let Some(parent) = self.parent(chunk.meta.as_ref()) {
-                    match parent.children.last_mut() {
-                        Some(Child::Text(existing)) => existing.push_str(&text),
-                        _ => parent.children.push(Child::Text(text)),
-                    }
-                    return;
-                }
-                match self.entries.last_mut() {
-                    Some(Entry::Agent(existing)) => existing.push_str(&text),
-                    _ => self.entries.push(Entry::Agent(text)),
-                }
-            }
-            SessionUpdate::AgentThoughtChunk(chunk) => {
-                let text = content_text(&chunk.content);
-                if let Some(parent) = self.parent(chunk.meta.as_ref()) {
-                    match parent.children.last_mut() {
-                        Some(Child::Thought(existing)) => existing.push_str(&text),
-                        _ => parent.children.push(Child::Thought(text)),
-                    }
-                    return;
-                }
-                match self.entries.last_mut() {
-                    Some(Entry::Thought(existing)) => existing.push_str(&text),
-                    _ => self.entries.push(Entry::Thought(text)),
-                }
-            }
-            SessionUpdate::UserMessageChunk(chunk) => {
-                let text = content_text(&chunk.content);
-                match self.entries.last_mut() {
-                    Some(Entry::User(existing)) => existing.push_str(&text),
-                    _ => self.entries.push(Entry::User(text)),
-                }
-            }
+            SessionUpdate::AgentMessageChunk(chunk) => self.chunk(Role::Agent, chunk),
+            SessionUpdate::AgentThoughtChunk(chunk) => self.chunk(Role::Thought, chunk),
+            SessionUpdate::UserMessageChunk(chunk) => self.chunk(Role::User, chunk),
             SessionUpdate::ToolCall(call) => match self.parent(call.meta.as_ref()) {
                 Some(parent) => parent.children.push(Child::Tool(tool(call))),
                 None => self.entries.push(Entry::Tool(tool(call))),
@@ -175,6 +157,50 @@ impl Transcript {
                 self.entries.push(Entry::Notice(text));
             }
             _ => {}
+        }
+    }
+
+    /// Add a chunk of text to the message before it, or start a new message
+    /// when the chunk is another kind, or carries another message id than the
+    /// chunk before it. The chunk goes under its subagent's call when the
+    /// adapter tagged it with one.
+    fn chunk(&mut self, role: Role, chunk: ContentChunk) {
+        let text = content_text(&chunk.content);
+        let joins = match (&self.last_message, &chunk.message_id) {
+            (Some(last), Some(id)) => last == id,
+            _ => true,
+        };
+        self.last_message = chunk.message_id;
+        if let Some(parent) = self.parent(chunk.meta.as_ref()) {
+            match (parent.children.last_mut(), role) {
+                (Some(Child::Text(last)), Role::Agent)
+                | (Some(Child::Thought(last)), Role::Thought)
+                | (Some(Child::User(last)), Role::User)
+                    if joins =>
+                {
+                    last.push_str(&text);
+                }
+                _ => parent.children.push(match role {
+                    Role::Agent => Child::Text(text),
+                    Role::Thought => Child::Thought(text),
+                    Role::User => Child::User(text),
+                }),
+            }
+            return;
+        }
+        match (self.entries.last_mut(), role) {
+            (Some(Entry::Agent(last)), Role::Agent)
+            | (Some(Entry::Thought(last)), Role::Thought)
+            | (Some(Entry::User(last)), Role::User)
+                if joins =>
+            {
+                last.push_str(&text);
+            }
+            _ => self.entries.push(match role {
+                Role::Agent => Entry::Agent(text),
+                Role::Thought => Entry::Thought(text),
+                Role::User => Entry::User(text),
+            }),
         }
     }
 
@@ -429,5 +455,52 @@ mod tests {
             })
             .collect();
         assert_eq!(notices, ["agent exited: exit status: 1: a", "c", "d", "e"]);
+    }
+
+    fn with_id(text: &str, id: &str) -> ContentChunk {
+        let mut chunk = chunk(text);
+        chunk.message_id = Some(MessageId::new(id));
+        chunk
+    }
+
+    #[test]
+    fn chunks_with_different_message_ids_start_separate_entries() {
+        let mut transcript = Transcript::default();
+        transcript.apply(SessionUpdate::UserMessageChunk(with_id("one", "m1")));
+        transcript.apply(SessionUpdate::UserMessageChunk(with_id(" more", "m1")));
+        transcript.apply(SessionUpdate::UserMessageChunk(with_id("two", "m2")));
+        transcript.apply(SessionUpdate::AgentMessageChunk(with_id("a", "m3")));
+        transcript.apply(SessionUpdate::AgentMessageChunk(with_id("b", "m4")));
+        let texts: Vec<&str> = transcript
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                Entry::User(text) | Entry::Agent(text) => text.as_str(),
+                _ => "?",
+            })
+            .collect();
+        assert_eq!(texts, ["one more", "two", "a", "b"]);
+    }
+
+    #[test]
+    fn chunks_without_a_message_id_still_join() {
+        let mut transcript = Transcript::default();
+        transcript.apply(SessionUpdate::UserMessageChunk(with_id("a", "m1")));
+        transcript.apply(SessionUpdate::UserMessageChunk(chunk("b")));
+        assert_eq!(transcript.entries.len(), 1);
+    }
+
+    #[test]
+    fn a_tagged_user_message_goes_under_its_subagent_call() {
+        let mut transcript = Transcript::default();
+        transcript.apply(SessionUpdate::ToolCall(ToolCall::new("t1", "Task")));
+        let mut prompt = chunk("find the bug");
+        prompt.meta = Some(tagged("t1"));
+        transcript.apply(SessionUpdate::UserMessageChunk(prompt));
+        assert_eq!(transcript.entries.len(), 1);
+        let Entry::Tool(task) = &transcript.entries[0] else {
+            unreachable!()
+        };
+        assert!(matches!(&task.children[0], Child::User(text) if text == "find the bug"));
     }
 }

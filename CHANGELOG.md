@@ -212,6 +212,10 @@ command line, the keys, and the scenario format the fake agent reads.
 - Picker boxes under the status line widen to fit their longest row, up to the
   screen width less four columns. They stopped at 60 columns and cut a model's
   description.
+- Text from the agent, your earlier messages and thoughts now start a new
+  entry when the message id changes, so two replayed messages in a row stay
+  two bubbles. A message sent to a subagent shows under its call, dim and
+  marked `>`, where it used to show as your own message.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The

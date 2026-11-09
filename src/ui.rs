@@ -1167,6 +1167,11 @@ fn subagent_block(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> Vec<
                 wrapped("✻ ", "  ", dim(), text, inner, dim(), &mut rows);
                 rows
             }
+            Child::User(text) => {
+                let mut rows = Vec::new();
+                wrapped("> ", "  ", dim(), text, inner, dim(), &mut rows);
+                rows
+            }
         };
         for row in &mut rows {
             row.spans.insert(0, Span::raw(SUBAGENT_INDENT));
