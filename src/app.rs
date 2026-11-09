@@ -777,6 +777,7 @@ impl App {
     pub fn key(&mut self, key: KeyEvent, now: Instant) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         self.unknown = None;
         let armed = self.guard.take().filter(|guard| guard.until > now);
         let exit = match key.code {
@@ -848,6 +849,22 @@ impl App {
                 Action::None
             }
             KeyCode::Esc if self.transcript.in_flight => Action::Cancel,
+            KeyCode::Enter if alt || shift => {
+                self.insert("\n");
+                Action::None
+            }
+            KeyCode::Up => {
+                if let Some(at) = prompt::line_above(&self.input, self.cursor) {
+                    self.cursor = at;
+                }
+                Action::None
+            }
+            KeyCode::Down => {
+                if let Some(at) = prompt::line_below(&self.input, self.cursor) {
+                    self.cursor = at;
+                }
+                Action::None
+            }
             KeyCode::Enter if !matches!(command::parse(&self.input), command::Typed::Plain) => {
                 self.enter_command()
             }
@@ -2520,5 +2537,66 @@ mod tests {
         assert_eq!(app.cursor, 0);
         type_text(&mut app, "x");
         assert_eq!(app.input, "x");
+    }
+
+    #[test]
+    fn alt_enter_and_shift_enter_insert_a_newline_at_the_cursor_and_do_not_send() {
+        let mut app = with_input("ab");
+        chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        let action = app.key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+            Instant::now(),
+        );
+        assert!(matches!(action, Action::None));
+        let action = app.key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            Instant::now(),
+        );
+        assert!(matches!(action, Action::None));
+        assert_eq!(app.input, "a\n\nb");
+        assert_eq!(app.cursor, 3);
+        assert!(app.transcript.entries.is_empty());
+    }
+
+    #[test]
+    fn up_and_down_move_between_lines_keeping_the_column() {
+        let mut app = with_input("日本語\nabcdef\nx");
+        chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 10 + 1);
+        chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 0);
+        chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 0);
+        chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 10 + 4);
+        chord(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(app.cursor, app.input.len());
+    }
+
+    #[test]
+    fn up_and_down_on_a_single_line_prompt_do_nothing() {
+        let mut app = with_input("one line");
+        chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(app.cursor, 8);
+        assert_eq!(app.input, "one line");
+    }
+
+    #[test]
+    fn ctrl_a_ctrl_e_and_ctrl_k_work_on_the_cursors_line() {
+        let mut app = with_input("one\ntwo\nthree");
+        chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert_eq!(app.cursor, 4);
+        chord(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert_eq!(app.cursor, 7);
+        chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        chord(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, "one\ntw\nthree");
+        chord(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, "one\ntwthree");
     }
 }

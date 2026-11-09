@@ -154,6 +154,10 @@ command line, the keys, and the scenario format the fake agent reads.
   the prompt. Delete removes the character after the cursor, Ctrl+w the word
   before it, and Ctrl+k everything from the cursor to the end of the line.
   Ctrl+u still clears the whole prompt.
+- Alt+Enter inserts a newline in the prompt, and so does Shift+Enter in a
+  terminal that reports it apart from Enter. Enter still sends. Each line
+  wraps on its own, and Up and Down move the cursor between lines when the
+  prompt has more than one.
 
 ### Changed
 

@@ -1393,7 +1393,7 @@ fn input_view(text: &str, cursor: usize, width: usize, max_rows: usize) -> Input
         .collect();
     let column = text[all[cursor_row].start..cursor].chars().count();
     let cursor = (
-        (PROMPT_LEAD.len() + column) as u16,
+        (PROMPT_LEAD.len() + column.min(width.max(1) - 1)) as u16,
         (cursor_row - skipped) as u16,
     );
     InputView {
@@ -1404,36 +1404,48 @@ fn input_view(text: &str, cursor: usize, width: usize, max_rows: usize) -> Input
 }
 
 /// Break `text` into rows of at most `width` characters at word breaks, as
-/// byte ranges of `text`. A word longer than a row is split, and the last
-/// row is never full, so the cursor always has a column after the last
-/// character.
+/// byte ranges of `text`. Each line, ended by a newline, starts a new row. A
+/// word longer than a row is split, and the last row is never full, so the
+/// cursor always has a column after the last character.
 fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
     let width = width.max(1);
-    let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut rows = Vec::new();
+    let mut offset = 0;
+    for line in text.split('\n') {
+        wrap_line(line, offset, width, &mut rows);
+        offset += line.len() + 1;
+    }
+    if rows
+        .last()
+        .is_some_and(|row| text[row.clone()].chars().count() == width)
+    {
+        rows.push(text.len()..text.len());
+    }
+    rows
+}
+
+/// Push the rows of one line, which starts at byte `offset` of the text.
+fn wrap_line(line: &str, offset: usize, width: usize, rows: &mut Vec<Range<usize>>) {
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
     let mut start = 0;
     let mut used = 0;
     for token in chars.chunk_by(|a, b| (a.1 == ' ') == (b.1 == ' ')) {
         let is_space = token[0].1 == ' ';
         if used + token.len() > width && !is_space && used > 0 {
-            rows.push(start..token[0].0);
+            rows.push(offset + start..offset + token[0].0);
             start = token[0].0;
             used = 0;
         }
         for &(i, _) in token {
             if used == width {
-                rows.push(start..i);
+                rows.push(offset + start..offset + i);
                 start = i;
                 used = 0;
             }
             used += 1;
         }
     }
-    rows.push(start..text.len());
-    if used == width {
-        rows.push(text.len()..text.len());
-    }
-    rows
+    rows.push(offset + start..offset + line.len());
 }
 
 #[cfg(test)]
@@ -1730,6 +1742,24 @@ mod tests {
         let view = input_view(&text, 0, 4, 5);
         assert!(view.starts_here);
         assert_eq!(view.cursor, (2, 0));
+    }
+
+    #[test]
+    fn a_newline_starts_a_new_row_and_each_line_wraps_on_its_own() {
+        assert_eq!(wrap_input("ab\n\ncd ef", 4), ["ab", "", "cd ", "ef"]);
+        assert_eq!(wrap_input("abcd\nx", 4), ["abcd", "x"]);
+        assert_eq!(wrap_input("a\n", 4), ["a", ""]);
+    }
+
+    #[test]
+    fn the_cursor_is_on_the_row_after_a_newline() {
+        let view = input_view("ab\ncd", 3, 20, 10);
+        assert_eq!(view.cursor, (2, 1));
+        let view = input_view("ab\ncd", 2, 20, 10);
+        assert_eq!(view.cursor, (4, 0));
+        let view = input_view("ab\n", 3, 20, 10);
+        assert_eq!(view.cursor, (2, 1));
+        assert_eq!(view.height(), 2);
     }
 
     #[test]
