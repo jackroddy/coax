@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T04:38:05.879468285Z",
-  "updated_at": "2026-11-09T04:38:05.879468285Z",
+  "updated_at": "2026-11-09T10:31:37.612731683Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "4bfb019f",
+      "at": "2026-11-09T10:31:37.612730993Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Landed in 95a68b4 on dev. The fetch is a `curl` subprocess, so no HTTP crate was added. It reads one `agent.json` per id. I did not look for a registry index file. Only the numbers before `-` or `+` are compared, so a preview suffix is ignored on both sides. Jack's `claude` and `claude-coax` entries have `registry = \"claude-acp\"`.",
+      "commit": "95a68b4",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e9ae3c8",
