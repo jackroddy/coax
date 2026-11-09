@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:28:08.26836425Z",
-  "updated_at": "2026-11-09T09:02:28.042832175Z",
+  "updated_at": "2026-11-09T20:32:49.197092627Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -48,6 +48,14 @@
       "author": "Jack Roddy/4d38e22a",
       "text": "Landed on dev since the four-step redesign: the borderless layout (81c6809), the message thread (ee203c6), bordered boxes and the palette (be5017b, c0adfe2), panning (567afeb), the picker look (a8a85f2, f8a9596), header chips (4a2d95f), and the two-line Powerline header with drag, copy, expandable diffs and output (fb5026f, 8517a80, 1fd2c24). In progress: hover text on coloured chips uses the foreground colour, and clickable blocks get a fold marker.",
       "commit": "1fd2c24",
+      "branch": "dev"
+    },
+    {
+      "id": "3ef97055",
+      "at": "2026-11-09T20:32:49.197091867Z",
+      "author": "Jack Roddy/4d38e22a",
+      "text": "Since the last note, the hover-contrast fix was dropped along with the Powerline header, and these landed on dev:\n\n- fold markers on expandable tool calls (af6d915)\n- the settings as a plain-text line, and scroll bars under wide blocks in place of the arrows (0f226e0)\n- a scroll bar for the conversation (54e01e8)\n- the picker starting on the newest session (3a6ef1f)\n- the header gone, with its contents in one status line under the prompt (9b21d7f)\n- the copy glyph changed to `⧉`, and picker boxes allowed past 60 columns (1076bb1, 89ffc7f)\n\nThe issue stays open for changes Jack asks for once he uses coax day to day.",
+      "commit": "95a68b4",
       "branch": "dev"
     }
   ],
