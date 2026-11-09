@@ -123,6 +123,7 @@ async fn main() {
         auto_allow: options.auto_allow,
         keys: app::key_thread(),
         links: LinksConfig::default(),
+        registry: None,
     };
     let result = match options.launch {
         Launch::Command(words) => match AcpAgent::from_args(words.clone()) {
@@ -138,6 +139,7 @@ async fn main() {
                 Some(agent) => {
                     log::info("agent.chosen", json!({"name": name}));
                     opening.links = config.links.clone();
+                    opening.registry = config.registries.get(&name).cloned();
                     open(AcpAgent::new(agent.clone()), Some(name), opening).await
                 }
                 None => fail(2, &format!("no agent named {name} in {}", path.display())),
@@ -189,8 +191,12 @@ async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), 
     }
     match choice {
         Choice::Quit => Ok(()),
-        Choice::Agent(name) => agents.open(name, opening).await,
+        Choice::Agent(name) => {
+            opening.registry = config.registries.get(name).cloned();
+            agents.open(name, opening).await
+        }
         Choice::Session { agent, id } => {
+            opening.registry = config.registries.get(agent).cloned();
             opening.start = Start::Load(id);
             agents.open(agent, opening).await
         }

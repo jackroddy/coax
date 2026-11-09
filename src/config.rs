@@ -10,7 +10,7 @@ use crate::palette::PaletteConfig;
 
 /// The settings read from `config.toml`.
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "RawConfig")]
 pub struct Config {
     /// The agent the picker starts on.
     pub default: Option<String>,
@@ -19,13 +19,61 @@ pub struct Config {
     #[serde(default)]
     pub agents: BTreeMap<String, AcpAgentConfig>,
 
+    /// The registry id of each agent that has one, by agent name.
+    pub registries: BTreeMap<String, String>,
+
     /// Colour overrides.
-    #[serde(default)]
     pub palette: PaletteConfig,
 
     /// What the links in agent text do.
-    #[serde(default)]
     pub links: LinksConfig,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawConfig {
+    default: Option<String>,
+    #[serde(default)]
+    agents: BTreeMap<String, RawAgent>,
+    #[serde(default)]
+    palette: PaletteConfig,
+    #[serde(default)]
+    links: LinksConfig,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAgent {
+    command: PathBuf,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    registry: Option<String>,
+}
+
+impl From<RawConfig> for Config {
+    fn from(raw: RawConfig) -> Config {
+        let mut agents = BTreeMap::new();
+        let mut registries = BTreeMap::new();
+        for (name, entry) in raw.agents {
+            let mut agent = AcpAgentConfig::new(entry.command).args(entry.args);
+            for (key, value) in entry.env {
+                agent = agent.env(key, value);
+            }
+            if let Some(id) = entry.registry {
+                registries.insert(name.clone(), id);
+            }
+            agents.insert(name, agent);
+        }
+        Config {
+            default: raw.default,
+            agents,
+            registries,
+            palette: raw.palette,
+            links: raw.links,
+        }
+    }
 }
 
 impl Config {
@@ -79,6 +127,24 @@ mod tests {
         assert_eq!(
             config.agents["fake"],
             AcpAgentConfig::new("coax-fake-agent")
+        );
+    }
+
+    #[test]
+    fn an_agent_entry_may_name_its_registry_id() {
+        let config: Config = toml::from_str(
+            "[agents.claude]\ncommand = \"c\"\nregistry = \"claude-acp\"\n[agents.fake]\ncommand = \"f\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.registries["claude"], "claude-acp");
+        assert!(!config.registries.contains_key("fake"));
+        assert_eq!(config.agents["claude"], AcpAgentConfig::new("c"));
+    }
+
+    #[test]
+    fn an_agent_entry_with_an_unknown_key_is_an_error() {
+        assert!(
+            toml::from_str::<Config>("[agents.a]\ncommand = \"c\"\nregistri = \"x\"\n").is_err()
         );
     }
 

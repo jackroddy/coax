@@ -221,6 +221,16 @@ command line, the keys, and the scenario format the fake agent reads.
   - A hovered link turns accent, and its popup closes when the pointer leaves.
     Links inside a table or code block that is wider than the screen are
     drawn but get no hover or click.
+- A new-version notice. An agent entry may set `registry = "<id>"`, its id in
+  the ACP registry. After the agent initializes, coax fetches that id's
+  `agent.json` from the registry's repository with `curl` in the background.
+  When the registry's `version` is later than the agent's reported version,
+  the status line shows `<version> available`, dim, at the right. Only the
+  numbers before any `-` or `+` are compared, so a preview suffix is ignored.
+  The fetched version is cached for a day in `registry-<id>.json` under
+  `$XDG_CACHE_HOME/coax` (`~/.cache/coax` without it). A failed fetch shows
+  nothing and does not hold up the session. coax sends no information about
+  you in the request.
 
 ### Changed
 

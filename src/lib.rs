@@ -13,6 +13,7 @@ pub mod log;
 pub mod palette;
 pub mod picker;
 pub mod prompt;
+pub mod registry;
 pub mod report;
 pub mod scenario;
 pub mod session;

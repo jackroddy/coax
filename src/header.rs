@@ -161,6 +161,9 @@ fn status(app: &App) -> Vec<Item> {
         Some(pane) => items.push(Item::new(format!("decade pane {pane}"), dim(), 0)),
         None => {}
     }
+    if let Some(version) = &app.update {
+        items.push(Item::new(format!("{version} available"), dim(), 4));
+    }
     items.push(state(app));
     items
 }

@@ -29,6 +29,7 @@ use crate::editor;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
 use crate::prompt;
+use crate::registry;
 use crate::report::{self, Reporter, Snapshot};
 use crate::session::{Entry, Transcript};
 use crate::settings::{Control, Setting, Settings};
@@ -174,6 +175,10 @@ pub struct App {
     /// What the hover commands gave, by link target.
     pub link_cache: HashMap<String, Loaded>,
     pub links: LinksConfig,
+
+    /// The registry's version of the agent, when it is later than the
+    /// installed one.
+    pub update: Option<String>,
 
     /// Rows a page scroll moves, set by the last draw.
     pub page: usize,
@@ -1275,6 +1280,9 @@ pub struct Opening {
     pub auto_allow: bool,
     pub keys: Keys,
     pub links: LinksConfig,
+
+    /// The agent's id in the ACP registry, for the new-version check.
+    pub registry: Option<String>,
 }
 
 fn flip(id: &str, on: bool) -> Change {
@@ -1316,6 +1324,7 @@ async fn session(
         auto_allow,
         mut keys,
         links,
+        registry: registry_id,
     } = opening;
     let version = init
         .agent_info
@@ -1414,6 +1423,7 @@ async fn session(
         hover_link: None,
         link_cache: HashMap::new(),
         links,
+        update: None,
         page: 1,
         lines_seen: 0,
         agent,
@@ -1438,6 +1448,15 @@ async fn session(
         link.prompt(app.session.clone(), text)?;
     }
     let (loaded_tx, mut loaded) = mpsc::unbounded_channel::<(String, Result<String, String>)>();
+    let (update_tx, mut updates) = mpsc::unbounded_channel::<String>();
+    let installed = identity.version.clone();
+    if let Some(id) = registry_id {
+        tokio::spawn(async move {
+            if let Some(newer) = registry::newer_than(&id, &installed).await {
+                let _ = update_tx.send(newer);
+            }
+        });
+    }
     let mut spin = tokio::time::interval(SPIN_INTERVAL);
     spin.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut redraw = true;
@@ -1486,6 +1505,10 @@ async fn session(
             },
             Some((target, result)) = loaded.recv() => {
                 app.loaded(target, result);
+                Action::None
+            },
+            Some(newer) = updates.recv() => {
+                app.update = Some(newer);
                 Action::None
             },
             message = async { decade_messages.as_mut().unwrap().recv().await }, if decade_messages.is_some() => {
@@ -1705,6 +1728,7 @@ mod tests {
             hover_link: None,
             link_cache: HashMap::new(),
             links: LinksConfig::default(),
+            update: None,
             wide: vec![WideBlock {
                 area: Rect::new(2, 5, 20, 3),
                 key: (1, 0),
