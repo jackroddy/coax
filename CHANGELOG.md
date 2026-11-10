@@ -296,8 +296,11 @@ command line, the keys, and the scenario format the fake agent reads.
 - The session has no panes and reads like a messaging thread. The
   conversation starts on the first row, and a dim status line under the
   prompt carries the settings, the plan summary, context, tokens, cost and
-  decade when connected, and whether the agent is working, with a spinner
-  stepping through `◐◓◑◒`. Your messages sit in a rounded box
+  decade when connected, and `idle` between turns. While a turn runs, a row
+  above the prompt shows a spinner stepping through `◐◓◑◒`, `working`, the
+  time since the prompt was sent and `esc to cancel`. While a permission
+  request waits, the row reads `waiting for you` in yellow, with the time.
+  Your messages sit in a rounded box
   in the accent colour against the right edge, at most 70% of the width. The
   agent's text sits in a blue rounded box on the left, at most 90% of the
   width. Thoughts start with a dim `✻` and stay unboxed with a 10% margin on
@@ -310,7 +313,7 @@ command line, the keys, and the scenario format the fake agent reads.
 - The prompt sits between two rules and shows one row. It wraps at word
   breaks and grows with the text up to half the screen. There is no footer
   row of key hints. When the agent has sent a plan, the status line shows how
-  many steps are done, before the working or idle state.
+  many steps are done, before the idle state.
 - Ctrl+c no longer quits at once in a session. While the agent is working it
   cancels the turn, as Esc does, and with text in the prompt it clears the
   prompt. Otherwise, including with the permission box open, it arms an exit

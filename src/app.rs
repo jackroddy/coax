@@ -2610,16 +2610,44 @@ mod tests {
         );
     }
 
+    /// The row above the upper rule, on a 30-row screen with a one-row
+    /// prompt.
+    fn working_row(app: &mut App, width: u16) -> String {
+        let buffer = header_buffer(app, width);
+        (0..width)
+            .map(|x| buffer[(x, 25)].symbol().to_string())
+            .collect()
+    }
+
     #[test]
-    fn the_working_state_shows_the_spinner_frame() {
+    fn a_running_turn_shows_the_spinner_time_and_cancel_key_above_the_prompt() {
         let mut app = with_settings();
         app.transcript.prompt("hi".to_string());
-        let frame = |app: &mut App| status_row(app, 100);
-        assert!(frame(&mut app).ends_with("◐ working "));
+        assert!(working_row(&mut app, 100).starts_with(" ◐ working · 0s · esc to cancel "));
         app.spinner = 1;
-        assert!(frame(&mut app).ends_with("◓ working "));
+        assert!(working_row(&mut app, 100).starts_with(" ◓ working "));
         app.spinner = 5;
-        assert!(frame(&mut app).ends_with("◓ working "));
+        assert!(working_row(&mut app, 100).starts_with(" ◓ working "));
+        let status = status_row(&mut app, 100);
+        assert!(!status.contains("working") && !status.contains("idle"));
+    }
+
+    #[test]
+    fn a_waiting_permission_turns_the_working_line_to_waiting_for_you() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        open_permission(&mut app);
+        assert!(working_row(&mut app, 100).starts_with(" waiting for you · 0s "));
+    }
+
+    #[test]
+    fn the_working_line_goes_when_the_turn_ends() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        app.transcript
+            .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
+        assert!(!header_rows_all(&mut app, 100).contains("working"));
+        assert!(status_row(&mut app, 100).ends_with("idle "));
     }
 
     #[test]

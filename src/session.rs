@@ -1,5 +1,7 @@
 type Meta = serde_json::Map<String, serde_json::Value>;
 
+use std::time::Instant;
+
 use serde_json::json;
 
 use crate::diff;
@@ -80,6 +82,9 @@ pub struct Transcript {
     pub in_flight: bool,
     pub last_stop: Option<StopReason>,
 
+    /// When the latest prompt was sent.
+    pub turn_started: Option<Instant>,
+
     /// The id of the message the last chunk belonged to.
     last_message: Option<MessageId>,
 }
@@ -88,6 +93,7 @@ impl Transcript {
     pub fn prompt(&mut self, text: String) {
         self.entries.push(Entry::User(text));
         self.in_flight = true;
+        self.turn_started = Some(Instant::now());
         self.last_message = None;
     }
 

@@ -172,27 +172,28 @@ fn status(app: &App) -> Vec<Item> {
     if let Some(version) = &app.update {
         items.push(Item::new(format!("{version} available"), dim(), 4));
     }
-    items.push(state(app));
+    items.extend(state(app));
     items
 }
 
-fn state(app: &App) -> Item {
-    let yellow = Style::new().fg(palette::get().yellow);
+/// The idle state, or `None` while a turn runs and the working line above
+/// the prompt shows it.
+fn state(app: &App) -> Option<Item> {
     if app.transcript.in_flight {
-        let spinner = SPINNER[app.spinner % SPINNER.len()];
-        return Item::new(format!("{spinner} working"), yellow, 0);
+        return None;
     }
-    match &app.transcript.last_stop {
+    let yellow = Style::new().fg(palette::get().yellow);
+    Some(match &app.transcript.last_stop {
         Some(stop) if *stop != StopReason::EndTurn => {
             Item::new(format!("idle, {stop:?}"), yellow, 0)
         }
         _ => Item::new("idle".to_string(), dim(), 0),
-    }
+    })
 }
 
 /// The status line: the settings on the left and the session status on the
-/// right, all dim but the mode value when the agent does not ask and the
-/// working state.
+/// right, all dim but the mode value when the agent does not ask and a turn
+/// that stopped for a reason other than its end.
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
     let palette = palette::get();
     let settings = app.settings.settings();

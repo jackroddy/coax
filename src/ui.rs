@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::v1::schema::{
     ContentBlock, PlanEntryStatus, ToolCallContent, ToolCallId, ToolCallStatus, ToolKind,
@@ -41,9 +41,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         0
     };
+    let working_rows = u16::from(app.transcript.in_flight);
     let [
         transcript_area,
         plan_area,
+        working_area,
         upper_rule,
         prompt_area,
         lower_rule,
@@ -51,6 +53,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
+        Constraint::Length(working_rows),
         Constraint::Length(1),
         Constraint::Length(input.height() as u16),
         Constraint::Length(1),
@@ -61,6 +64,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
     draw_plan(frame, plan_area, app);
+    if app.transcript.in_flight {
+        let elapsed = app
+            .transcript
+            .turn_started
+            .map_or(Duration::ZERO, |start| start.elapsed());
+        let line = working_line(app.spinner, elapsed, app.permission.is_some());
+        frame.render_widget(Paragraph::new(line), working_area);
+    }
     draw_rule(frame, upper_rule);
     draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
     draw_commands(frame, app, upper_rule);
@@ -69,6 +80,38 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     header::draw_status(frame, status_area, app);
     draw_menu(frame, app);
     draw_link_popup(frame, app);
+}
+
+/// The row above the prompt while a turn runs: the spinner, the time since
+/// the prompt was sent and the cancel key, or that a permission waits.
+fn working_line(spinner: usize, elapsed: Duration, waiting: bool) -> Line<'static> {
+    let yellow = Style::new().fg(palette::get().yellow);
+    let time = Span::styled(format!(" · {}", elapsed_text(elapsed)), dim());
+    if waiting {
+        return Line::from(vec![
+            Span::raw(" "),
+            Span::styled("waiting for you", yellow),
+            time,
+        ]);
+    }
+    let spinner = header::SPINNER[spinner % header::SPINNER.len()];
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(format!("{spinner} working"), yellow),
+        time,
+        Span::styled(" · esc to cancel", dim()),
+    ])
+}
+
+fn elapsed_text(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3600 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h {:02}m", seconds / 3600, seconds / 60 % 60)
+    }
 }
 
 /// The popup over the link the pointer is on, below the pointer or above it
@@ -1849,6 +1892,15 @@ mod tests {
     use agent_client_protocol::v1::schema::{Diff, ToolCallLocation};
 
     use super::*;
+
+    #[test]
+    fn the_working_time_reads_in_seconds_then_minutes_then_hours() {
+        let text = |seconds| elapsed_text(Duration::from_secs(seconds));
+        assert_eq!(text(0), "0s");
+        assert_eq!(text(59), "59s");
+        assert_eq!(text(65), "1m 05s");
+        assert_eq!(text(3720), "1h 02m");
+    }
 
     fn flat(parts: &[Part]) -> Vec<Line<'static>> {
         parts
