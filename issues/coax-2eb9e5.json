@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T00:31:30.609659627Z",
-  "updated_at": "2026-11-10T22:00:53.739046176Z",
+  "updated_at": "2026-11-10T22:00:53.74857972Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "07108cb7",
+      "at": "2026-11-10T22:00:53.74857829Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Jack chose coax-drawn selection over the terminal's own and over a capture toggle. A copy takes the rendered text, and soft wraps are joined back rather than copied as line breaks.",
+      "commit": "e70e227",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "95a68b4",
