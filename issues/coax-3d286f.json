@@ -15,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T04:57:35.234685376Z",
-  "updated_at": "2026-11-09T20:32:49.207094183Z",
+  "updated_at": "2026-11-10T23:28:59.091549434Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -42,6 +42,14 @@
       "author": "Jack Roddy/4d38e22a",
       "text": "A revised style is drafted as `output-styles/coax-next.md` in the same profile folder, beside the active `coax.md`. It describes the bordered boxes, scroll bars and copy buttons, and teaches the link forms coax now draws (7a387c5): `file:` for code locations, `foam:` for issues, web links, and `color:` for status words. To try it, set `outputStyle` to `Coax next` in that folder's `settings.json`. The scheme names and the wording are Jack's to review.",
       "commit": "95a68b4",
+      "branch": "dev"
+    },
+    {
+      "id": "49fcc165",
+      "at": "2026-11-10T23:28:59.091548804Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Jack approved the revised draft. It replaced `output-styles/coax.md` in the trial profile, with the commands section from coax-5e39b9 added, and `coax-next.md` is gone. `outputStyle` stays `Coax`, so the next session runs it. The profile still lives under `tmp-claude/` until guise can hold it.",
+      "commit": "8825ec6",
       "branch": "dev"
     }
   ],
