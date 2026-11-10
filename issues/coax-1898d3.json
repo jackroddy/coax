@@ -3,7 +3,7 @@
   "title": "Agent text can carry links with a hover popup and a click that opens the target through decade",
   "body": "Agent text reaches coax as markdown and is drawn through cmr. cmr leaves links (`[text](url)`) as typed, and the coax output style tells the model not to write them. Nothing in a reply is interactive. coax already captures the mouse, so it knows where the pointer is and what was clicked, and it holds a socket to decade (`connect_decade` in `src/app.rs`). decade's protocol has `show`, `highlight` and `clear` verbs, each naming a kind such as `file`, delivered to the pane that shows that kind.\n\nJack wants coax to define its own link form, with two behaviours:\n\n- Hovering a link opens a popup with more about its target.\n- Clicking a link sends an open command over the decade channel.\n\nUse cases he named:\n\n- Hovering a foam issue ID shows the issue's description.\n- Clicking a file path opens the file in whatever decade pane shows files.\n\nThis needs serious design before any code.\n\n## Open\n\n- The syntax. Candidates: plain markdown links with coax-specific schemes, as in `[coax-12e8af](foam:coax-12e8af)` and `[src/ui.rs:40](file:src/ui.rs#40)`; a bracket form of coax's own, as in `[[foam:coax-12e8af]]`; or no syntax at all, with coax recognising issue IDs and paths in plain text. The model has to be taught whichever wins, through the coax output style (coax-3d286f).\n- Where hover content comes from. For a foam issue, coax could run `foam show --json`. A general answer could be link kinds defined in `config.toml`, each with a command whose output fills the popup. Whatever the answer, a slow or failing provider must not stall drawing.\n- What a click sends. `show` with kind `file`, target the path and `at` the line fits decade's existing verb for files. Other kinds may need verbs decade does not have yet, and decade-channel is still changing.\n- What happens with no decade connection, or no pane that shows the kind: a dim notice, or the link drawn as plain text.\n- How links render: colour, underline, and whether cmr learns the syntax or coax handles it on top of cmr's rows.\n- Whether link kinds are fixed in coax or come from config, given that coax is meant to stay agent-generic.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T09:22:35.258988956Z",
-  "updated_at": "2026-11-09T10:31:28.621607845Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T22:05:33.416127327Z",
+  "closed_at": "2026-11-10T22:05:33.416127327Z",
+  "close_reason": "Landed in 7a387c5. Jack kept the scheme names `file:`, `foam:` and `color:`, and `open_urls` stays false. The wording that teaches agents the forms stays with coax-3d286f.",
+  "resolution": "done",
   "notes": [
     {
       "id": "f1fd8e53",
@@ -40,6 +40,9 @@
       "commit": "3a6ef1f",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e70e227",
+      "branch": "dev"
+    }
   }
 }
