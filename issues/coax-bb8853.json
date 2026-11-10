@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:15:52.290912497Z",
-  "updated_at": "2026-11-10T20:15:52.290912497Z",
+  "updated_at": "2026-11-10T22:59:39.165188177Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "d28a6dfc",
+      "at": "2026-11-10T22:59:39.165187597Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "A rendered `markdown` fence that holds code blocks needs cmr-f8e450 fixed first. cmr closes a fence at any run of three backticks, so a four-backtick block ends at the first inner fence.",
+      "commit": "a1ffd60",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "69398c0",
