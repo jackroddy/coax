@@ -1,0 +1,28 @@
+{
+  "id": "coax-bb8853",
+  "title": "A markdown code block draws as rendered markdown, with a toggle to its source",
+  "body": "coax draws a fenced code block through `cmr::layout`, which highlights the lines by the fence's language. A block fenced as `markdown` comes out as plain white source, since markdown is the language cmr renders rather than one it highlights. Agents fence markdown when the person should see its source, as in a proposed issue body or a commit message.\n\n## Proposal\n\n- coax draws a `markdown` fence by passing its lines through `cmr::parse` and laying the blocks out inside the code block's box, at the box's inner width.\n- The box's header row gets a `raw|render` chip beside the copy button. A click switches that block between rendered and source. Rendered is the default.\n- The copy button takes the source in either view.\n- coax keeps the choice per block, as it keeps `pans` for panned blocks.\n\n## Open\n\n- A rendered block may hold its own code blocks and tables. These need their own copy buttons and panning, nested in the outer box.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T20:15:52.290912497Z",
+  "updated_at": "2026-11-10T20:15:52.290912497Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "69398c0",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
