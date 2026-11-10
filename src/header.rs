@@ -122,7 +122,6 @@ fn fit_line(
 }
 
 fn status(app: &App) -> Vec<Item> {
-    let palette = palette::get();
     let mut items = Vec::new();
 
     let plan = &app.transcript.plan;
@@ -132,26 +131,6 @@ fn status(app: &App) -> Vec<Item> {
             .filter(|entry| entry.status == PlanEntryStatus::Completed)
             .count();
         items.push(Item::new(format!("plan {done}/{}", plan.len()), dim(), 1));
-    }
-    if let Some(context) = &app.settings.context {
-        let percent = if context.size == 0 {
-            0
-        } else {
-            (context.used as f64 * 100.0 / context.size as f64).round() as u64
-        };
-        let style = if percent > 95 {
-            Style::new().fg(palette.red)
-        } else if percent > 80 {
-            Style::new().fg(palette.yellow)
-        } else {
-            dim()
-        };
-        let text = format!(
-            "ctx {}/{} {percent}%",
-            settings::count(context.used),
-            settings::count(context.size)
-        );
-        items.push(Item::new(text, style, 2));
     }
     if let Some(tokens) = &app.settings.tokens {
         let text = format!(
@@ -189,6 +168,40 @@ fn state(app: &App) -> Option<Item> {
         }
         _ => Item::new("idle".to_string(), dim(), 0),
     })
+}
+
+const FILLED: char = '▰';
+const EMPTY: char = '▱';
+
+/// The row above the status line: `context:`, the share of the context
+/// window in use, and a bar of parallelograms across the rest of the row.
+pub fn draw_context(frame: &mut Frame, area: Rect, app: &App) {
+    let width = area.width as usize;
+    let line = context_line(app.settings.context.as_ref(), width);
+    frame.render_widget(Paragraph::new(line), area);
+}
+
+fn context_line(context: Option<&settings::Context>, width: usize) -> Line<'static> {
+    let share = context.map(|context| match context.size {
+        0 => 0.0,
+        size => (context.used as f64 / size as f64).min(1.0),
+    });
+    let percent = share.map(|share| (share * 100.0).round() as u64);
+    let style = match percent {
+        Some(percent) if percent > 95 => Style::new().fg(palette::get().red),
+        Some(percent) if percent > 80 => Style::new().fg(palette::get().yellow),
+        _ => dim(),
+    };
+    let number = percent.map_or(String::new(), |percent| format!("{percent}%"));
+    let lead = format!(" context: {number}  ");
+    let bar = width.saturating_sub(lead.width() + 1);
+    let filled = share.map_or(0, |share| (share * bar as f64).round() as usize);
+    Line::from(vec![
+        Span::styled(" context: ", dim()),
+        Span::styled(format!("{number}  "), style),
+        Span::styled(FILLED.to_string().repeat(filled), style),
+        Span::styled(EMPTY.to_string().repeat(bar - filled), dim()),
+    ])
 }
 
 /// The status line: the settings on the left and the session status on the
@@ -280,6 +293,25 @@ mod tests {
     }
 
     const WIDTHS: [usize; 4] = [4, 4, 14, 8];
+
+    #[test]
+    fn the_context_bar_fills_the_row_and_reads_empty_before_a_size_arrives() {
+        let text = |line: Line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.clone())
+                .collect::<String>()
+        };
+        let empty = text(context_line(None, 40));
+        assert_eq!(empty, format!(" context:   {}", "▱".repeat(27)));
+        let half = settings::Context {
+            used: 50,
+            size: 100,
+        };
+        let line = text(context_line(Some(&half), 40));
+        assert!(line.starts_with(" context: 50%  ▰▰▰▰▰▰▰▰▰▰▰▰▱"), "{line}");
+        assert_eq!(line.chars().count(), 39);
+    }
 
     #[test]
     fn a_wide_line_shows_every_setting_and_every_item() {

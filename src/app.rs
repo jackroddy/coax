@@ -2306,7 +2306,7 @@ mod tests {
         typed(&mut app, "/nope");
         app.key(enter(), Instant::now());
         let rows = header_rows_all(&mut app, 60);
-        let last = rows.lines().nth_back(1).unwrap();
+        let last = rows.lines().nth_back(2).unwrap();
         assert!(last.starts_with("── no command /nope ─"), "{last}");
         typed(&mut app, "x");
         assert!(app.unknown.is_none());
@@ -2690,10 +2690,15 @@ mod tests {
             line.starts_with(" auto · opus · effort default · fast off  "),
             "{line}"
         );
-        assert!(
-            line.ends_with("ctx 28k/1.0M 3% · ↑28k ↓4 · $0.14 · idle "),
-            "{line}"
-        );
+        assert!(line.ends_with("↑28k ↓4 · $0.14 · idle "), "{line}");
+        assert!(!line.contains("ctx"), "{line}");
+        let buffer = header_buffer(&mut app, 120);
+        let context: String = (0..120)
+            .map(|x| buffer[(x, 28)].symbol().to_string())
+            .collect();
+        assert!(context.starts_with(" context: 3%  ▰▰▰▱▱"), "{context}");
+        assert_eq!(context.chars().filter(|ch| *ch == '▰').count(), 3);
+        assert_eq!(context.chars().count(), 120);
         assert!(!line.contains("coax"), "{line}");
         assert_eq!(app.chips.len(), 4);
     }
@@ -2791,7 +2796,7 @@ mod tests {
     fn working_row(app: &mut App, width: u16) -> String {
         let buffer = header_buffer(app, width);
         (0..width)
-            .map(|x| buffer[(x, 25)].symbol().to_string())
+            .map(|x| buffer[(x, 24)].symbol().to_string())
             .collect()
     }
 
@@ -2887,10 +2892,10 @@ mod tests {
             .into();
         let rows = header_rows_all(&mut app, 60);
         let rows: Vec<&str> = rows.lines().collect();
-        assert!(rows[22].starts_with(" queued  two "), "{}", rows[22]);
-        assert!(rows[23].starts_with(" queued  three "), "{}", rows[23]);
-        assert!(rows[24].starts_with(" + 2 more queued"), "{}", rows[24]);
-        assert!(rows[25].starts_with(" ◐ working"), "{}", rows[25]);
+        assert!(rows[21].starts_with(" queued  two "), "{}", rows[21]);
+        assert!(rows[22].starts_with(" queued  three "), "{}", rows[22]);
+        assert!(rows[23].starts_with(" + 2 more queued"), "{}", rows[23]);
+        assert!(rows[24].starts_with(" ◐ working"), "{}", rows[24]);
     }
 
     #[test]

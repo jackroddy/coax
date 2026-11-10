@@ -50,6 +50,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         upper_rule,
         prompt_area,
         lower_rule,
+        context_area,
         status_area,
     ] = Layout::vertical([
         Constraint::Min(3),
@@ -58,6 +59,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(working_rows),
         Constraint::Length(1),
         Constraint::Length(input.height() as u16),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -81,6 +83,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_commands(frame, app, upper_rule);
     draw_confirm(frame, transcript_area, app);
     draw_guard_rule(frame, lower_rule, app);
+    header::draw_context(frame, context_area, app);
     header::draw_status(frame, status_area, app);
     draw_menu(frame, app);
     draw_link_popup(frame, app);
