@@ -3,7 +3,7 @@
   "title": "The editor can run inside coax's prompt area",
   "body": "Ctrl+g and `/edit` open the prompt in `$VISUAL` or `$EDITOR` with coax suspended (`with_terminal_suspended` in `app.rs`). The editor takes the whole terminal, so the transcript is out of sight until it exits.\n\n## Proposal\n\nThe editor runs on a pseudo-terminal sized to the prompt area, which grows to half the screen while it runs. coax draws the editor's screen there and forwards keys to it. The transcript keeps drawing above, so a reply can stream in while the next prompt is written. When the editor exits, its text replaces the prompt as it does now.\n\n## Cost\n\n- New dependencies for the pseudo-terminal, the terminal state and its widget, such as `portable-pty`, `vt100` and `tui-term`. Whether `tui-term` builds against ratatui 0.30 is unchecked.\n- Key events turned back into terminal bytes for every modifier and special key, resizing passed through, and a focus rule between the editor and the transcript.\n- The fake-agent tests cannot easily drive a real editor.\n\n## Open\n\n- A decade pane beside coax could hold the editor instead, which leaves the terminal emulation to decade.\n- The gain is small until coax-765bf0 lets a prompt be sent during a turn.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T21:55:54.443636876Z",
-  "updated_at": "2026-11-10T21:55:54.443636876Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T23:34:01.494992292Z",
+  "closed_at": "2026-11-10T23:34:01.494992292Z",
+  "close_reason": "Jack does not want an editor drawn inside coax. Ctrl+g and `/edit` open the prompt in the editor with coax suspended (e70e227).",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e70e227",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8825ec6",
+      "branch": "dev"
+    }
   }
 }
