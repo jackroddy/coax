@@ -1,0 +1,28 @@
+{
+  "id": "coax-06ff60",
+  "title": "Each kind of block has a wrapping default and a toggle",
+  "body": "cmr's one wrapping control is the `width` given to `cmr::render` and `cmr::layout`. With it, cmr wraps paragraphs, headings, list items, quotes and table cells. It never wraps a code block. `code` in cmr's `lib.rs` emits one row per source line, highlighted line by line. coax keeps a code block or a table wider than the pane at its natural width (`kept_whole` in `ui.rs`), and you pan it sideways.\n\nPanning suits code, where a line break changes meaning. It fails for text in a fence, such as a draft issue body. There the agent wraps lines by hand to avoid panning, so the text you approve differs in its line breaks from the text that gets filed.\n\n## Proposal\n\n- Each kind of block has a default, chosen in coax:\n\n| block | default |\n|---|---|\n| code with a programming language | pan |\n| `text` fence, or no language | wrap |\n| table | pan |\n| tool output | pan |\n\n- The box's header row gets a `wrap|pan` chip. A click switches that block, and coax keeps the choice per block.\n- cmr gains a way to wrap a code block's lines after highlighting, so a wrapped line keeps its colours. A wrapped row marks that it continues the line above it.\n\n## Open\n\n- The shape of the cmr change: a flag to `layout`, or a field on `Block::Code`. That needs a cmr issue once the shape is settled.\n- Whether a person can change the defaults in `config.toml`.\n- Which glyph marks a continuation row.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T20:15:52.300552638Z",
+  "updated_at": "2026-11-10T20:15:52.300552638Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "69398c0",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
