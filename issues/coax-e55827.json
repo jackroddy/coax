@@ -3,26 +3,29 @@
   "title": "The status line drops the token totals before it hides rarely changed settings",
   "body": "The status line under the prompt (`src/header.rs` and `src/ui.rs`) shows the settings on the left and the session's numbers on the right. When the line overflows, the right side drops its least important items first: tokens and cost, then the context count, then the plan. Settings move into `⋯` only after that. With the Claude adapter's six settings, whose labels read `fast mode off · ultracode off · agent default`, a 120-column screen loses the `↑ ↓` totals and the cost once the conversation's scroll bar takes its column. The verification run on 2026-11-09 saw this.\n\n## Proposal\n\nSettings that rarely change (`model_config` and uncategorised ones) move into `⋯` before any number on the right is dropped. Mode, model and thought level stay visible as long as anything else does.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-10T19:53:22.468208816Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T20:32:49.216422416Z",
-  "updated_at": "2026-11-10T19:38:22.468208816Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T19:50:22.589487783Z",
+  "closed_at": "2026-11-10T19:50:22.589487783Z",
+  "close_reason": "Done in 69398c0. `fit_line` in `header.rs` hides settings flagged `Setting::rarely_changed` (model config and no category) into `⋯` before it drops any status item, tested by `rarely_changed_settings_leave_into_the_overflow_mark_before_any_item_drops`.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "95a68b4",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "69398c0",
+      "branch": "dev"
+    }
   }
 }
