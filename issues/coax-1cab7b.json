@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T22:18:38.207048395Z",
-  "updated_at": "2026-11-10T22:18:38.207048395Z",
+  "updated_at": "2026-11-10T22:20:52.587406566Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "4ea6761b",
+      "at": "2026-11-10T22:20:52.587405806Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Trial in a decade pane: the terminal answered OSC 11 with `rgb:1f1f/1a1a/2424` and OSC 10 with `rgb:e7e7/dddd/c8c8`, both ended by BEL. A decade pane is an ordinary Wayland window running its own terminal, so these queries reach that terminal and decade does not stand in between.",
+      "commit": "e70e227",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e70e227",
