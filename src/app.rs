@@ -136,6 +136,9 @@ pub struct App {
     /// entry and block.
     pub wraps: HashMap<(usize, usize), bool>,
 
+    /// The tab each tabbed box shows, by entry and the box's first block.
+    pub tabs: HashMap<(usize, usize), usize>,
+
     /// The toggle words on screen, set by the last draw.
     pub toggles: Vec<ui::ToggleArea>,
 
@@ -844,6 +847,9 @@ impl App {
                     }
                     Word::Pan => {
                         self.wraps.insert(toggle.key, false);
+                    }
+                    Word::Tab(tab) | Word::More(tab) => {
+                        self.tabs.insert(toggle.key, tab);
                     }
                 }
                 return Action::None;
@@ -1597,6 +1603,7 @@ async fn session(
         pans: HashMap::new(),
         raw: HashSet::new(),
         wraps: HashMap::new(),
+        tabs: HashMap::new(),
         toggles: Vec::new(),
         wide: Vec::new(),
         unknown: None,
@@ -1918,6 +1925,7 @@ mod tests {
             pans: HashMap::new(),
             raw: HashSet::new(),
             wraps: HashMap::new(),
+            tabs: HashMap::new(),
             toggles: Vec::new(),
             unknown: None,
             v_bar: None,
@@ -2327,6 +2335,80 @@ mod tests {
         app.raw.insert((0, 0));
         header(&mut app, 80);
         assert_eq!(colour(&mut app, Word::Raw), accent);
+    }
+
+    /// An app whose first entry is three adjacent `rust` fences named as
+    /// tabs, drawn once at `width`.
+    fn with_tabs(width: u16) -> App {
+        let mut app = app();
+        app.wide.clear();
+        app.transcript.entries.push(Entry::Agent(
+            "```rust tab=\"owned\"\nlet a = 1;\n```\n\n```rust tab=\"borrowed\"\nlet b = 2;\n```\n\n```rust tab=\"boxed\"\nlet c = 3;\n```"
+                .to_string(),
+        ));
+        header(&mut app, width);
+        app
+    }
+
+    #[test]
+    fn a_tabbed_box_shows_its_first_tab_until_another_tab_is_clicked() {
+        let mut app = with_tabs(80);
+        let screen = header_rows_all(&mut app, 80);
+        assert!(screen.contains("┌ rust   owned borrowed boxed"), "{screen}");
+        assert!(
+            screen.contains("let a = 1;") && !screen.contains("let b"),
+            "{screen}"
+        );
+        let borrowed = toggle_area(&app, Word::Tab(1));
+        assert!(matches!(
+            click(&mut app, borrowed.x, borrowed.y),
+            Action::None
+        ));
+        assert_eq!(app.tabs[&(0, 0)], 1);
+        let screen = header_rows_all(&mut app, 80);
+        assert!(
+            screen.contains("let b = 2;") && !screen.contains("let a"),
+            "{screen}"
+        );
+        let accent = crate::palette::get().accent;
+        let shown = toggle_area(&app, Word::Tab(1));
+        assert_eq!(header_buffer(&mut app, 80)[(shown.x, shown.y)].fg, accent);
+        let owned = toggle_area(&app, Word::Tab(0));
+        assert_ne!(header_buffer(&mut app, 80)[(owned.x, owned.y)].fg, accent);
+    }
+
+    #[test]
+    fn the_copy_glyph_of_a_tabbed_box_takes_the_shown_tab() {
+        let mut app = with_tabs(80);
+        app.tabs.insert((0, 0), 2);
+        header(&mut app, 80);
+        let glyph = app.copies[0].area;
+        let Action::Copy(text) = click(&mut app, glyph.x + glyph.width - 1, glyph.y) else {
+            panic!("expected a copy");
+        };
+        assert_eq!(text, "let c = 3;");
+    }
+
+    #[test]
+    fn tab_names_that_do_not_fit_give_way_to_a_count_that_steps_to_the_next() {
+        let mut app = with_tabs(32);
+        let screen = header_rows_all(&mut app, 32);
+        assert!(screen.contains("┌ rust   owned +2"), "{screen}");
+        let more = toggle_area(&app, Word::More(1));
+        click(&mut app, more.x, more.y);
+        let screen = header_rows_all(&mut app, 32);
+        assert!(screen.contains("┌ rust   borrowed +2"), "{screen}");
+        assert!(screen.contains("let b = 2;"), "{screen}");
+        let more = toggle_area(&app, Word::More(2));
+        click(&mut app, more.x, more.y);
+        let screen = header_rows_all(&mut app, 32);
+        assert!(screen.contains("┌ rust   boxed +2"), "{screen}");
+        assert!(screen.contains("let c = 3;"), "{screen}");
+        assert!(
+            app.toggles
+                .iter()
+                .any(|toggle| toggle.word == Word::More(0))
+        );
     }
 
     /// An app whose first entry is one block fenced with `lang` and a line

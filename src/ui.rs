@@ -322,26 +322,39 @@ enum Part {
         /// Where the links of the rows are drawn.
         runs: Vec<Run>,
     },
-    Block {
-        /// Which block of the entry this is.
-        block: usize,
+    Block(KeptBlock),
 
-        /// The rows at the block's natural width, trailing spaces trimmed.
-        rows: Vec<Line<'static>>,
-        natural: usize,
-
-        /// The text a copy takes, for a literal block.
-        copy: Option<String>,
-
-        /// Where the links of the rows are drawn, before the block pans.
-        runs: Vec<Run>,
-
-        /// A `markdown` block drawn as markdown.
-        rendered: Option<MarkdownView>,
-
-        /// A code block wider than the layout width, wrapped to it.
-        wrapped: Option<Wrapped>,
+    /// Adjacent code blocks that each name a tab, drawn as one box that
+    /// shows one of them.
+    Tabs {
+        /// Which block of the entry the first tab is.
+        first: usize,
+        names: Vec<String>,
+        tabs: Vec<KeptBlock>,
     },
+}
+
+/// A code block, or a table wider than the layout width, kept at its
+/// natural width.
+struct KeptBlock {
+    /// Which block of the entry this is.
+    block: usize,
+
+    /// The rows at the block's natural width, trailing spaces trimmed.
+    rows: Vec<Line<'static>>,
+    natural: usize,
+
+    /// The text a copy takes, for a literal block.
+    copy: Option<String>,
+
+    /// Where the links of the rows are drawn, before the block pans.
+    runs: Vec<Run>,
+
+    /// A `markdown` block drawn as markdown.
+    rendered: Option<MarkdownView>,
+
+    /// A code block wider than the layout width, wrapped to it.
+    wrapped: Option<Wrapped>,
 }
 
 /// The rows of a code block wrapped to the layout width, and whether the
@@ -366,22 +379,18 @@ pub enum Word {
     Raw,
     Wrap,
     Pan,
+
+    /// The name of a tab, by its place in the box.
+    Tab(usize),
+
+    /// The `+N` after the tab names that fit, with the tab a click shows.
+    More(usize),
 }
 
-impl Word {
-    fn text(self) -> &'static str {
-        match self {
-            Word::Render => "render",
-            Word::Raw => "raw",
-            Word::Wrap => "wrap",
-            Word::Pan => "pan",
-        }
-    }
-}
-
-/// The words of one choice on a block's header row, and the one in force.
-struct Toggle {
-    words: &'static [Word],
+/// The words of one choice on a block's header row, each with its text, and
+/// the one in force.
+struct Toggle<'a> {
+    words: &'a [(Word, &'a str)],
     active: Word,
 }
 
@@ -393,7 +402,7 @@ fn toggles_width(toggles: &[Toggle]) -> usize {
     toggles
         .iter()
         .map(|toggle| {
-            let words: usize = toggle.words.iter().map(|word| word.text().width()).sum();
+            let words: usize = toggle.words.iter().map(|(_, text)| text.width()).sum();
             TOGGLE_GAP + words + toggle.words.len() - 1
         })
         .sum()
@@ -410,31 +419,55 @@ fn put_toggles(
     let mut spots = Vec::new();
     for toggle in toggles {
         col += TOGGLE_GAP;
-        for (n, word) in toggle.words.iter().enumerate() {
+        for (n, &(word, text)) in toggle.words.iter().enumerate() {
             if n > 0 {
                 col += 1;
             }
-            let style = if *word == toggle.active {
+            let style = if word == toggle.active {
                 Style::new().fg(palette::get().accent)
             } else {
                 dim()
             };
-            let text = word.text();
             for (k, ch) in text.chars().enumerate() {
                 if let Some(cell) = cells.get_mut(col + k) {
                     *cell = (ch, style);
                 }
             }
-            spots.push((col, text.width(), *word));
+            spots.push((col, text.width(), word));
             col += text.width();
         }
     }
     spots
 }
 
-const RENDER_RAW: &[Word] = &[Word::Render, Word::Raw];
+const RENDER_RAW: &[(Word, &str)] = &[(Word::Render, "render"), (Word::Raw, "raw")];
 
-const WRAP_PAN: &[Word] = &[Word::Wrap, Word::Pan];
+const WRAP_PAN: &[(Word, &str)] = &[(Word::Wrap, "wrap"), (Word::Pan, "pan")];
+
+/// The tabs whose names fit in `room` columns of a header row, the gap
+/// before them and a `+N` for the rest included. The names that fit come
+/// first, and the tab `shown` is among them when it fits at all.
+fn fitting_tabs(names: &[String], shown: usize, room: usize) -> Vec<usize> {
+    let width = |set: &[usize]| {
+        let mut words: Vec<usize> = set.iter().map(|&n| names[n].width()).collect();
+        let hidden = names.len() - set.len();
+        if hidden > 0 {
+            words.push(format!("+{hidden}").len());
+        }
+        TOGGLE_GAP + words.iter().sum::<usize>() + words.len().saturating_sub(1)
+    };
+    (0..=names.len())
+        .rev()
+        .map(|k| {
+            let mut set: Vec<usize> = (0..k).collect();
+            if shown >= k {
+                set.push(shown);
+            }
+            set
+        })
+        .find(|set| width(set) <= room)
+        .unwrap_or_default()
+}
 
 /// A `markdown` block's `source` drawn as markdown under its `head` row, in
 /// a box no wider than `width`. `header` is the width the head row takes
@@ -512,14 +545,17 @@ impl Rendered {
     /// The text a copy of block `key` (an entry and a block within it) takes.
     pub fn copy_text(&self, key: (usize, usize)) -> Option<&str> {
         let markdown = self.entries.get(key.0)?.iter().flatten().next()?;
-        markdown.parts.iter().find_map(|part| match part {
-            Part::Block {
-                block,
-                copy: Some(text),
-                ..
-            } if *block == key.1 => Some(text.as_str()),
-            _ => None,
-        })
+        markdown
+            .parts
+            .iter()
+            .flat_map(|part| match part {
+                Part::Flow { .. } => &[],
+                Part::Block(kept) => std::slice::from_ref(kept),
+                Part::Tabs { tabs, .. } => tabs.as_slice(),
+            })
+            .find(|kept| kept.block == key.1)?
+            .copy
+            .as_deref()
     }
 
     /// The diff or output rows under an expanded call, indented, laid out
@@ -572,7 +608,8 @@ impl Rendered {
 
 /// `text` laid out one block at a time. Prose goes at `width`. A code block
 /// keeps its natural width, as does a table wider than `width`. Either is a
-/// `Part::Block`, and the screen windows one wider than `width`.
+/// `Part::Block`, and the screen windows one wider than `width`. Adjacent
+/// code blocks that each name a tab are one `Part::Tabs`.
 fn markdown(text: &str, width: usize) -> Vec<Part> {
     let mut parts: Vec<Part> = Vec::new();
     let blocks = cmr::parse(text);
@@ -580,12 +617,36 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
     // a link's index counts across the entry's blocks, and a block laid out
     // alone keeps the index the whole parse gave it
     let links = cmr::links(&blocks);
-    for (block, item) in blocks.iter().enumerate() {
+    let mut block = 0;
+    while block < blocks.len() {
         if block > 0 {
             flow(&mut parts).0.push(Line::default());
         }
+        let names: Vec<String> = blocks[block..]
+            .iter()
+            .map_while(|item| match item {
+                cmr::Block::Code {
+                    tab: Some(name), ..
+                } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        if !names.is_empty() {
+            let end = block + names.len();
+            let tabs = (block..end)
+                .filter_map(|n| kept_whole(n, &blocks[n], width, &links))
+                .collect();
+            parts.push(Part::Tabs {
+                first: block,
+                names,
+                tabs,
+            });
+            block = end;
+            continue;
+        }
+        let item = &blocks[block];
         match kept_whole(block, item, width, &links) {
-            Some(part) => parts.push(part),
+            Some(kept) => parts.push(Part::Block(kept)),
             None => {
                 let (rows, runs) = block_rows(item, width, &links);
                 let (flow_rows, flow_runs) = flow(&mut parts);
@@ -597,6 +658,7 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
                 flow_rows.extend(rows);
             }
         }
+        block += 1;
     }
     parts
 }
@@ -664,9 +726,14 @@ fn block_rows(
     (lines, runs)
 }
 
-/// A code block, or a table wider than `width`, as the `Part::Block` of
-/// block number `index`.
-fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link]) -> Option<Part> {
+/// A code block, or a table wider than `width`, as block number `index`
+/// kept whole.
+fn kept_whole(
+    index: usize,
+    block: &cmr::Block,
+    width: usize,
+    links: &[cmr::Link],
+) -> Option<KeptBlock> {
     match block {
         cmr::Block::Code { lang, lines, .. } => {
             let markdown = lang.as_deref().is_some_and(is_markdown);
@@ -694,6 +761,7 @@ fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link
                 lang: Some(lang.clone().unwrap_or_default()),
                 lines: lines.clone(),
                 wrap,
+                tab: None,
             };
             let header = |toggles: &[Toggle]| {
                 let gap = if toggles.is_empty() {
@@ -721,7 +789,7 @@ fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link
                 natural: width,
                 default: wraps_by_default(lang.as_deref()),
             });
-            Some(Part::Block {
+            Some(KeptBlock {
                 block: index,
                 rows,
                 natural,
@@ -734,7 +802,7 @@ fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link
         cmr::Block::Table { .. } => {
             let (rows, runs) = block_rows(block, TABLE_WIDTH, links);
             let natural = rows.iter().map(Line::width).max().unwrap_or(0);
-            (natural > width).then_some(Part::Block {
+            (natural > width).then_some(KeptBlock {
                 block: index,
                 rows,
                 natural,
@@ -965,22 +1033,24 @@ struct ToggleSpot {
 /// it can. The markdown drawn shows when there is some and `raw` is off.
 /// Otherwise the wrapped rows show when there are some and `wrap`, the
 /// choice made on the block, or else the default, says to.
-fn block_view<'a>(
-    rows: &'a [Line<'static>],
-    natural: usize,
-    rendered: Option<&'a MarkdownView>,
+fn block_view(
+    kept: &KeptBlock,
     raw: bool,
-    wrapped: Option<&'a Wrapped>,
     wrap: Option<bool>,
-) -> (&'a [Line<'static>], usize, Option<bool>) {
-    match (rendered, wrapped) {
+) -> (&[Line<'static>], usize, Option<bool>) {
+    match (&kept.rendered, &kept.wrapped) {
         (Some(view), _) if !raw => (&view.rows, view.natural, None),
         (_, Some(wrapped)) if wrap.unwrap_or(wrapped.default) => {
             (&wrapped.rows, wrapped.natural, Some(true))
         }
-        (_, Some(_)) => (rows, natural, Some(false)),
-        _ => (rows, natural, None),
+        (_, Some(_)) => (&kept.rows, kept.natural, Some(false)),
+        _ => (&kept.rows, kept.natural, None),
     }
+}
+
+/// The tab a box of `count` tabs shows: the one chosen on it, or the first.
+fn shown_tab(tabs: &HashMap<(usize, usize), usize>, key: (usize, usize), count: usize) -> usize {
+    tabs.get(&key).copied().unwrap_or(0).min(count - 1)
 }
 
 /// A link's text drawn this frame, by its place among the transcript lines.
@@ -1021,27 +1091,18 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 // scroll bar row under a block that pans
                 let height = 2 + parts
                     .iter()
-                    .map(|part| match part {
-                        Part::Flow { rows, .. } => rows.len(),
-                        Part::Block {
-                            block,
-                            rows,
-                            natural,
-                            rendered,
-                            wrapped,
-                            ..
-                        } => {
-                            let key = (index, *block);
-                            let (rows, natural, _) = block_view(
-                                rows,
-                                *natural,
-                                rendered.as_ref(),
-                                app.raw.contains(&key),
-                                wrapped.as_ref(),
-                                app.wraps.get(&key).copied(),
-                            );
-                            rows.len() + usize::from(natural > visible_width)
-                        }
+                    .map(|part| {
+                        let kept = match part {
+                            Part::Flow { rows, .. } => return rows.len(),
+                            Part::Block(kept) => kept,
+                            Part::Tabs { first, tabs, .. } => {
+                                &tabs[shown_tab(&app.tabs, (index, *first), tabs.len())]
+                            }
+                        };
+                        let key = (index, kept.block);
+                        let (rows, natural, _) =
+                            block_view(kept, app.raw.contains(&key), app.wraps.get(&key).copied());
+                        rows.len() + usize::from(natural > visible_width)
                     })
                     .sum::<usize>();
                 let first = lines.len();
@@ -1052,7 +1113,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 }
                 let mut rows: Vec<Line<'static>> = Vec::new();
                 for part in parts {
-                    match part {
+                    let (kept, tabbed) = match part {
                         Part::Flow { rows: flow, runs } => {
                             let start = rows.len();
                             let top = lines.len() + 1 + start;
@@ -1071,116 +1132,156 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                                     link: run.link.clone(),
                                 });
                             }
+                            continue;
                         }
-                        Part::Block {
-                            block,
-                            rows: block_rows,
-                            natural,
-                            copy,
-                            runs,
-                            rendered,
-                            wrapped,
-                        } => {
-                            let key = (index, *block);
-                            let raw = app.raw.contains(&key);
-                            let (block_rows, natural, wrap) = block_view(
-                                block_rows,
-                                *natural,
-                                rendered.as_ref(),
-                                raw,
-                                wrapped.as_ref(),
-                                app.wraps.get(&key).copied(),
-                            );
-                            let runs = if (rendered.is_some() && !raw) || wrap == Some(true) {
-                                &[][..]
-                            } else {
-                                &runs[..]
-                            };
-                            let mut toggles = Vec::new();
-                            if rendered.is_some() {
-                                toggles.push(Toggle {
-                                    words: RENDER_RAW,
-                                    active: if raw { Word::Raw } else { Word::Render },
-                                });
-                            }
-                            if let Some(wrap) = wrap {
-                                toggles.push(Toggle {
-                                    words: WRAP_PAN,
-                                    active: if wrap { Word::Wrap } else { Word::Pan },
-                                });
-                            }
-                            let shown = natural.min(visible_width);
-                            let max = natural - shown;
-                            let offset = app.pans.get(&key).copied().unwrap_or(0).min(max);
+                        Part::Block(kept) => (kept, None),
+                        Part::Tabs { first, names, tabs } => {
+                            let tab = shown_tab(&app.tabs, (index, *first), tabs.len());
+                            (&tabs[tab], Some((*first, names, tab, tabs)))
+                        }
+                    };
+                    let KeptBlock {
+                        block,
+                        copy,
+                        runs,
+                        rendered,
+                        ..
+                    } = kept;
+                    let key = (index, *block);
+                    let raw = app.raw.contains(&key);
+                    let (block_rows, natural, wrap) =
+                        block_view(kept, raw, app.wraps.get(&key).copied());
+                    let runs = if (rendered.is_some() && !raw) || wrap == Some(true) {
+                        &[][..]
+                    } else {
+                        &runs[..]
+                    };
+                    let more;
+                    let tab_words: Vec<(Word, &str)>;
+                    let mut toggles = Vec::new();
+                    if rendered.is_some() {
+                        toggles.push(Toggle {
+                            words: RENDER_RAW,
+                            active: if raw { Word::Raw } else { Word::Render },
+                        });
+                    }
+                    if let Some(wrap) = wrap {
+                        toggles.push(Toggle {
+                            words: WRAP_PAN,
+                            active: if wrap { Word::Wrap } else { Word::Pan },
+                        });
+                    }
+                    let mut boxed = natural;
+                    let box_key = (index, tabbed.map_or(*block, |tabbed| tabbed.0));
+                    if let Some((_, names, tab, tabs)) = tabbed {
+                        // the language before the tab names, and the
+                        // other toggles and the copy glyph after them
+                        let head = block_rows[0].width();
+                        let rest = toggles_width(&toggles) + TOGGLE_GAP - 1 + COPY_ROOM;
+                        let all: usize = names.iter().map(|name| name.width() + 1).sum();
+                        boxed = tabs
+                            .iter()
+                            .map(|tab| {
+                                let key = (index, tab.block);
+                                let raw = app.raw.contains(&key);
+                                block_view(tab, raw, app.wraps.get(&key).copied()).1
+                            })
+                            .fold(head + TOGGLE_GAP + all - 1 + rest, usize::max);
+                        let room = boxed.min(visible_width).saturating_sub(head + rest);
+                        let fit = fitting_tabs(names, tab, room);
+                        let mut words: Vec<(Word, &str)> = fit
+                            .iter()
+                            .map(|&n| (Word::Tab(n), names[n].as_str()))
+                            .collect();
+                        let hidden = names.len() - fit.len();
+                        if hidden > 0 {
+                            let next = (tab + 1..names.len())
+                                .chain(0..tab)
+                                .find(|n| !fit.contains(n))
+                                .unwrap_or(tab);
+                            more = format!("+{hidden}");
+                            words.push((Word::More(next), more.as_str()));
+                        }
+                        tab_words = words;
+                        toggles.insert(
+                            0,
+                            Toggle {
+                                words: &tab_words,
+                                active: Word::Tab(tab),
+                            },
+                        );
+                    }
+                    let shown = boxed.min(visible_width);
+                    let max = natural.saturating_sub(shown);
+                    let offset = app.pans.get(&key).copied().unwrap_or(0).min(max);
 
-                            // one row for the border above the box's rows
-                            let start = rows.len();
-                            let first = lines.len() + 1 + start;
-                            let hot = app.hover_bar == Some(key)
-                                || app.drag.is_some_and(|drag| drag.key == key);
-                            if max > 0 {
-                                wides.push(Wide {
-                                    key,
-                                    first,
-                                    height: block_rows.len(),
-                                    width: shown,
-                                    max,
-                                });
-                            }
-                            if copy.is_some() {
-                                copies.push(Copy {
-                                    key,
-                                    first,
-                                    width: shown,
-                                });
-                            }
-                            for (n, row) in block_rows.iter().enumerate() {
-                                if n > 0 || copy.is_none() {
-                                    rows.push(window(row, offset, shown));
-                                    continue;
-                                }
-                                let (label, style) = if copied == Some(key) {
-                                    ("copied", Style::new().fg(palette::get().accent))
-                                } else if app.hover_copy == Some(key) {
-                                    (COPY_GLYPH, Style::new().fg(palette::get().accent))
-                                } else {
-                                    (COPY_GLYPH, dim())
-                                };
-                                let (row, words) =
-                                    header_row(row, offset, shown, &toggles, label, style);
-                                rows.push(row);
-                                toggle_spots.extend(words.into_iter().map(|(col, width, word)| {
-                                    ToggleSpot {
-                                        key,
-                                        line: first,
-                                        col,
-                                        width,
-                                        word,
-                                    }
-                                }));
-                            }
-                            for run in runs {
-                                let Some((col, width)) = panned(run.col, run.width, offset, shown)
-                                else {
-                                    continue;
-                                };
-                                let link = (index, run.index);
-                                if hovered == Some(link) {
-                                    let row = &mut rows[start + run.row];
-                                    paint(row, col, width, palette::get().accent);
-                                }
-                                spots.push(LinkSpot {
-                                    key: link,
-                                    line: first + run.row,
-                                    col,
-                                    width,
-                                    link: run.link.clone(),
-                                });
-                            }
-                            if max > 0 {
-                                rows.push(scroll_bar(shown, max, offset, hot));
-                            }
+                    // one row for the border above the box's rows
+                    let start = rows.len();
+                    let first = lines.len() + 1 + start;
+                    let hot =
+                        app.hover_bar == Some(key) || app.drag.is_some_and(|drag| drag.key == key);
+                    if max > 0 {
+                        wides.push(Wide {
+                            key,
+                            first,
+                            height: block_rows.len(),
+                            width: shown,
+                            max,
+                        });
+                    }
+                    if copy.is_some() {
+                        copies.push(Copy {
+                            key,
+                            first,
+                            width: shown,
+                        });
+                    }
+                    for (n, row) in block_rows.iter().enumerate() {
+                        if n > 0 || copy.is_none() {
+                            rows.push(window(row, offset, shown));
+                            continue;
                         }
+                        let (label, style) = if copied == Some(key) {
+                            ("copied", Style::new().fg(palette::get().accent))
+                        } else if app.hover_copy == Some(key) {
+                            (COPY_GLYPH, Style::new().fg(palette::get().accent))
+                        } else {
+                            (COPY_GLYPH, dim())
+                        };
+                        let (row, words) = header_row(row, offset, shown, &toggles, label, style);
+                        rows.push(row);
+                        toggle_spots.extend(words.into_iter().map(|(col, width, word)| {
+                            ToggleSpot {
+                                key: match word {
+                                    Word::Tab(_) | Word::More(_) => box_key,
+                                    _ => key,
+                                },
+                                line: first,
+                                col,
+                                width,
+                                word,
+                            }
+                        }));
+                    }
+                    for run in runs {
+                        let Some((col, width)) = panned(run.col, run.width, offset, shown) else {
+                            continue;
+                        };
+                        let link = (index, run.index);
+                        if hovered == Some(link) {
+                            let row = &mut rows[start + run.row];
+                            paint(row, col, width, palette::get().accent);
+                        }
+                        spots.push(LinkSpot {
+                            key: link,
+                            line: first + run.row,
+                            col,
+                            width,
+                            link: run.link.clone(),
+                        });
+                    }
+                    if max > 0 {
+                        rows.push(scroll_bar(shown, max, offset, hot));
                     }
                 }
                 lines.extend(framed(rows, palette::get().blue, None));
@@ -2457,7 +2558,8 @@ mod tests {
         parts
             .iter()
             .flat_map(|part| match part {
-                Part::Flow { rows, .. } | Part::Block { rows, .. } => rows.clone(),
+                Part::Flow { rows, .. } | Part::Block(KeptBlock { rows, .. }) => rows.clone(),
+                Part::Tabs { tabs, .. } => tabs[0].rows.clone(),
             })
             .collect()
     }
@@ -2707,10 +2809,10 @@ mod tests {
         for (lang, wraps) in [("rust", false), ("sh", false), ("text", true), ("", true)] {
             let parts = markdown(&format!("```{lang}\n{long}\n```"), 20);
             let [
-                Part::Block {
+                Part::Block(KeptBlock {
                     wrapped: Some(wrapped),
                     ..
-                },
+                }),
             ] = &parts[..]
             else {
                 panic!("expected one block that can wrap");
@@ -2723,7 +2825,10 @@ mod tests {
     fn a_wide_table_pans_with_no_wrapped_rows() {
         let text = "| name | note |\n|---|---|\n| a | a rather long note indeed |";
         let parts = markdown(text, 12);
-        assert!(matches!(&parts[..], [Part::Block { wrapped: None, .. }]));
+        assert!(matches!(
+            &parts[..],
+            [Part::Block(KeptBlock { wrapped: None, .. })]
+        ));
     }
 
     #[test]
@@ -2732,10 +2837,10 @@ mod tests {
         let text = format!("````markdown\n# T\n\n```rust\nlet s = \"{long}\";\n```\n````");
         let parts = markdown(&text, 30);
         let [
-            Part::Block {
+            Part::Block(KeptBlock {
                 rendered: Some(view),
                 ..
-            },
+            }),
         ] = &parts[..]
         else {
             panic!("expected one rendered block");
@@ -2749,7 +2854,7 @@ mod tests {
     #[test]
     fn a_code_block_is_as_wide_as_its_longest_line_plus_the_gutter() {
         let parts = markdown("```rs\nabcdefghij\nabc\n```", 20);
-        let [Part::Block { natural, rows, .. }] = &parts[..] else {
+        let [Part::Block(KeptBlock { natural, rows, .. })] = &parts[..] else {
             panic!("expected one block");
         };
         assert_eq!(*natural, 14);
@@ -2760,7 +2865,7 @@ mod tests {
     fn a_table_is_as_wide_as_its_longest_row_with_the_padding_trimmed() {
         let text = "| name | note |\n|---|---|\n| a | a rather long note indeed |";
         let parts = markdown(text, 12);
-        let [Part::Block { natural, rows, .. }] = &parts[..] else {
+        let [Part::Block(KeptBlock { natural, rows, .. })] = &parts[..] else {
             panic!("expected one block");
         };
         let widest = rows.iter().map(Line::width).max().unwrap();
@@ -2777,10 +2882,10 @@ mod tests {
     fn rendered_of(text: &str, width: usize) -> Vec<String> {
         let parts = markdown(text, width);
         let [
-            Part::Block {
+            Part::Block(KeptBlock {
                 rendered: Some(view),
                 ..
-            },
+            }),
         ] = &parts[..]
         else {
             panic!("expected one markdown block");
@@ -2817,7 +2922,73 @@ mod tests {
     #[test]
     fn a_code_block_in_another_language_has_no_markdown_view() {
         let parts = markdown("```rust\nfn main() {}\n```", 40);
-        assert!(matches!(&parts[..], [Part::Block { rendered: None, .. }]));
+        assert!(matches!(
+            &parts[..],
+            [Part::Block(KeptBlock { rendered: None, .. })]
+        ));
+    }
+
+    /// The agent's text in `scenarios/tabs.json`.
+    fn tabs_text() -> String {
+        let scenario = crate::scenario::Scenario::parse(include_str!("../scenarios/tabs.json"));
+        let step = &scenario.unwrap().acts[0].steps[0];
+        let crate::scenario::Step::Update(
+            agent_client_protocol::v1::schema::SessionUpdate::AgentMessageChunk(chunk),
+        ) = step
+        else {
+            panic!("the first step is the agent's text");
+        };
+        let ContentBlock::Text(text) = &chunk.content else {
+            panic!("the chunk is text");
+        };
+        text.text.clone()
+    }
+
+    #[test]
+    fn adjacent_fences_that_name_tabs_draw_as_one_box() {
+        let parts = markdown(&tabs_text(), 60);
+        let boxes: Vec<(usize, &[String])> = parts
+            .iter()
+            .filter_map(|part| match part {
+                Part::Tabs { first, names, .. } => Some((*first, names.as_slice())),
+                _ => None,
+            })
+            .collect();
+        let owned = ["owned".to_string(), "borrowed".to_string()];
+        let before = ["before".to_string(), "after".to_string()];
+        assert_eq!(boxes, [(1, &owned[..]), (4, &before[..])]);
+        assert!(!parts.iter().any(|part| matches!(part, Part::Block(_))));
+        let Part::Tabs { tabs, .. } = &parts[3] else {
+            panic!("the markdown tabs follow the prose");
+        };
+        assert!(tabs.iter().all(|tab| tab.rendered.is_some()));
+    }
+
+    #[test]
+    fn a_fence_without_a_tab_name_between_two_with_one_breaks_the_box() {
+        let text = "```rust tab=\"a\"\na\n```\n```rust\nmid\n```\n```rust tab=\"b\"\nb\n```";
+        let parts = markdown(text, 40);
+        let shape: Vec<&str> = parts
+            .iter()
+            .map(|part| match part {
+                Part::Flow { .. } => "flow",
+                Part::Block(_) => "block",
+                Part::Tabs { .. } => "tabs",
+            })
+            .collect();
+        assert_eq!(shape, ["tabs", "flow", "block", "flow", "tabs"]);
+    }
+
+    #[test]
+    fn the_names_that_fit_come_first_and_the_shown_tab_stays_among_them() {
+        let names: Vec<String> = ["one", "two", "three"].map(String::from).into();
+        assert_eq!(fitting_tabs(&names, 0, 40), [0, 1, 2]);
+
+        // three columns of gap, then `one two +1`
+        assert_eq!(fitting_tabs(&names, 0, 13), [0, 1]);
+        assert_eq!(fitting_tabs(&names, 2, 13), [2]);
+        assert_eq!(fitting_tabs(&names, 2, 15), [0, 2]);
+        assert!(fitting_tabs(&names, 0, 2).is_empty());
     }
 
     #[test]
@@ -2828,7 +2999,7 @@ mod tests {
         );
         let [
             Part::Flow { .. },
-            Part::Block { copy, .. },
+            Part::Block(KeptBlock { copy, .. }),
             Part::Flow { .. },
         ] = &parts[..]
         else {
@@ -2867,7 +3038,7 @@ mod tests {
                         )
                     })
                     .collect(),
-                Part::Block { .. } => Vec::new(),
+                Part::Block(_) | Part::Tabs { .. } => Vec::new(),
             })
             .collect()
     }
@@ -2964,7 +3135,7 @@ mod tests {
     fn a_table_wider_than_the_width_keeps_the_runs_of_its_links() {
         let text = "| name | note |\n|---|---|\n| [a](foam:x) | a rather long note indeed |";
         let parts = markdown(text, 12);
-        let [Part::Block { runs, .. }] = &parts[..] else {
+        let [Part::Block(KeptBlock { runs, .. })] = &parts[..] else {
             panic!("not one block");
         };
         assert_eq!(runs.len(), 1);

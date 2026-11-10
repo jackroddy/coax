@@ -169,6 +169,13 @@ command line, the keys, and the scenario format the fake agent reads.
   either view. A code block inside is drawn with a gutter and wraps at the
   box's edge, with no copy glyph of its own. Links inside the rendered view
   do not respond to the pointer.
+- A fence can name a tab after its language, as in `rust tab="owned"`.
+  coax draws adjacent fences that each name a tab in one box. The header row
+  lists the tab names after the language, dim, with the shown tab in the
+  accent colour. The first tab shows until a click on another name. When the
+  names do not fit, the row shows the ones that fit and a `+N` for the rest.
+  A click on `+N` shows the next hidden tab. The copy glyph copies the shown
+  tab. Each tab keeps its own `render raw` and `wrap pan` choice.
 - A click on an edit call shows its diff under it: removed lines in red after
   a `-`, added lines in green after a `+`, and the unchanged lines around
   them dim. A click on a command call shows its output, laid out as markdown.
@@ -182,6 +189,8 @@ command line, the keys, and the scenario format the fake agent reads.
   a command with output, for the fake agent.
 - `scenarios/markdown.json` plays a `markdown` block holding a heading, a
   list, a code block and a table.
+- `scenarios/tabs.json` plays two `rust` fences named as tabs and two
+  `markdown` fences holding tables, named as tabs.
 
 - A conversation taller than the screen has a scroll bar in the last column
   of the transcript, which is then one column narrower. The track is a dim
