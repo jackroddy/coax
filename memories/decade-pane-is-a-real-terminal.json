@@ -1,0 +1,10 @@
+{
+  "slug": "decade-pane-is-a-real-terminal",
+  "text": "A decade pane is an ordinary Wayland window holding its own terminal, so a program in it talks to that terminal directly and decade adds no rendering limits. Jack ran OSC 10 and OSC 11 queries in a decade pane on 2026-11-10 and got `rgb:e7e7/dddd/c8c8` and `rgb:1f1f/1a1a/2424` back, ended by BEL. The trial is recorded on coax-1cab7b.",
+  "created_at": "2026-11-10T22:20:52.596649223Z",
+  "updated_at": "2026-11-10T22:20:52.596649223Z",
+  "stamp": {
+    "commit": "e70e227",
+    "branch": "dev"
+  }
+}
