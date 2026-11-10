@@ -1,0 +1,28 @@
+{
+  "id": "coax-77ea2e",
+  "title": "Questions shown as a form are tried live against the Claude adapter",
+  "body": "coax-bdf289 adds form elicitation: the box for `AskUserQuestion` and for MCP servers that ask for input. Its tests drive the fake agent's `elicitation` step, which sends the forms a scenario spells out. Nobody has seen the box against the real Claude adapter.\n\n## Proposal\n\nOnce coax-bdf289 lands, run coax against the Claude adapter in a decade pane and make Claude ask questions in each shape the adapter can send:\n\n- one question with a single choice\n- several questions in one request\n- a question that allows several answers\n- an option with a description, and one with a preview in `_meta`\n- an answer typed into the `Other` field\n- Esc, which sends `decline`, and Ctrl+c during the form\n\nRecord what reads badly or misbehaves as notes here, and fix it or file it.\n\n## Open\n\n- An MCP server that sends a form with number, integer or boolean fields, to try the field types `AskUserQuestion` never sends.",
+  "type": "task",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T23:05:40.831845537Z",
+  "updated_at": "2026-11-10T23:05:40.831845537Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "a1ffd60",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
