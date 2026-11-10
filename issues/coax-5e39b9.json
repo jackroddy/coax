@@ -3,26 +3,29 @@
   "title": "The coax output style puts each command for the person to run in its own code block",
   "body": "coax draws a copy button on every fenced code block, and nowhere else. `Rendered::copy_text` in `ui.rs` returns the block's text. The coax output style under coax-3d286f, in both `coax.md` and the `coax-next.md` draft, says to put commands in inline code and says nothing about commands meant for the person to run. Claude then puts such a command in inline code, which has no copy button. Or it puts several commands in one block with `#` comments above each, so a copy takes the comments along with the commands.\n\n## Proposal\n\nThe style gets a section on commands for the person to run:\n\n- Each command goes in its own fenced block, tagged `bash`.\n- The block holds exactly what to paste. That means no `$` prompt, no `#` comment and no output.\n- What the command does goes in the prose before the block.\n- Output shown for comparison goes in a separate block tagged `text`.\n- Inline code stays for naming a command in a sentence.\n\n## Open\n\n- Does a multi-line unit, such as a heredoc or a loop, count as one command and stay in one block? I lean yes, since splitting it would break the paste.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-10T23:41:55.402433578Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T00:29:36.820939938Z",
-  "updated_at": "2026-11-10T23:26:55.402433578Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T23:28:59.081615584Z",
+  "closed_at": "2026-11-10T23:28:59.081615584Z",
+  "close_reason": "The commands section is in the coax output style, `output-styles/coax.md` in the trial profile under `tmp-claude/2026-11-08-coax-style/claude-config`. Each command goes in its own `bash` block with nothing but what to paste. A heredoc or loop stays in one block, and expected output goes in a `text` block.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "95a68b4",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8825ec6",
+      "branch": "dev"
+    }
   }
 }
