@@ -1,0 +1,28 @@
+{
+  "id": "coax-b361d4",
+  "title": "Does a colour link nest with bold and code, and can it cross a line break?",
+  "body": "Agents colour text with a `color:` link, as in `[failed](color:red)` (7a387c5). Nobody has tried it around bold or inline code, as in `[**failed**](color:red)`, or on a span that cmr wraps onto a second row.\n\n## Options\n\n- Try each case against the renderer and record what it does. If the result reads well, the output style can allow it.\n- Have the output style allow only plain words inside a colour link.\n\nLean: try it, since it takes one scenario and a look at the screen.",
+  "type": "decision",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T22:07:17.452607078Z",
+  "updated_at": "2026-11-10T22:07:17.452607078Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e70e227",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
