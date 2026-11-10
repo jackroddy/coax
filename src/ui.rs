@@ -338,7 +338,18 @@ enum Part {
 
         /// A `markdown` block drawn as markdown.
         rendered: Option<MarkdownView>,
+
+        /// A code block wider than the layout width, wrapped to it.
+        wrapped: Option<Wrapped>,
     },
+}
+
+/// The rows of a code block wrapped to the layout width, and whether the
+/// block wraps until a click on its header row says otherwise.
+struct Wrapped {
+    rows: Vec<Line<'static>>,
+    natural: usize,
+    default: bool,
 }
 
 /// The rows of a `markdown` block drawn as markdown, and the width of its
@@ -353,6 +364,8 @@ struct MarkdownView {
 pub enum Word {
     Render,
     Raw,
+    Wrap,
+    Pan,
 }
 
 impl Word {
@@ -360,6 +373,8 @@ impl Word {
         match self {
             Word::Render => "render",
             Word::Raw => "raw",
+            Word::Wrap => "wrap",
+            Word::Pan => "pan",
         }
     }
 }
@@ -419,17 +434,14 @@ fn put_toggles(
 
 const RENDER_RAW: &[Word] = &[Word::Render, Word::Raw];
 
-/// The toggles of a `markdown` block, for measuring its header row.
-const RENDER_RAW_TOGGLE: &[Toggle] = &[Toggle {
-    words: RENDER_RAW,
-    active: Word::Render,
-}];
+const WRAP_PAN: &[Word] = &[Word::Wrap, Word::Pan];
 
 /// A `markdown` block's `source` drawn as markdown under its `head` row, in
 /// a box no wider than `width`. `header` is the width the head row takes
 /// after its gutter.
 fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize) -> MarkdownView {
-    let blocks = cmr::parse(source);
+    let mut blocks = cmr::parse(source);
+    wrap_code(&mut blocks);
     let links = cmr::links(&blocks);
     let gutter = head
         .spans
@@ -451,6 +463,23 @@ fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize
         rows,
         natural: natural.min(width),
     }
+}
+
+/// Set every code block in `blocks`, quoted ones included, to wrap.
+fn wrap_code(blocks: &mut [cmr::Block]) {
+    for block in blocks {
+        match block {
+            cmr::Block::Code { wrap, .. } => *wrap = true,
+            cmr::Block::Quote(inner) => wrap_code(inner),
+            _ => {}
+        }
+    }
+}
+
+/// Whether a code block fenced with `lang` wraps by default: one with no
+/// language, `text`, or markdown does, and one in a programming language pans.
+fn wraps_by_default(lang: Option<&str>) -> bool {
+    lang.is_none_or(|lang| lang.eq_ignore_ascii_case("text") || is_markdown(lang))
 }
 
 /// Whether a fence's language names markdown.
@@ -639,20 +668,59 @@ fn block_rows(
 /// block number `index`.
 fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link]) -> Option<Part> {
     match block {
-        cmr::Block::Code { lang, lines } => {
+        cmr::Block::Code { lang, lines, .. } => {
             let markdown = lang.as_deref().is_some_and(is_markdown);
-            let toggles = if markdown { RENDER_RAW_TOGGLE } else { &[] };
-            let header = lang.as_ref().map_or(0, |lang| {
-                let toggles = toggles_width(toggles);
-                lang.width() + toggles + if toggles > 0 { TOGGLE_GAP - 1 } else { 0 }
-            });
             let longest = lines.iter().map(|line| line.width()).max().unwrap_or(0);
 
             // the gutter is two columns: `│ ` on a line, `┌ ` before the language
-            let natural = longest.max(header) + 2 + COPY_ROOM;
-            let (rows, runs) = block_rows(block, natural, links);
+            let wide = longest + 2 + COPY_ROOM > width;
+            let mut toggles = Vec::new();
+            if markdown {
+                toggles.push(Toggle {
+                    words: RENDER_RAW,
+                    active: Word::Render,
+                });
+            }
+            if wide {
+                toggles.push(Toggle {
+                    words: WRAP_PAN,
+                    active: Word::Wrap,
+                });
+            }
+
+            // a wide block with no language gets an empty one, so its
+            // header row has room for the toggle
+            let headed = |wrap| cmr::Block::Code {
+                lang: Some(lang.clone().unwrap_or_default()),
+                lines: lines.clone(),
+                wrap,
+            };
+            let header = |toggles: &[Toggle]| {
+                let gap = if toggles.is_empty() {
+                    0
+                } else {
+                    TOGGLE_GAP - 1
+                };
+                match lang {
+                    Some(lang) => lang.width() + toggles_width(toggles) + gap,
+                    None if wide => toggles_width(toggles) + gap,
+                    None => 0,
+                }
+            };
+            let natural = longest.max(header(&toggles)) + 2 + COPY_ROOM;
+            let (rows, runs) = if wide && lang.is_none() {
+                block_rows(&headed(false), natural, links)
+            } else {
+                block_rows(block, natural, links)
+            };
             let source = lines.join("\n");
-            let rendered = markdown.then(|| markdown_view(&rows[0], &source, header, width));
+            let rendered =
+                markdown.then(|| markdown_view(&rows[0], &source, header(&toggles[..1]), width));
+            let wrapped = wide.then(|| Wrapped {
+                rows: block_rows(&headed(true), width.saturating_sub(COPY_ROOM), links).0,
+                natural: width,
+                default: wraps_by_default(lang.as_deref()),
+            });
             Some(Part::Block {
                 block: index,
                 rows,
@@ -660,6 +728,7 @@ fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link
                 copy: Some(source),
                 runs,
                 rendered,
+                wrapped,
             })
         }
         cmr::Block::Table { .. } => {
@@ -672,6 +741,7 @@ fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link
                 copy: None,
                 runs,
                 rendered: None,
+                wrapped: None,
             })
         }
         _ => None,
@@ -891,17 +961,25 @@ struct ToggleSpot {
     word: Word,
 }
 
-/// The rows a block shows and the width of its box: the source, or the
-/// markdown drawn when there is some and `raw` is off.
+/// The rows a block shows, the width of its box, and whether it wraps when
+/// it can. The markdown drawn shows when there is some and `raw` is off.
+/// Otherwise the wrapped rows show when there are some and `wrap`, the
+/// choice made on the block, or else the default, says to.
 fn block_view<'a>(
     rows: &'a [Line<'static>],
     natural: usize,
     rendered: Option<&'a MarkdownView>,
     raw: bool,
-) -> (&'a [Line<'static>], usize) {
-    match rendered {
-        Some(view) if !raw => (&view.rows, view.natural),
-        _ => (rows, natural),
+    wrapped: Option<&'a Wrapped>,
+    wrap: Option<bool>,
+) -> (&'a [Line<'static>], usize, Option<bool>) {
+    match (rendered, wrapped) {
+        (Some(view), _) if !raw => (&view.rows, view.natural, None),
+        (_, Some(wrapped)) if wrap.unwrap_or(wrapped.default) => {
+            (&wrapped.rows, wrapped.natural, Some(true))
+        }
+        (_, Some(_)) => (rows, natural, Some(false)),
+        _ => (rows, natural, None),
     }
 }
 
@@ -950,11 +1028,18 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                             rows,
                             natural,
                             rendered,
+                            wrapped,
                             ..
                         } => {
-                            let raw = app.raw.contains(&(index, *block));
-                            let (rows, natural) =
-                                block_view(rows, *natural, rendered.as_ref(), raw);
+                            let key = (index, *block);
+                            let (rows, natural, _) = block_view(
+                                rows,
+                                *natural,
+                                rendered.as_ref(),
+                                app.raw.contains(&key),
+                                wrapped.as_ref(),
+                                app.wraps.get(&key).copied(),
+                            );
                             rows.len() + usize::from(natural > visible_width)
                         }
                     })
@@ -994,20 +1079,36 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                             copy,
                             runs,
                             rendered,
+                            wrapped,
                         } => {
                             let key = (index, *block);
                             let raw = app.raw.contains(&key);
-                            let (block_rows, natural) =
-                                block_view(block_rows, *natural, rendered.as_ref(), raw);
-                            let runs = if rendered.is_some() && !raw {
+                            let (block_rows, natural, wrap) = block_view(
+                                block_rows,
+                                *natural,
+                                rendered.as_ref(),
+                                raw,
+                                wrapped.as_ref(),
+                                app.wraps.get(&key).copied(),
+                            );
+                            let runs = if (rendered.is_some() && !raw) || wrap == Some(true) {
                                 &[][..]
                             } else {
                                 &runs[..]
                             };
-                            let toggle = rendered.as_ref().map(|_| Toggle {
-                                words: RENDER_RAW,
-                                active: if raw { Word::Raw } else { Word::Render },
-                            });
+                            let mut toggles = Vec::new();
+                            if rendered.is_some() {
+                                toggles.push(Toggle {
+                                    words: RENDER_RAW,
+                                    active: if raw { Word::Raw } else { Word::Render },
+                                });
+                            }
+                            if let Some(wrap) = wrap {
+                                toggles.push(Toggle {
+                                    words: WRAP_PAN,
+                                    active: if wrap { Word::Wrap } else { Word::Pan },
+                                });
+                            }
                             let shown = natural.min(visible_width);
                             let max = natural - shown;
                             let offset = app.pans.get(&key).copied().unwrap_or(0).min(max);
@@ -1046,7 +1147,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                                     (COPY_GLYPH, dim())
                                 };
                                 let (row, words) =
-                                    header_row(row, offset, shown, toggle.as_slice(), label, style);
+                                    header_row(row, offset, shown, &toggles, label, style);
                                 rows.push(row);
                                 toggle_spots.extend(words.into_iter().map(|(col, width, word)| {
                                     ToggleSpot {
@@ -2601,8 +2702,53 @@ mod tests {
     }
 
     #[test]
+    fn a_wide_code_block_in_a_language_pans_by_default_and_one_in_text_or_none_wraps() {
+        let long = "x".repeat(30);
+        for (lang, wraps) in [("rust", false), ("sh", false), ("text", true), ("", true)] {
+            let parts = markdown(&format!("```{lang}\n{long}\n```"), 20);
+            let [
+                Part::Block {
+                    wrapped: Some(wrapped),
+                    ..
+                },
+            ] = &parts[..]
+            else {
+                panic!("expected one block that can wrap");
+            };
+            assert_eq!(wrapped.default, wraps, "{lang}");
+        }
+    }
+
+    #[test]
+    fn a_wide_table_pans_with_no_wrapped_rows() {
+        let text = "| name | note |\n|---|---|\n| a | a rather long note indeed |";
+        let parts = markdown(text, 12);
+        assert!(matches!(&parts[..], [Part::Block { wrapped: None, .. }]));
+    }
+
+    #[test]
+    fn a_code_block_inside_a_rendered_markdown_block_wraps() {
+        let long = "y".repeat(40);
+        let text = format!("````markdown\n# T\n\n```rust\nlet s = \"{long}\";\n```\n````");
+        let parts = markdown(&text, 30);
+        let [
+            Part::Block {
+                rendered: Some(view),
+                ..
+            },
+        ] = &parts[..]
+        else {
+            panic!("expected one rendered block");
+        };
+        let rows = plain(&view.rows);
+        assert!(rows.iter().any(|row| row.starts_with("│ ┆ ")), "{rows:?}");
+        assert!(rows.iter().all(|row| !row.contains('…')), "{rows:?}");
+        assert!(rows.iter().all(|row| row.width() <= 30), "{rows:?}");
+    }
+
+    #[test]
     fn a_code_block_is_as_wide_as_its_longest_line_plus_the_gutter() {
-        let parts = markdown("```rs\nabcdefghij\nabc\n```", 8);
+        let parts = markdown("```rs\nabcdefghij\nabc\n```", 20);
         let [Part::Block { natural, rows, .. }] = &parts[..] else {
             panic!("expected one block");
         };

@@ -132,6 +132,10 @@ pub struct App {
     /// The `markdown` blocks shown as their source, by entry and block.
     pub raw: HashSet<(usize, usize)>,
 
+    /// The code blocks set to wrap or to pan against their default, by
+    /// entry and block.
+    pub wraps: HashMap<(usize, usize), bool>,
+
     /// The toggle words on screen, set by the last draw.
     pub toggles: Vec<ui::ToggleArea>,
 
@@ -829,9 +833,19 @@ impl App {
                 .find(|toggle| toggle.area.contains(position))
             {
                 match toggle.word {
-                    Word::Render => self.raw.remove(&toggle.key),
-                    Word::Raw => self.raw.insert(toggle.key),
-                };
+                    Word::Render => {
+                        self.raw.remove(&toggle.key);
+                    }
+                    Word::Raw => {
+                        self.raw.insert(toggle.key);
+                    }
+                    Word::Wrap => {
+                        self.wraps.insert(toggle.key, true);
+                    }
+                    Word::Pan => {
+                        self.wraps.insert(toggle.key, false);
+                    }
+                }
                 return Action::None;
             }
             if let Some(key) = self.copy_at(position) {
@@ -1582,6 +1596,7 @@ async fn session(
         guard: None,
         pans: HashMap::new(),
         raw: HashSet::new(),
+        wraps: HashMap::new(),
         toggles: Vec::new(),
         wide: Vec::new(),
         unknown: None,
@@ -1902,6 +1917,7 @@ mod tests {
             guard: None,
             pans: HashMap::new(),
             raw: HashSet::new(),
+            wraps: HashMap::new(),
             toggles: Vec::new(),
             unknown: None,
             v_bar: None,
@@ -2167,7 +2183,7 @@ mod tests {
         let line = "x".repeat(80);
         app.transcript
             .entries
-            .push(Entry::Agent(format!("```\n{line}\n```")));
+            .push(Entry::Agent(format!("```rust\n{line}\n```")));
         let screen = header_rows_all(&mut app, 40);
         assert_eq!(app.bars.len(), 1);
         let bar = &app.bars[0];
@@ -2311,6 +2327,61 @@ mod tests {
         app.raw.insert((0, 0));
         header(&mut app, 80);
         assert_eq!(colour(&mut app, Word::Raw), accent);
+    }
+
+    /// An app whose first entry is one block fenced with `lang` and a line
+    /// too long for a 40 column screen, drawn once.
+    fn with_a_long_line(lang: &str) -> App {
+        let mut app = app();
+        app.wide.clear();
+        let line = "x".repeat(60);
+        app.transcript
+            .entries
+            .push(Entry::Agent(format!("```{lang}\n{line}\n```")));
+        header(&mut app, 40);
+        app
+    }
+
+    #[test]
+    fn clicking_wrap_and_pan_switches_a_code_block_between_them() {
+        let mut app = with_a_long_line("rust");
+        let screen = header_rows_all(&mut app, 40);
+        assert!(screen.contains("wrap pan"), "{screen}");
+        assert_eq!(app.bars.len(), 1);
+        let wrap = toggle_area(&app, Word::Wrap);
+        assert!(matches!(click(&mut app, wrap.x, wrap.y), Action::None));
+        assert!(app.wraps[&(0, 0)]);
+        let screen = header_rows_all(&mut app, 40);
+        assert!(app.bars.is_empty() && screen.contains('┆'), "{screen}");
+        let pan = toggle_area(&app, Word::Pan);
+        click(&mut app, pan.x, pan.y);
+        header_rows_all(&mut app, 40);
+        assert_eq!(app.bars.len(), 1);
+    }
+
+    #[test]
+    fn a_wrapped_block_draws_continuation_rows_and_no_scroll_bar() {
+        for lang in ["", "text"] {
+            let mut app = with_a_long_line(lang);
+            let screen = header_rows_all(&mut app, 40);
+            assert!(screen.contains("wrap pan"), "{screen}");
+            assert!(app.bars.is_empty(), "{screen}");
+            assert!(!screen.contains('━'), "{screen}");
+            let rows: Vec<&str> = screen.lines().filter(|row| row.contains('┆')).collect();
+            assert_eq!(rows.len(), 2, "{screen}");
+            assert!(rows[0].contains("┆ xxx"), "{screen}");
+        }
+    }
+
+    #[test]
+    fn a_code_block_that_fits_has_no_wrap_or_pan_words() {
+        let mut app = app();
+        app.wide.clear();
+        app.transcript
+            .entries
+            .push(Entry::Agent("```rust\nfn main() {}\n```".to_string()));
+        let screen = header_rows_all(&mut app, 40);
+        assert!(!screen.contains("wrap pan"), "{screen}");
     }
 
     #[test]

@@ -62,8 +62,13 @@ command line, the keys, and the scenario format the fake agent reads.
   has them. A bad name or value is an error naming the file.
 - Wide code blocks and tables in the agent's text keep their full width, where
   before a code line was cut with `…` and a table was squeezed or stacked. A
-  block wider than the box shows a window onto it, with a scroll bar row
-  under it. The bar is a dim `─` track and a `━` thumb whose length and place
+  code block wider than the box either wraps or pans. One fenced with a
+  programming language pans, and one fenced as `text`, as markdown or with no
+  language wraps. Its header row shows the dim words `wrap pan`, with the
+  one in force in the accent colour, and a click on either word switches that
+  block. A wrapped line goes on below with `┆` in the gutter in place of `│`,
+  and keeps its colours. A table wider than the box pans. A block that pans
+  shows a window onto it, with a scroll bar row under it. The bar is a dim `─` track and a `━` thumb whose length and place
   follow the visible share and the pan, in the accent colour while the
   pointer is over it or dragging it. Dragging the thumb sideways pans the
   block with the pointer, and a click on the track moves the thumb there.
@@ -161,7 +166,7 @@ command line, the keys, and the scenario format the fake agent reads.
   box, at the box's width. The header row shows the dim words `render raw`,
   with the view on screen in the accent colour. A click on either word
   switches that block. A click on the copy glyph copies the block's source in
-  either view. A code block inside is drawn with a gutter and cut at the
+  either view. A code block inside is drawn with a gutter and wraps at the
   box's edge, with no copy glyph of its own. Links inside the rendered view
   do not respond to the pointer.
 - A click on an edit call shows its diff under it: removed lines in red after
