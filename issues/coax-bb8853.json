@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:15:52.290912497Z",
-  "updated_at": "2026-11-10T22:59:39.165188177Z",
+  "updated_at": "2026-11-10T23:34:35.00293496Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/bd10c4a0",
       "text": "A rendered `markdown` fence that holds code blocks needs cmr-f8e450 fixed first. cmr closes a fence at any run of three backticks, so a four-backtick block ends at the first inner fence.",
       "commit": "a1ffd60",
+      "branch": "dev"
+    },
+    {
+      "id": "0e3f3b1b",
+      "at": "2026-11-10T23:34:35.00293424Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Header row design, shared with coax-06ff60 and coax-784c36 (Jack, 2026-11-10): a block's header row keeps `┌ lang` on the left and the copy glyph on the right. Toggles sit between them as dim words, with the active one in `accent`, as in `┌ markdown   render raw   wrap pan   ⧉`. A word shows only on blocks where it applies. Code blocks inside a rendered markdown block draw with cmr's gutter, with no copy button of their own, wrapped rather than panned. The outer copy button takes the whole source.",
+      "commit": "8825ec6",
       "branch": "dev"
     }
   ],
