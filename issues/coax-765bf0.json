@@ -1,0 +1,28 @@
+{
+  "id": "coax-765bf0",
+  "title": "A prompt cannot be sent while a turn is running",
+  "body": "`App`'s prompt key handling ignores Enter while `transcript.in_flight` is set and leaves the text in the box. A turn stays in flight until the agent answers `session/prompt`. With the Claude adapter, that includes the time Claude spends waiting for a background agent to finish. During that wait you can type but cannot send.\n\nThe Claude adapter v0.101.0 accepts a `session/prompt` while another is running. Its `initialize` response declares `_meta.claudeCode.promptQueueing: true`. In the adapter, `startTurn` pushes the new prompt onto the session's input and onto a turn queue, and answers each `session/prompt` when that prompt's turn ends. A `session/cancel` cancels every prompt received before it.\n\n## Proposal\n\n- When the agent declares `promptQueueing`, Enter during a turn sends the prompt right away. The transcript shows it marked as queued.\n- When the agent does not declare it, coax holds the prompt and sends it when the running turn ends.\n- `in_flight` stays set until the agent has answered every prompt sent.\n\n## Open\n\n- How does coax learn that Claude has started on a queued prompt, so it can drop the queued mark? This needs a trial against the adapter.\n- Should Esc cancel the queued prompts along with the running turn? A `session/cancel` to the Claude adapter cancels them all.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T00:23:41.750949085Z",
+  "updated_at": "2026-11-10T00:23:41.750949085Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "95a68b4",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
