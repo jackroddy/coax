@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use agent_client_protocol::Error;
 use agent_client_protocol::v1::schema::SessionConfigOptionValue;
 use agent_client_protocol::v1::schema::{
-    InitializeResponse, PermissionOption, PermissionOptionKind, RequestPermissionOutcome,
-    SelectedPermissionOutcome, SessionId, ToolCallId, ToolCallUpdate,
+    ElicitationAction, InitializeResponse, PermissionOption, PermissionOptionKind,
+    RequestPermissionOutcome, SelectedPermissionOutcome, SessionId, ToolCallId, ToolCallUpdate,
 };
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -26,6 +26,7 @@ use crate::clipboard;
 use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
+use crate::form::Form;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
 use crate::prompt;
@@ -193,6 +194,11 @@ pub struct App {
     pub decade_pane: Option<String>,
     pub permission: Option<Permission>,
 
+    /// The form the agent asked for, and the forms that came while it was
+    /// open, oldest first.
+    pub form: Option<Asked>,
+    pub forms: VecDeque<Asked>,
+
     /// The requests that came while `permission` was open, oldest first.
     pub queued: VecDeque<Permission>,
 
@@ -225,6 +231,12 @@ pub struct Permission {
     pub options: Vec<PermissionOption>,
     pub update: Box<ToolCallUpdate>,
     reply: oneshot::Sender<RequestPermissionOutcome>,
+}
+
+/// A form the agent asked for, with the channel its answer goes back on.
+pub struct Asked {
+    pub form: Form,
+    reply: oneshot::Sender<ElicitationAction>,
 }
 
 /// The link under the pointer, and where the pointer met it.
@@ -369,6 +381,21 @@ impl App {
                     self.transcript.notice(format!("setting failed: {error}"));
                 }
             }
+            Event::Form {
+                message,
+                schema,
+                reply,
+            } => {
+                let asked = Asked {
+                    form: Form::new(message, &schema),
+                    reply,
+                };
+                if self.form.is_none() {
+                    self.form = Some(asked);
+                } else {
+                    self.forms.push_back(asked);
+                }
+            }
             Event::Permission {
                 update,
                 options,
@@ -421,6 +448,7 @@ impl App {
                 self.menu = None;
                 self.confirm = None;
                 self.stale_replies = 0;
+                self.close_permissions();
                 self.return_waiting();
                 self.transcript.agent_exited(&reason);
             }
@@ -442,6 +470,9 @@ impl App {
     /// Cancel the running turn, and put the waiting prompts back in the
     /// prompt box ahead of what is typed there.
     fn cancel(&mut self) -> Action {
+        while self.form.is_some() {
+            self.answer(ElicitationAction::Cancel);
+        }
         if self.queueing {
             self.stale_replies += self.waiting.len();
         }
@@ -523,6 +554,17 @@ impl App {
         while self.permission.is_some() {
             self.decide(None);
         }
+        while self.form.is_some() {
+            self.answer(ElicitationAction::Cancel);
+        }
+    }
+
+    /// Send `action` for the open form, and open the next one waiting.
+    fn answer(&mut self, action: ElicitationAction) {
+        if let Some(asked) = self.form.take() {
+            let _ = asked.reply.send(action);
+        }
+        self.form = self.forms.pop_front();
     }
 
     /// Handle a mouse event, and say whether the screen needs a redraw. A
@@ -751,7 +793,7 @@ impl App {
     }
 
     fn click(&mut self, position: Position) -> Action {
-        if self.permission.is_some() || self.confirm.is_some() {
+        if self.permission.is_some() || self.form.is_some() || self.confirm.is_some() {
             return Action::None;
         }
         if self.menu.is_some() {
@@ -1195,6 +1237,12 @@ impl App {
             });
             return Action::None;
         }
+        if let Some(asked) = &mut self.form {
+            if let Some(action) = asked.form.key(key) {
+                self.answer(action);
+            }
+            return Action::None;
+        }
         if let Some(permission) = &self.permission {
             match key.code {
                 KeyCode::Esc => self.decide(None),
@@ -1540,6 +1588,8 @@ async fn session(
         session,
         decade_pane: reporter.as_ref().map(|_| String::new()),
         permission: None,
+        form: None,
+        forms: VecDeque::new(),
         queued: VecDeque::new(),
         queueing,
         waiting: VecDeque::new(),
@@ -1701,7 +1751,11 @@ fn report_to_decade(reporter: &mut Option<Reporter>, app: &mut App) {
     let Some(open) = reporter else {
         return;
     };
-    let question = app.permission.as_ref().map(|p| p.title.as_str());
+    let question = app
+        .permission
+        .as_ref()
+        .map(|p| p.title.as_str())
+        .or(app.form.as_ref().map(|asked| asked.form.message.as_str()));
     let now = Snapshot::of(&app.transcript, question, &app.settings);
     if let Err(error) = open.send(now) {
         log::info("decade.disconnect", json!({"reason": error.to_string()}));
@@ -1856,6 +1910,8 @@ mod tests {
             session: SessionId::new("s"),
             decade_pane: None,
             permission: None,
+            form: None,
+            forms: VecDeque::new(),
             queued: VecDeque::new(),
             queueing: false,
             waiting: VecDeque::new(),
@@ -2896,6 +2952,58 @@ mod tests {
         assert!(rows[22].starts_with(" queued  three "), "{}", rows[22]);
         assert!(rows[23].starts_with(" + 2 more queued"), "{}", rows[23]);
         assert!(rows[24].starts_with(" ◐ working"), "{}", rows[24]);
+    }
+
+    fn ask_form(app: &mut App) -> oneshot::Receiver<ElicitationAction> {
+        let scenario =
+            crate::scenario::Scenario::parse(include_str!("../scenarios/questions.json")).unwrap();
+        let crate::scenario::Step::Elicitation(asked) = &scenario.acts[0].steps[1] else {
+            panic!("the second step asks the questions");
+        };
+        let (reply, answer) = oneshot::channel();
+        app.event(Event::Form {
+            message: asked.message.clone(),
+            schema: asked.requested_schema.clone(),
+            reply,
+        });
+        answer
+    }
+
+    #[test]
+    fn a_form_takes_the_keys_and_esc_sends_decline() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        let mut answer = ask_form(&mut app);
+        assert!(working_row(&mut app, 100).starts_with(" waiting for you"));
+        let screen = header_rows_all(&mut app, 100);
+        assert!(
+            screen.contains("Please answer the following questions."),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("○ Disk  kept under the state directory"),
+            "{screen}"
+        );
+        type_text(&mut app, "x");
+        assert_eq!(app.input, "");
+        press(&mut app, KeyCode::Esc);
+        assert!(app.form.is_none());
+        assert!(matches!(answer.try_recv(), Ok(ElicitationAction::Decline)));
+    }
+
+    #[test]
+    fn the_end_of_the_turn_cancels_an_open_form() {
+        use agent_client_protocol::v1::schema::StopReason;
+
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        let mut first = ask_form(&mut app);
+        let mut second = ask_form(&mut app);
+        assert_eq!(app.forms.len(), 1);
+        done(&mut app, StopReason::EndTurn);
+        assert!(app.form.is_none() && app.forms.is_empty());
+        assert!(matches!(first.try_recv(), Ok(ElicitationAction::Cancel)));
+        assert!(matches!(second.try_recv(), Ok(ElicitationAction::Cancel)));
     }
 
     #[test]

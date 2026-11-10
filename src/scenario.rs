@@ -1,6 +1,6 @@
 use agent_client_protocol::v1::schema::{
-    AvailableCommand, PermissionOption, SessionConfigOption, SessionModeState, SessionUpdate,
-    StopReason, ToolCallUpdate, Usage,
+    AvailableCommand, ElicitationAction, ElicitationSchema, PermissionOption, SessionConfigOption,
+    SessionModeState, SessionUpdate, StopReason, ToolCallUpdate, Usage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +53,9 @@ pub struct Act {
 pub enum Step {
     Update(SessionUpdate),
     Permission(Permission),
+
+    /// Ask for a form, as an `elicitation/create` request in form mode.
+    Elicitation(Elicitation),
     DelayMs(u64),
     Stop(StopReason),
 
@@ -76,6 +79,17 @@ pub struct Permission {
     pub options: Vec<PermissionOption>,
     #[serde(default)]
     pub expect: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Elicitation {
+    pub message: String,
+    pub requested_schema: ElicitationSchema,
+
+    /// The answer the step expects. A different one is reported on stderr.
+    #[serde(default)]
+    pub expect: Option<ElicitationAction>,
 }
 
 impl Scenario {

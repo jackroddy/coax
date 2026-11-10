@@ -54,7 +54,7 @@ async fn one_turn(mut link: Link, mut reporter: Reporter) -> Result<(), Error> {
                     .unwrap();
                 transcript.permission(*update, allow.name.clone());
             }
-            Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) => {}
+            Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) | Event::Form { .. } => {}
             Event::Done(result) => {
                 transcript.finished(result?);
                 report(&mut reporter, &transcript, None);

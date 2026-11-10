@@ -1,6 +1,6 @@
 use agent_client_protocol::v1::schema::{
-    ContentBlock, PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome,
-    SessionUpdate, StopReason, ToolCallStatus, ToolKind,
+    ContentBlock, ElicitationAction, PermissionOptionKind, RequestPermissionOutcome,
+    SelectedPermissionOutcome, SessionUpdate, StopReason, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol::{AcpAgent, Error};
 use coax::acp::{self, Applied, Change, Event, Link};
@@ -36,7 +36,7 @@ async fn one_prompt(mut link: Link, text: &str) -> Result<Transcript, Error> {
                     .unwrap();
                 transcript.permission(*update, allow.name.clone());
             }
-            Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) => {}
+            Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) | Event::Form { .. } => {}
             Event::Done(result) => {
                 transcript.finished(result?);
                 break;
@@ -161,7 +161,10 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
                     }
                 }
                 Event::Permission { .. } => {}
-                Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) => {}
+                Event::Tokens(_)
+                | Event::Setting { .. }
+                | Event::Exited(_)
+                | Event::Form { .. } => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
@@ -223,6 +226,48 @@ async fn prompts_sent_during_a_turn_play_one_after_another_and_reply_in_order() 
             }
         }
         assert_eq!(seen, ["first", "EndTurn", "second", "MaxTokens"]);
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+const QUESTIONS: &str = include_str!("../scenarios/questions.json");
+
+#[tokio::test]
+async fn a_form_step_asks_for_a_form_and_the_act_goes_on_once_it_is_answered() {
+    let scenario = Scenario::parse(QUESTIONS).unwrap();
+    acp::run(fake::agent(scenario), "fake", async |mut link| {
+        link.initialize().await?;
+        let session = link.new_session(std::env::temp_dir()).await?.session_id;
+        link.prompt(session, "go".to_string())?;
+        let mut transcript = Transcript::default();
+        let mut asked = None;
+        while let Some(event) = link.events.recv().await {
+            match event {
+                Event::Update(update) => transcript.apply(*update),
+                Event::Form {
+                    message,
+                    schema,
+                    reply,
+                } => {
+                    asked = Some((message, schema.properties.len()));
+                    reply.send(ElicitationAction::Decline).unwrap();
+                }
+                Event::Done(result) => {
+                    transcript.finished(result?);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let (message, fields) = asked.expect("the act asks for a form");
+        assert_eq!(message, "Please answer the following questions.");
+        assert_eq!(fields, 4);
+        assert!(matches!(
+            &transcript.entries[0],
+            Entry::Agent(text) if text.ends_with("Thanks, starting now.")
+        ));
         Ok(())
     })
     .await
@@ -338,7 +383,10 @@ async fn a_prompt_after_loading_plays_the_scenarios_acts() {
                         ))
                         .unwrap();
                 }
-                Event::Tokens(_) | Event::Setting { .. } | Event::Exited(_) => {}
+                Event::Tokens(_)
+                | Event::Setting { .. }
+                | Event::Exited(_)
+                | Event::Form { .. } => {}
                 Event::Done(result) => {
                     transcript.finished(result?);
                     break;
@@ -439,7 +487,7 @@ async fn a_turn_reports_the_context_the_cost_and_the_session_tokens() {
                         .unwrap();
                 }
                 Event::Done(_) => break,
-                Event::Setting { .. } | Event::Exited(_) => {}
+                Event::Setting { .. } | Event::Exited(_) | Event::Form { .. } => {}
             }
         }
         let context = settings.context.unwrap();

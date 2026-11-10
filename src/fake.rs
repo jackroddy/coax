@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use agent_client_protocol::v1::schema::{
     AgentCapabilities, AvailableCommand, AvailableCommandsUpdate, CancelNotification, ContentBlock,
-    ContentChunk, Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest,
+    ContentChunk, CreateElicitationRequest, ElicitationFormMode, ElicitationSessionScope,
+    Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest,
     ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
     NewSessionResponse, PromptRequest, PromptResponse, RequestPermissionOutcome,
     RequestPermissionRequest, SessionCapabilities, SessionConfigKind, SessionConfigOptionValue,
@@ -258,6 +259,20 @@ async fn play(
                     if chosen != expect {
                         eprintln!("coax-fake-agent: expected permission {expect}, got {chosen}");
                     }
+                }
+            }
+            Step::Elicitation(elicitation) => {
+                let mode = ElicitationFormMode::new(
+                    ElicitationSessionScope::new(session.clone()),
+                    elicitation.requested_schema,
+                );
+                let request = CreateElicitationRequest::new(mode, elicitation.message);
+                let answer = cx.send_request(request).block_task().await?;
+                if let Some(expect) = elicitation.expect
+                    && answer.action != expect
+                {
+                    let got = serde_json::to_string(&answer.action).unwrap_or_default();
+                    eprintln!("coax-fake-agent: expected another answer to the form, got {got}");
                 }
             }
             Step::Exit(exit) => {

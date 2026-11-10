@@ -7,6 +7,7 @@ pub mod config;
 pub mod diff;
 pub mod editor;
 pub mod fake;
+pub mod form;
 pub mod header;
 pub mod links;
 pub mod log;

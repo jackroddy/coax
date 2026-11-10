@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::ConnectionTo;
 use agent_client_protocol::v1::schema::{
-    CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, Implementation,
-    InitializeRequest, InitializeResponse, ListSessionsRequest, LoadSessionRequest,
+    CancelNotification, ClientCapabilities, ContentBlock, CreateElicitationRequest,
+    CreateElicitationResponse, ElicitationAction, ElicitationCapabilities,
+    ElicitationFormCapabilities, ElicitationMode, ElicitationSchema, FileSystemCapabilities,
+    Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest, LoadSessionRequest,
     LoadSessionResponse, McpServer, McpServerHttp, NewSessionRequest, NewSessionResponse,
     PermissionOption, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
@@ -27,6 +29,13 @@ pub enum Event {
         update: Box<ToolCallUpdate>,
         options: Vec<PermissionOption>,
         reply: oneshot::Sender<RequestPermissionOutcome>,
+    },
+    /// A form the agent asks the person to fill in, from an `elicitation/create`
+    /// request in form mode.
+    Form {
+        message: String,
+        schema: ElicitationSchema,
+        reply: oneshot::Sender<ElicitationAction>,
     },
     Tokens(Usage),
     Setting {
@@ -68,6 +77,7 @@ impl Link {
                 .read_text_file(true)
                 .write_text_file(true))
             .terminal(false)
+            .elicitation(ElicitationCapabilities::new().form(ElicitationFormCapabilities::new()))
             // the Claude adapter sends a subagent's text only to a client
             // that declares this
             .meta(serde_json::Map::from_iter([(
@@ -220,6 +230,7 @@ pub async fn run(
     let (tx, events) = mpsc::unbounded_channel();
     let updates = tx.clone();
     let permissions = tx.clone();
+    let forms = tx.clone();
     let exits = tx.clone();
     let (link_tx, link_rx) = oneshot::channel();
     let (finish_tx, finish_rx) = oneshot::channel::<()>();
@@ -244,6 +255,27 @@ pub async fn run(
                 cx.spawn(async move {
                     let outcome = answer.await.unwrap_or(RequestPermissionOutcome::Cancelled);
                     responder.respond(RequestPermissionResponse::new(outcome))
+                })
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: CreateElicitationRequest, responder, cx: ConnectionTo<Agent>| {
+                // coax declares form mode only, and a URL-mode request carries
+                // a login, which coax stays out of
+                let ElicitationMode::Form(form) = req.mode else {
+                    return responder
+                        .respond(CreateElicitationResponse::new(ElicitationAction::Decline));
+                };
+                let (reply, answer) = oneshot::channel();
+                let _ = forms.send(Event::Form {
+                    message: req.message,
+                    schema: form.requested_schema,
+                    reply,
+                });
+                cx.spawn(async move {
+                    let action = answer.await.unwrap_or(ElicitationAction::Cancel);
+                    responder.respond(CreateElicitationResponse::new(action))
                 })
             },
             on_receive_request!(),

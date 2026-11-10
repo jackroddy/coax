@@ -1,0 +1,49 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Two questions before I start."}}},
+        {"elicitation": {
+          "message": "Please answer the following questions.",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {
+              "question_0": {
+                "type": "string",
+                "title": "Storage",
+                "description": "Where should the cache live?",
+                "oneOf": [
+                  {"const": "Memory", "title": "Memory", "description": "lost on restart"},
+                  {"const": "Disk", "title": "Disk", "description": "kept under the state directory"}
+                ]
+              },
+              "question_0_custom": {
+                "type": "string",
+                "title": "Other",
+                "description": "Type your own answer, or add a note to the choice above (optional)."
+              },
+              "question_1": {
+                "type": "array",
+                "title": "Platforms",
+                "description": "Which platforms should it build on?",
+                "items": {"anyOf": [
+                  {"const": "Linux", "title": "Linux"},
+                  {"const": "macOS", "title": "macOS"},
+                  {"const": "Windows", "title": "Windows"}
+                ]}
+              },
+              "question_1_custom": {
+                "type": "string",
+                "title": "Other",
+                "description": "Type your own answer to add to your selection above (optional)."
+              }
+            }
+          },
+          "expect": {"action": "accept", "content": {"question_0": "Disk", "question_1": ["Linux", "macOS"]}}
+        }},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": " Thanks, starting now."}}},
+        {"stop": "end_turn"}
+      ]
+    }
+  ]
+}

@@ -16,6 +16,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::app::{App, ExitKey, MenuTarget};
 use crate::command;
 use crate::diff::line_diff;
+use crate::form::{Form, Kind as FormKind, Row};
 use crate::header;
 use crate::links::{self, Kind};
 use crate::palette;
@@ -67,6 +68,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
+    draw_form(frame, transcript_area, app);
     draw_plan(frame, plan_area, app);
     let waiting = waiting_lines(&app.waiting, waiting_area.width as usize);
     frame.render_widget(Paragraph::new(waiting), waiting_area);
@@ -75,7 +77,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .transcript
             .turn_started
             .map_or(Duration::ZERO, |start| start.elapsed());
-        let line = working_line(app.spinner, elapsed, app.permission.is_some());
+        let waiting = app.permission.is_some() || app.form.is_some();
+        let line = working_line(app.spinner, elapsed, waiting);
         frame.render_widget(Paragraph::new(line), working_area);
     }
     draw_rule(frame, upper_rule);
@@ -1635,6 +1638,135 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     }
     clear(frame, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// The widest a form box gets, in columns.
+const FORM_WIDTH: u16 = 72;
+
+/// The open form, centred over the transcript, scrolled to keep the cursor's
+/// row in view.
+fn draw_form(frame: &mut Frame, over: Rect, app: &App) {
+    let Some(asked) = &app.form else {
+        return;
+    };
+    let width = FORM_WIDTH.min(over.width);
+    let inner = (width as usize).saturating_sub(4);
+    let (mut lines, cursor) = form_lines(&asked.form, inner);
+    if let Some(error) = &asked.form.error {
+        lines.push(Line::styled(
+            cut(error, inner),
+            Style::new().fg(palette::get().yellow),
+        ));
+    }
+    let height = (lines.len() as u16 + 2).min(over.height);
+    let shown = height.saturating_sub(2) as usize;
+    let skip = (cursor + 1).saturating_sub(shown);
+    let area = Rect {
+        x: over.x + (over.width - width) / 2,
+        y: over.y + (over.height - height) / 2,
+        width,
+        height,
+    };
+    let title = cut(&asked.form.message, inner);
+    let mut block = pane(&title, true)
+        .title_bottom(Line::styled("enter pick   esc dismiss", dim()).right_aligned());
+    if !app.forms.is_empty() {
+        block = block.title_bottom(Line::styled(format!("{} more", app.forms.len()), dim()));
+    }
+    let lines: Vec<Line> = lines.into_iter().skip(skip).collect();
+    clear(frame, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// The form's lines at `width`, and the line the cursor's row is on.
+fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, usize) {
+    let rows = form.rows();
+    let mut lines: Vec<Line> = Vec::new();
+    let mut cursor_line = 0;
+    let mut shown_field = None;
+    for (index, row) in rows.iter().enumerate() {
+        let field = match row {
+            Row::Option(field, _) | Row::Text(field) | Row::Toggle(field) => Some(*field),
+            Row::Submit => None,
+        };
+        if field != shown_field {
+            if !lines.is_empty() {
+                lines.push(Line::default());
+            }
+            if let Some(field) = field.map(|field| &form.fields[field]) {
+                lines.push(Line::styled(cut(&field.title, width), bold()));
+                for piece in field
+                    .description
+                    .iter()
+                    .flat_map(|text| textwrap::wrap(text, width))
+                {
+                    lines.push(Line::styled(piece.into_owned(), dim()));
+                }
+            }
+            shown_field = field;
+        }
+        if index == form.cursor {
+            cursor_line = lines.len();
+        }
+        let line = form_row(form, *row, width);
+        lines.push(if index == form.cursor {
+            line.style(Style::new().bg(palette::get().selection))
+        } else {
+            line
+        });
+    }
+    (lines, cursor_line)
+}
+
+fn form_row(form: &Form, row: Row, width: usize) -> Line<'static> {
+    let accent = Style::new().fg(palette::get().accent);
+    match row {
+        Row::Option(field, option) => {
+            let (choice, mark) = match &form.fields[field].kind {
+                FormKind::Choice { options, picked } => {
+                    let mark = if *picked == Some(option) {
+                        "● "
+                    } else {
+                        "○ "
+                    };
+                    (&options[option], mark)
+                }
+                FormKind::Many { options, picked } => {
+                    let mark = if picked[option] { "[x] " } else { "[ ] " };
+                    (&options[option], mark)
+                }
+                _ => return Line::default(),
+            };
+            let title = cut(&choice.title, width.saturating_sub(mark.width()));
+            let mut spans = vec![Span::styled(mark, accent), Span::raw(title.clone())];
+            if let Some(description) = &choice.description {
+                let room = width.saturating_sub(mark.width() + title.width() + 2);
+                if room > 1 {
+                    spans.push(Span::styled(format!("  {}", cut(description, room)), dim()));
+                }
+            }
+            Line::from(spans)
+        }
+        Row::Text(field) => {
+            let FormKind::Text { text, .. } = &form.fields[field].kind else {
+                return Line::default();
+            };
+            let shown = if text.is_empty() {
+                Span::styled("type here", dim())
+            } else {
+                Span::raw(cut(text, width.saturating_sub(2)))
+            };
+            Line::from(vec![Span::styled("› ", accent), shown])
+        }
+        Row::Toggle(field) => {
+            let FormKind::Toggle(on) = form.fields[field].kind else {
+                return Line::default();
+            };
+            let mark = if on { "[x] yes" } else { "[ ] no" };
+            Line::styled(mark, accent)
+        }
+        Row::Submit => Line::styled("submit", accent.add_modifier(Modifier::BOLD)),
+    }
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<Color>) {

@@ -192,6 +192,25 @@ command line, the keys, and the scenario format the fake agent reads.
   terminal that reports it apart from Enter. Enter still sends. Each line
   wraps on its own. Up and Down move the cursor one drawn row and keep its
   column, whether the row above or below is part of the same line or not.
+- coax declares form elicitation, so the Claude adapter lets Claude ask
+  questions with `AskUserQuestion`, and an MCP server can ask for input. A
+  form opens a box over the transcript with the request's message as its
+  title and one section per field. A single choice marks the picked option
+  with `●`, a multiple choice marks each with `[x]`, and a text, number or
+  integer field is a row to type into. A yes or no field is a toggle. Up and
+  Down move across the rows. Enter picks an option and moves to the next
+  field, or toggles in a multiple choice. Space also picks or toggles. Enter
+  on `submit` sends the answers, and a missing required field or a bad
+  number keeps the box open with the reason under it. Esc dismisses the
+  form, which tells the agent the questions went unanswered. While a form is
+  open, the working line reads `waiting for you` and decade sees the agent
+  as asking. When the turn ends, or Ctrl+c cancels it, the form is
+  cancelled. A request for a URL, such as an MCP server's login link, is
+  declined.
+- The scenario format gains an `elicitation` step with a `message`, a
+  `requestedSchema` and an optional `expect`, which asks for a form as the
+  Claude adapter does. `scenarios/questions.json` asks two questions in the
+  shape `AskUserQuestion` takes.
 - Enter during a turn sends the prompt to an agent that declares
   `promptQueueing` under `claudeCode` in its capabilities, as the Claude
   adapter does, and the agent runs it once the running turn ends. For any
