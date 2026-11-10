@@ -3,7 +3,7 @@
   "title": "coax has its own output style in a Claude profile used only by coax",
   "body": "The Claude entry in `~/.config/coax/config.toml` runs with Jack's normal Claude config, so its replies follow his Dense output style. Dense was written for Claude Code's own renderer, down to its yaml-fence coloring.\n\n## Proposal\n\n- A Claude Code output style written for coax and for what coax's markdown renderer draws (see the issue on rendering agent text).\n- The style lives in a Claude config folder used only by coax. The coax entry selects it with `CLAUDE_CONFIG_DIR` in its `env`.\n\n## Rejected\n\n- Text that coax sends when it opens a session, which the adapter appends to the system prompt. Jack wants a real output style, so that it is enforced the same way through long sessions and compaction. A real output style also avoids two styles fighting, Dense plus coax's added text.\n- Setting the style in `~/.claude/settings.json`. That changes Claude Code too.\n\n## Open\n\n- A second config folder needs its own login and its own copy or link of settings, skills and `CLAUDE.md`. Jack wants a tool to manage Claude profiles. Whether it is built first, and where it lives, is still undecided.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -15,10 +15,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T04:57:35.234685376Z",
-  "updated_at": "2026-11-10T23:28:59.091549434Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T23:34:15.106788918Z",
+  "closed_at": "2026-11-10T23:34:15.106788918Z",
+  "close_reason": "The coax output style is written and runs from the trial profile, with `outputStyle` set to `Coax` (see the notes). The move into a profile of its own is guise-5d4990 in guise's tracker, waiting on guise's `create`.",
+  "resolution": "done",
   "notes": [
     {
       "id": "2a9a70b6",
@@ -58,6 +58,9 @@
       "commit": "e9ae3c8",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8825ec6",
+      "branch": "dev"
+    }
   }
 }
