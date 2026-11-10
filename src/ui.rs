@@ -19,6 +19,7 @@ use crate::diff::line_diff;
 use crate::header;
 use crate::links::{self, Kind};
 use crate::palette;
+use crate::prompt;
 use crate::session::{Child, Entry, Tool};
 use crate::settings::{self, Control};
 
@@ -28,10 +29,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let foreground = Style::new().fg(palette::get().foreground);
     frame.buffer_mut().set_style(area, foreground);
+    app.prompt_width = (area.width as usize).saturating_sub(PROMPT_LEAD.len());
     let input = input_view(
         &app.input,
         app.cursor,
-        (area.width as usize).saturating_sub(PROMPT_LEAD.len()),
+        app.prompt_width,
         (area.height / 2) as usize,
     );
     let plan_rows = if app.show_plan {
@@ -1668,10 +1670,10 @@ impl InputView {
 }
 
 fn input_view(text: &str, cursor: usize, width: usize, max_rows: usize) -> InputView {
-    let all = wrap_rows(text, width);
+    let all = prompt::wrap_rows(text, width);
     let shown = max_rows.max(PROMPT_ROWS);
     let cursor = cursor.min(text.len());
-    let cursor_row = all.iter().rposition(|row| row.start <= cursor).unwrap_or(0);
+    let cursor_row = prompt::cursor_row(&all, cursor);
     let skipped = all.len().saturating_sub(shown).min(cursor_row);
     let end = (skipped + shown).min(all.len());
     let rows = all[skipped..end]
@@ -1688,63 +1690,6 @@ fn input_view(text: &str, cursor: usize, width: usize, max_rows: usize) -> Input
         starts_here: skipped == 0,
         cursor,
     }
-}
-
-/// Break `text` into rows of at most `width` characters at word breaks, as
-/// byte ranges of `text`. Each line, ended by a newline, starts a new row. A
-/// word longer than a row is split, and the last row is never full, so the
-/// cursor always has a column after the last character.
-fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
-    let width = width.max(1);
-    let mut rows = Vec::new();
-    let mut offset = 0;
-    for line in text.split('\n') {
-        wrap_line(line, offset, width, &mut rows);
-        offset += line.len() + 1;
-    }
-    if rows
-        .last()
-        .is_some_and(|row| text[row.clone()].width() == width)
-    {
-        rows.push(text.len()..text.len());
-    }
-    rows
-}
-
-/// Push the rows of one line, which starts at byte `offset` of the text.
-fn wrap_line(line: &str, offset: usize, width: usize, rows: &mut Vec<Range<usize>>) {
-    let chars: Vec<(usize, char, usize)> = line
-        .char_indices()
-        .map(|(i, ch)| (i, ch, ch.width().unwrap_or(0)))
-        .collect();
-    let mut start = 0;
-    let mut used = 0;
-    for token in chars.chunk_by(|a, b| (a.1 == ' ') == (b.1 == ' ')) {
-        let is_space = token[0].1 == ' ';
-        let token_width: usize = token.iter().map(|&(_, _, w)| w).sum();
-        if used + token_width > width && !is_space && used > 0 {
-            rows.push(offset + start..offset + token[0].0);
-            start = token[0].0;
-            used = 0;
-        }
-        for &(i, _, w) in token {
-            if used + w > width && used > 0 {
-                rows.push(offset + start..offset + i);
-                start = i;
-                used = 0;
-            }
-            used += w;
-        }
-    }
-    rows.push(offset + start..offset + line.len());
-}
-
-#[cfg(test)]
-fn wrap_input(text: &str, width: usize) -> Vec<String> {
-    wrap_rows(text, width)
-        .into_iter()
-        .map(|row| text[row].to_string())
-        .collect()
 }
 
 /// The first line of `text` that has something on it.
@@ -2014,19 +1959,6 @@ mod tests {
     }
 
     #[test]
-    fn input_wraps_at_word_breaks() {
-        assert_eq!(
-            wrap_input("one two three four", 9),
-            ["one two ", "three ", "four"]
-        );
-    }
-
-    #[test]
-    fn a_word_longer_than_the_row_is_split() {
-        assert_eq!(wrap_input("abcdefghij", 4), ["abcd", "efgh", "ij"]);
-    }
-
-    #[test]
     fn the_cursor_follows_trailing_spaces() {
         let view = input_view("hi   ", 5, 20, 10);
         assert_eq!(view.cursor, (2 + 5, 0));
@@ -2071,16 +2003,6 @@ mod tests {
     }
 
     #[test]
-    fn input_rows_wrap_by_display_width() {
-        assert_eq!(wrap_input("日本語日本", 6), ["日本語", "日本"]);
-        assert_eq!(wrap_input("ab日本", 5), ["ab日", "本"]);
-        assert_eq!(wrap_input("😀😀😀", 4), ["😀😀", "😀"]);
-        for row in wrap_input("日本語 日本語 日本語", 7) {
-            assert!(row.width() <= 7);
-        }
-    }
-
-    #[test]
     fn the_cursor_column_is_the_display_width_before_it() {
         let text = "日本語";
         let view = input_view(text, 6, 20, 10);
@@ -2089,13 +2011,6 @@ mod tests {
         assert_eq!(view.cursor, (2 + 3, 0));
         let view = input_view("日本語日", 12, 6, 10);
         assert_eq!(view.cursor, (2 + 2, 1));
-    }
-
-    #[test]
-    fn a_newline_starts_a_new_row_and_each_line_wraps_on_its_own() {
-        assert_eq!(wrap_input("ab\n\ncd ef", 4), ["ab", "", "cd ", "ef"]);
-        assert_eq!(wrap_input("abcd\nx", 4), ["abcd", "x"]);
-        assert_eq!(wrap_input("a\n", 4), ["a", ""]);
     }
 
     #[test]

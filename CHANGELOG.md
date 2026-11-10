@@ -175,8 +175,8 @@ command line, the keys, and the scenario format the fake agent reads.
   Ctrl+u still clears the whole prompt.
 - Alt+Enter inserts a newline in the prompt, and so does Shift+Enter in a
   terminal that reports it apart from Enter. Enter still sends. Each line
-  wraps on its own, and Up and Down move the cursor between lines when the
-  prompt has more than one.
+  wraps on its own. Up and Down move the cursor one drawn row and keep its
+  column, whether the row above or below is part of the same line or not.
 - Pasting into the prompt inserts the text at the cursor with its newlines
   kept, and never sends it. coax turns on bracketed paste for this and turns
   it off again on exit, so a terminal without bracketed paste behaves as
@@ -197,8 +197,8 @@ command line, the keys, and the scenario format the fake agent reads.
   this run, newest first, each as its first line cut to fit. Up and Down (or
   `k` and `j`) and a click choose a row, Enter puts the prompt's full text
   in the prompt with the cursor at the end, and Esc closes the box. The
-  list is not saved between runs. Up and Down on a one-line prompt still do
-  nothing, so no key recalls an earlier prompt.
+  list is not saved between runs. Up and Down on a prompt that fits on one
+  row still do nothing, so no key recalls an earlier prompt.
 - Links in agent text, written `[text](target)` with an optional `"title"`.
   The scheme of the target decides what the link does.
   - `color:<name>` draws the text in that palette colour (`accent`, `muted`,

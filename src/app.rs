@@ -183,6 +183,9 @@ pub struct App {
     /// Rows a page scroll moves, set by the last draw.
     pub page: usize,
 
+    /// Columns of the prompt's text at the last draw.
+    pub prompt_width: usize,
+
     /// Transcript lines at the last draw.
     pub lines_seen: usize,
     pub agent: String,
@@ -1158,13 +1161,13 @@ impl App {
                 Action::None
             }
             KeyCode::Up => {
-                if let Some(at) = prompt::line_above(&self.input, self.cursor) {
+                if let Some(at) = prompt::row_above(&self.input, self.cursor, self.prompt_width) {
                     self.cursor = at;
                 }
                 Action::None
             }
             KeyCode::Down => {
-                if let Some(at) = prompt::line_below(&self.input, self.cursor) {
+                if let Some(at) = prompt::row_below(&self.input, self.cursor, self.prompt_width) {
                     self.cursor = at;
                 }
                 Action::None
@@ -1425,6 +1428,7 @@ async fn session(
         links,
         update: None,
         page: 1,
+        prompt_width: 80,
         lines_seen: 0,
         agent,
         session,
@@ -1735,6 +1739,7 @@ mod tests {
                 max: 6,
             }],
             page: 1,
+            prompt_width: 80,
             lines_seen: 0,
             agent: String::new(),
             session: SessionId::new("s"),
