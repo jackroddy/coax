@@ -1,0 +1,28 @@
+{
+  "id": "coax-bdf289",
+  "title": "The agent can ask questions that coax shows as a form",
+  "body": "`Link::initialize` in `acp.rs` declares file reading and writing and the `subagent-transcript` meta, and no `elicitation` capability. The Claude adapter v0.101.0 reads `elicitation.form` from the client's capabilities at session start. When the capability is missing, the adapter puts `AskUserQuestion` in Claude Code's `disallowedTools`. Claude then asks its questions as plain text in the reply. When the capability is present, the adapter turns each `AskUserQuestion` call into an `elicitation/create` request in form mode and hands the answers back to Claude. An MCP server that asks the user for input sends the same request.\n\n## Proposal\n\n- `initialize` declares `elicitation.form` through `ClientCapabilities::elicitation`. `agent-client-protocol` 5 has it without a feature flag.\n- coax answers a form-mode `elicitation/create` with a box over the prompt, as it does for a permission request. Each question shows its choices as a list. A question that takes free text gets a text field. Submitting sends `accept` with the answers, and Esc sends `cancel`.\n- The fake agent gets an `{\"elicitation\": {...}}` scenario step, and a scenario exercises it.\n\n## Out of scope\n\n- URL mode. The adapter uses it to send the login link when an MCP server needs authentication.\n\n## Cost\n\nThe new scenario step adds to the scenario format without breaking it, so it moves the patch.\n\n## Open\n\n- With several questions in one request, does the box show them one at a time or all at once?\n- Does a waiting question report the agent to decade as asking, the way a permission request does through `Snapshot::question` in `report.rs`?",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T00:23:41.741367535Z",
+  "updated_at": "2026-11-10T00:23:41.741367535Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "95a68b4",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
