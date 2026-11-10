@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -41,9 +41,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         0
     };
     let working_rows = u16::from(app.transcript.in_flight);
+    let waiting_rows = app.waiting.len().min(MAX_WAITING_ROWS) as u16;
     let [
         transcript_area,
         plan_area,
+        waiting_area,
         working_area,
         upper_rule,
         prompt_area,
@@ -52,6 +54,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
+        Constraint::Length(waiting_rows),
         Constraint::Length(working_rows),
         Constraint::Length(1),
         Constraint::Length(input.height() as u16),
@@ -63,6 +66,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
     draw_plan(frame, plan_area, app);
+    let waiting = waiting_lines(&app.waiting, waiting_area.width as usize);
+    frame.render_widget(Paragraph::new(waiting), waiting_area);
     if app.transcript.in_flight {
         let elapsed = app
             .transcript
@@ -79,6 +84,30 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     header::draw_status(frame, status_area, app);
     draw_menu(frame, app);
     draw_link_popup(frame, app);
+}
+
+const MAX_WAITING_ROWS: usize = 3;
+
+/// One row per prompt waiting for its turn, each its first line, and a last
+/// row counting the rest when they do not all fit.
+fn waiting_lines(waiting: &VecDeque<String>, width: usize) -> Vec<Line<'static>> {
+    let lead = " queued  ";
+    let room = width.saturating_sub(lead.width() + 1);
+    let shown = if waiting.len() > MAX_WAITING_ROWS {
+        MAX_WAITING_ROWS - 1
+    } else {
+        waiting.len()
+    };
+    let mut lines: Vec<Line> = waiting
+        .iter()
+        .take(shown)
+        .map(|text| Line::styled(format!("{lead}{}", cut(first_line(text), room)), dim()))
+        .collect();
+    if waiting.len() > shown {
+        let more = format!(" + {} more queued", waiting.len() - shown);
+        lines.push(Line::styled(more, dim()));
+    }
+    lines
 }
 
 /// The row above the prompt while a turn runs: the spinner, the time since

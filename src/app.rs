@@ -195,6 +195,20 @@ pub struct App {
 
     /// The requests that came while `permission` was open, oldest first.
     pub queued: VecDeque<Permission>,
+
+    /// Whether the agent takes a prompt during a turn and runs it once the
+    /// turn ends.
+    pub queueing: bool,
+
+    /// Prompts entered during a turn, oldest first, each waiting for the
+    /// turn before it to end.
+    pub waiting: VecDeque<String>,
+
+    /// A held prompt whose turn has come, for the run loop to send.
+    outbox: Option<String>,
+
+    /// Replies still to come for waiting prompts a cancel dropped.
+    stale_replies: usize,
     pub rendered: ui::Rendered,
     pub cwd: PathBuf,
     auto_allow: bool,
@@ -387,15 +401,18 @@ impl App {
                     self.decide(allow);
                 }
             }
+            Event::Done(_) if self.stale_replies > 0 => self.stale_replies -= 1,
             Event::Done(Ok(stop)) => {
                 self.close_permissions();
                 self.transcript.finished(stop);
+                self.start_waiting();
             }
             Event::Done(Err(error)) => {
                 self.close_permissions();
                 self.transcript.in_flight = false;
                 self.transcript.cancel_running();
                 self.transcript.notice(format!("prompt failed: {error}"));
+                self.start_waiting();
             }
             Event::Exited(reason) => {
                 self.exited = true;
@@ -403,9 +420,49 @@ impl App {
                 self.queued.clear();
                 self.menu = None;
                 self.confirm = None;
+                self.stale_replies = 0;
+                self.return_waiting();
                 self.transcript.agent_exited(&reason);
             }
         }
+    }
+
+    /// Start the turn of the oldest waiting prompt. An agent that does not
+    /// queue has not been sent it yet, so it goes to `outbox`.
+    fn start_waiting(&mut self) {
+        let Some(next) = self.waiting.pop_front() else {
+            return;
+        };
+        self.transcript.prompt(next.clone());
+        if !self.queueing {
+            self.outbox = Some(next);
+        }
+    }
+
+    /// Cancel the running turn, and put the waiting prompts back in the
+    /// prompt box ahead of what is typed there.
+    fn cancel(&mut self) -> Action {
+        if self.queueing {
+            self.stale_replies += self.waiting.len();
+        }
+        self.return_waiting();
+        Action::Cancel
+    }
+
+    fn return_waiting(&mut self) {
+        if self.waiting.is_empty() {
+            return;
+        }
+        let mut texts: Vec<String> = self.waiting.drain(..).collect();
+        if !self.input.is_empty() {
+            texts.push(std::mem::take(&mut self.input));
+        }
+        self.set_input(texts.join("\n\n"));
+    }
+
+    /// The held prompt whose turn has come, to send now.
+    pub fn take_outbox(&mut self) -> Option<String> {
+        self.outbox.take()
     }
 
     /// Whether the open menu is the one a change to setting `id` came from.
@@ -1106,7 +1163,7 @@ impl App {
                     key: exit,
                     until: now + GUARD_WINDOW,
                 });
-                return Action::Cancel;
+                return self.cancel();
             }
             if exit == ExitKey::CtrlC && !self.input.is_empty() {
                 self.clear_input();
@@ -1164,7 +1221,7 @@ impl App {
                 self.edited();
                 Action::None
             }
-            KeyCode::Esc if self.transcript.in_flight => Action::Cancel,
+            KeyCode::Esc if self.transcript.in_flight => self.cancel(),
             KeyCode::Enter if alt || shift => {
                 self.insert("\n");
                 Action::None
@@ -1185,14 +1242,22 @@ impl App {
                 self.enter_command()
             }
             KeyCode::Enter => {
-                if self.transcript.in_flight || self.exited || self.input.trim().is_empty() {
+                if self.exited || self.input.trim().is_empty() {
                     return Action::None;
                 }
                 let text = std::mem::take(&mut self.input);
                 self.cursor = 0;
                 self.remember(&text);
-                self.transcript.prompt(text.clone());
                 self.scroll = 0;
+                if self.transcript.in_flight {
+                    self.waiting.push_back(text.clone());
+                    return if self.queueing {
+                        Action::Prompt(text)
+                    } else {
+                        Action::None
+                    };
+                }
+                self.transcript.prompt(text.clone());
                 Action::Prompt(text)
             }
             KeyCode::Backspace => {
@@ -1343,6 +1408,12 @@ async fn session(
         .as_ref()
         .map(|info| info.version.clone())
         .unwrap_or_default();
+    let queueing = init
+        .agent_capabilities
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("claudeCode")?.get("promptQueueing")?.as_bool())
+        .unwrap_or(false);
     let agent = name
         .or(init.agent_info.map(|info| info.name))
         .unwrap_or_else(|| "agent".to_string());
@@ -1444,6 +1515,10 @@ async fn session(
         decade_pane: reporter.as_ref().map(|_| String::new()),
         permission: None,
         queued: VecDeque::new(),
+        queueing,
+        waiting: VecDeque::new(),
+        outbox: None,
+        stale_replies: 0,
         rendered: ui::Rendered::default(),
         cwd,
         auto_allow,
@@ -1485,7 +1560,7 @@ async fn session(
             event = link.events.recv() => match event {
                 Some(event) => {
                     app.event(event);
-                    Action::None
+                    app.take_outbox().map_or(Action::None, Action::Prompt)
                 }
                 None => break Ok(()),
             },
@@ -1755,6 +1830,10 @@ mod tests {
             decade_pane: None,
             permission: None,
             queued: VecDeque::new(),
+            queueing: false,
+            waiting: VecDeque::new(),
+            outbox: None,
+            stale_replies: 0,
             rendered: ui::Rendered::default(),
             cwd: PathBuf::new(),
             auto_allow: false,
@@ -2700,6 +2779,91 @@ mod tests {
         assert!(working_row(&mut app, 100).starts_with(" ◓ working "));
         let status = status_row(&mut app, 100);
         assert!(!status.contains("working") && !status.contains("idle"));
+    }
+
+    fn done(app: &mut App, stop: agent_client_protocol::v1::schema::StopReason) {
+        app.event(Event::Done(Ok(stop)));
+    }
+
+    fn users(app: &App) -> Vec<&str> {
+        app.transcript
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::User(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_prompt_entered_during_a_turn_goes_out_at_once_to_an_agent_that_queues() {
+        use agent_client_protocol::v1::schema::StopReason;
+
+        let mut app = with_settings();
+        app.queueing = true;
+        app.transcript.prompt("one".to_string());
+        type_text(&mut app, "two");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::Prompt(text) if text == "two"));
+        assert_eq!(users(&app), ["one"]);
+        assert_eq!(app.waiting, ["two"]);
+        done(&mut app, StopReason::EndTurn);
+        assert_eq!(users(&app), ["one", "two"]);
+        assert!(app.transcript.in_flight);
+        assert_eq!(app.take_outbox(), None);
+        done(&mut app, StopReason::EndTurn);
+        assert!(!app.transcript.in_flight);
+    }
+
+    #[test]
+    fn a_prompt_entered_during_a_turn_is_held_for_an_agent_that_does_not_queue() {
+        use agent_client_protocol::v1::schema::StopReason;
+
+        let mut app = with_settings();
+        app.transcript.prompt("one".to_string());
+        type_text(&mut app, "two");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert_eq!(app.input, "");
+        done(&mut app, StopReason::EndTurn);
+        assert_eq!(app.take_outbox().as_deref(), Some("two"));
+        assert_eq!(users(&app), ["one", "two"]);
+    }
+
+    #[test]
+    fn esc_puts_the_waiting_prompts_back_in_the_box_and_skips_their_replies() {
+        use agent_client_protocol::v1::schema::StopReason;
+
+        let mut app = with_settings();
+        app.queueing = true;
+        app.transcript.prompt("one".to_string());
+        for text in ["two", "three"] {
+            type_text(&mut app, text);
+            press(&mut app, KeyCode::Enter);
+        }
+        type_text(&mut app, "four");
+        assert!(matches!(press(&mut app, KeyCode::Esc), Action::Cancel));
+        assert_eq!(app.input, "two\n\nthree\n\nfour");
+        assert!(app.waiting.is_empty());
+        for _ in 0..3 {
+            done(&mut app, StopReason::Cancelled);
+        }
+        assert_eq!(users(&app), ["one"]);
+        assert!(!app.transcript.in_flight);
+    }
+
+    #[test]
+    fn waiting_prompts_show_above_the_working_line_and_count_the_rest() {
+        let mut app = with_settings();
+        app.transcript.prompt("one".to_string());
+        app.waiting = ["two\nmore", "three", "four", "five"]
+            .map(str::to_string)
+            .into();
+        let rows = header_rows_all(&mut app, 60);
+        let rows: Vec<&str> = rows.lines().collect();
+        assert!(rows[22].starts_with(" queued  two "), "{}", rows[22]);
+        assert!(rows[23].starts_with(" queued  three "), "{}", rows[23]);
+        assert!(rows[24].starts_with(" + 2 more queued"), "{}", rows[24]);
+        assert!(rows[25].starts_with(" ◐ working"), "{}", rows[25]);
     }
 
     #[test]

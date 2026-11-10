@@ -1,6 +1,6 @@
 use agent_client_protocol::v1::schema::{
-    PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome, StopReason,
-    ToolCallStatus, ToolKind,
+    ContentBlock, PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome,
+    SessionUpdate, StopReason, ToolCallStatus, ToolKind,
 };
 use agent_client_protocol::{AcpAgent, Error};
 use coax::acp::{self, Applied, Change, Event, Link};
@@ -170,6 +170,59 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
         }
         assert_eq!(transcript.last_stop, Some(StopReason::Cancelled));
         assert!(matches!(&transcript.entries[0], Entry::Agent(text) if text == "starting"));
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn prompts_sent_during_a_turn_play_one_after_another_and_reply_in_order() {
+    let scenario = Scenario::parse(
+        r#"{"acts": [
+            {"steps": [
+                {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "first"}}},
+                {"delay_ms": 150},
+                {"stop": "end_turn"}
+            ]},
+            {"steps": [
+                {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "second"}}},
+                {"stop": "max_tokens"}
+            ]}
+        ]}"#,
+    )
+    .unwrap();
+    acp::run(fake::agent(scenario), "fake", async |mut link| {
+        let init = link.initialize().await?;
+        let queueing = init
+            .agent_capabilities
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("claudeCode")?.get("promptQueueing")?.as_bool());
+        assert_eq!(queueing, Some(true));
+        let session = link.new_session(std::env::temp_dir()).await?.session_id;
+        link.prompt(session.clone(), "one".to_string())?;
+        link.prompt(session.clone(), "two".to_string())?;
+        let mut seen = Vec::new();
+        while let Some(event) = link.events.recv().await {
+            match event {
+                Event::Update(update) => {
+                    if let SessionUpdate::AgentMessageChunk(chunk) = *update
+                        && let ContentBlock::Text(text) = chunk.content
+                    {
+                        seen.push(text.text);
+                    }
+                }
+                Event::Done(result) => {
+                    seen.push(format!("{:?}", result?));
+                    if seen.len() == 4 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(seen, ["first", "EndTurn", "second", "MaxTokens"]);
         Ok(())
     })
     .await

@@ -188,6 +188,15 @@ command line, the keys, and the scenario format the fake agent reads.
   terminal that reports it apart from Enter. Enter still sends. Each line
   wraps on its own. Up and Down move the cursor one drawn row and keep its
   column, whether the row above or below is part of the same line or not.
+- Enter during a turn sends the prompt to an agent that declares
+  `promptQueueing` under `claudeCode` in its capabilities, as the Claude
+  adapter does, and the agent runs it once the running turn ends. For any
+  other agent, coax holds the prompt and sends it when the turn ends. Until
+  its turn starts, the prompt waits in a dim `queued` row above the working
+  line, up to three rows with a count of the rest. Esc or Ctrl+c cancels the
+  running turn and every queued prompt, and puts the queued text back in the
+  prompt box. The fake agent declares `promptQueueing` and plays the prompts
+  it is sent one after another.
 - Pasting into the prompt inserts the text at the cursor with its newlines
   kept, and never sends it. coax turns on bracketed paste for this and turns
   it off again on exit, so a terminal without bracketed paste behaves as

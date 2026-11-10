@@ -116,18 +116,21 @@ impl Link {
 
     pub fn prompt(&self, session: SessionId, text: String) -> Result<(), Error> {
         let request = PromptRequest::new(session, vec![ContentBlock::from(text)]);
-        let sent = self.cx.send_request(request);
         let tx = self.tx.clone();
-        self.cx.spawn(async move {
-            let response = sent.block_task().await;
-            if let Ok(response) = &response
-                && let Some(usage) = &response.usage
-            {
-                let _ = tx.send(Event::Tokens(usage.clone()));
-            }
-            let _ = tx.send(Event::Done(response.map(|response| response.stop_reason)));
-            Ok(())
-        })
+
+        // an ordered callback, so a turn's reply reaches `events` before the
+        // updates of a queued turn the agent starts after it
+        self.cx
+            .send_request(request)
+            .on_receiving_result(move |response| async move {
+                if let Ok(response) = &response
+                    && let Some(usage) = &response.usage
+                {
+                    let _ = tx.send(Event::Tokens(usage.clone()));
+                }
+                let _ = tx.send(Event::Done(response.map(|response| response.stop_reason)));
+                Ok(())
+            })
     }
 
     /// Ask the agent to change a setting. The answer arrives as an

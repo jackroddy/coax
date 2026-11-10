@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,14 +32,23 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
     let advertised = saved.clone();
     let listed = saved.clone();
     let acts = Arc::new(Mutex::new(VecDeque::from(scenario.acts)));
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let cancel_flag = cancelled.clone();
+    let received = Arc::new(AtomicUsize::new(0));
+    let cancelled_through = Arc::new(AtomicUsize::new(0));
+    let (cancel_received, cancel_through) = (received.clone(), cancelled_through.clone());
+    let turn = Arc::new(tokio::sync::Mutex::new(()));
     Agent
         .v1()
         .name("coax-fake-agent")
         .on_receive_request(
             async move |req: InitializeRequest, responder, _cx: ConnectionTo<Client>| {
-                let mut capabilities = AgentCapabilities::new();
+                // the Claude adapter's flag for taking a prompt during
+                // a turn and running it once the turn ends
+                let queueing = serde_json::json!({"promptQueueing": true});
+                let mut capabilities =
+                    AgentCapabilities::new().meta(serde_json::Map::from_iter([(
+                        "claudeCode".to_string(),
+                        queueing,
+                    )]));
                 if !advertised.is_empty() {
                     capabilities = capabilities.load_session(true).session_capabilities(
                         SessionCapabilities::new().list(SessionListCapabilities::new()),
@@ -175,16 +184,19 @@ pub fn agent(scenario: Scenario) -> impl ConnectTo<Client> {
                 let act = acts.lock().unwrap().pop_front();
                 let session = req.session_id;
                 let player = cx.clone();
-                let cancelled = cancelled.clone();
-                cancelled.store(false, Ordering::SeqCst);
-                cx.spawn(async move { play(player, session, act, cancelled, responder).await })?;
+                let number = received.fetch_add(1, Ordering::SeqCst) + 1;
+                let (turn, through) = (turn.clone(), cancelled_through.clone());
+                cx.spawn(async move {
+                    let _turn = turn.lock().await;
+                    play(player, session, act, (number, through), responder).await
+                })?;
                 Ok(())
             },
             on_receive_request!(),
         )
         .on_receive_notification(
             async move |_n: CancelNotification, _cx: ConnectionTo<Client>| {
-                cancel_flag.store(true, Ordering::SeqCst);
+                cancel_through.store(cancel_received.load(Ordering::SeqCst), Ordering::SeqCst);
                 Ok(())
             },
             on_receive_notification!(),
@@ -204,11 +216,13 @@ fn advertise(
     cx.send_notification(SessionNotification::new(session, update))
 }
 
+/// Play `act` for the prompt received `number`th. A cancel covers every
+/// prompt received before it, and `through` holds the last one it covers.
 async fn play(
     cx: ConnectionTo<Client>,
     session: SessionId,
     act: Option<Act>,
-    cancelled: Arc<AtomicBool>,
+    (number, through): (usize, Arc<AtomicUsize>),
     responder: Responder<PromptResponse>,
 ) -> Result<(), Error> {
     let usage = act.as_ref().and_then(|act| act.usage.clone());
@@ -219,7 +233,7 @@ async fn play(
         return responder.respond(PromptResponse::new(StopReason::EndTurn));
     };
     for step in act.steps {
-        if cancelled.load(Ordering::SeqCst) {
+        if through.load(Ordering::SeqCst) >= number {
             return responder.respond(PromptResponse::new(StopReason::Cancelled));
         }
         match step {
