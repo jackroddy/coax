@@ -332,6 +332,9 @@ enum Part {
 
         /// The text a copy takes, for a literal block.
         copy: Option<String>,
+
+        /// Where the links of the rows are drawn, before the block pans.
+        runs: Vec<Run>,
     },
 }
 
@@ -432,13 +435,8 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
         if block > 0 {
             flow(&mut parts).0.push(Line::default());
         }
-        match kept_whole(item, width, &links) {
-            Some((rows, natural, copy)) => parts.push(Part::Block {
-                block,
-                rows,
-                natural,
-                copy,
-            }),
+        match kept_whole(block, item, width, &links) {
+            Some(part) => parts.push(part),
             None => {
                 let (rows, runs) = block_rows(item, width, &links);
                 let (flow_rows, flow_runs) = flow(&mut parts);
@@ -517,13 +515,9 @@ fn block_rows(
     (lines, runs)
 }
 
-/// The rows, natural width and copy text of a code block, or the rows and
-/// width of a table wider than `width`.
-fn kept_whole(
-    block: &cmr::Block,
-    width: usize,
-    links: &[cmr::Link],
-) -> Option<(Vec<Line<'static>>, usize, Option<String>)> {
+/// A code block, or a table wider than `width`, as the `Part::Block` of
+/// block number `index`.
+fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link]) -> Option<Part> {
     match block {
         cmr::Block::Code { lang, lines } => {
             let longest = lines.iter().map(|line| line.width());
@@ -531,19 +525,36 @@ fn kept_whole(
 
             // the gutter is two columns: `│ ` on a line, `┌ ` before the language
             let natural = longest.chain(header).max().unwrap_or(0) + 2 + COPY_ROOM;
-            Some((
-                block_rows(block, natural, links).0,
+            let (rows, runs) = block_rows(block, natural, links);
+            Some(Part::Block {
+                block: index,
+                rows,
                 natural,
-                Some(lines.join("\n")),
-            ))
+                copy: Some(lines.join("\n")),
+                runs,
+            })
         }
         cmr::Block::Table { .. } => {
-            let rows = block_rows(block, TABLE_WIDTH, links).0;
+            let (rows, runs) = block_rows(block, TABLE_WIDTH, links);
             let natural = rows.iter().map(Line::width).max().unwrap_or(0);
-            (natural > width).then_some((rows, natural, None))
+            (natural > width).then_some(Part::Block {
+                block: index,
+                rows,
+                natural,
+                copy: None,
+                runs,
+            })
         }
         _ => None,
     }
+}
+
+/// The shown columns, as first and width, of a run in a block panned by
+/// `offset` that shows `visible` columns, or `None` when none of it shows.
+fn panned(col: usize, width: usize, offset: usize, visible: usize) -> Option<(usize, usize)> {
+    let start = col.max(offset);
+    let end = (col + width).min(offset + visible);
+    (start < end).then(|| (start - offset, end - start))
 }
 
 /// `row` cut to the `visible` columns from `offset`.
@@ -814,6 +825,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                             rows: block_rows,
                             natural,
                             copy,
+                            runs,
                         } => {
                             let shown = (*natural).min(visible_width);
                             let max = natural - shown;
@@ -821,7 +833,8 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                             let offset = app.pans.get(&key).copied().unwrap_or(0).min(max);
 
                             // one row for the border above the box's rows
-                            let first = lines.len() + 1 + rows.len();
+                            let start = rows.len();
+                            let first = lines.len() + 1 + start;
                             let hot = app.hover_bar == Some(key)
                                 || app.drag.is_some_and(|drag| drag.key == key);
                             if max > 0 {
@@ -853,6 +866,24 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                                     (COPY_GLYPH, dim())
                                 };
                                 rows.push(window_with_corner(row, offset, shown, label, style));
+                            }
+                            for run in runs {
+                                let Some((col, width)) = panned(run.col, run.width, offset, shown)
+                                else {
+                                    continue;
+                                };
+                                let link = (index, run.index);
+                                if hovered == Some(link) {
+                                    let row = &mut rows[start + run.row];
+                                    paint(row, col, width, palette::get().accent);
+                                }
+                                spots.push(LinkSpot {
+                                    key: link,
+                                    line: first + run.row,
+                                    col,
+                                    width,
+                                    link: run.link.clone(),
+                                });
                             }
                             if max > 0 {
                                 rows.push(scroll_bar(shown, max, offset, hot));
@@ -2510,6 +2541,26 @@ mod tests {
                 (" ef".to_string(), None)
             ]
         );
+    }
+
+    #[test]
+    fn a_run_in_a_panned_block_keeps_only_the_columns_inside_the_window() {
+        assert_eq!(panned(4, 5, 0, 10), Some((4, 5)));
+        assert_eq!(panned(4, 5, 6, 10), Some((0, 3)));
+        assert_eq!(panned(8, 5, 0, 10), Some((8, 2)));
+        assert_eq!(panned(4, 5, 9, 10), None);
+        assert_eq!(panned(12, 5, 0, 10), None);
+    }
+
+    #[test]
+    fn a_table_wider_than_the_width_keeps_the_runs_of_its_links() {
+        let text = "| name | note |\n|---|---|\n| [a](foam:x) | a rather long note indeed |";
+        let parts = markdown(text, 12);
+        let [Part::Block { runs, .. }] = &parts[..] else {
+            panic!("not one block");
+        };
+        assert_eq!(runs.len(), 1);
+        assert_eq!((runs[0].width, runs[0].link.target.as_str()), (1, "foam:x"));
     }
 
     #[test]

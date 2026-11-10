@@ -265,8 +265,8 @@ command line, the keys, and the scenario format the fake agent reads.
     error. Output is kept per target for the run. An optional `click` command
     runs detached on a click. A target that starts with `-` runs nothing.
   - A hovered link turns accent, and its popup closes when the pointer leaves.
-    Links inside a table or code block that is wider than the screen are
-    drawn but get no hover or click.
+    A link in a table wider than the screen pans with the table. The part of
+    it on screen takes hover and click.
 - A new-version notice. An agent entry may set `registry = "<id>"`, its id in
   the ACP registry. After the agent initializes, coax fetches that id's
   `agent.json` from the registry's repository with `curl` in the background.

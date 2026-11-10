@@ -2156,6 +2156,50 @@ mod tests {
         assert!(!screen.contains('◂') && !screen.contains('▸'), "{screen}");
     }
 
+    #[test]
+    fn a_link_in_a_panned_table_is_hovered_and_clicked_on_the_columns_it_shows() {
+        let mut app = app();
+        app.wide.clear();
+        let note = "y".repeat(60);
+        app.transcript.entries.push(Entry::Agent(format!(
+            "| name | note |\n|---|---|\n| [alpha](file:src/ui.rs#4) | {note} |"
+        )));
+        let text_under = |app: &mut App| {
+            let screen = header_rows_all(app, 40);
+            assert_eq!(app.link_areas.len(), 1, "{screen}");
+            let area = app.link_areas[0].area;
+            let row = screen.lines().nth(area.y as usize).unwrap();
+            let text: String = row
+                .chars()
+                .skip(area.x as usize)
+                .take(area.width as usize)
+                .collect();
+            (area, text)
+        };
+        let (whole, text) = text_under(&mut app);
+        assert_eq!(text, "alpha");
+
+        // the box's text starts two columns in, after `│ `
+        let col = whole.x as usize - 2;
+        app.pans.insert((0, 0), col + 2);
+        let (cut, text) = text_under(&mut app);
+        assert_eq!(text, "pha");
+        assert_eq!(cut.x, 2);
+        let down = MouseEventKind::Down(MouseButton::Left);
+        app.mouse(wheel(
+            MouseEventKind::Moved,
+            KeyModifiers::NONE,
+            cut.x,
+            cut.y,
+        ));
+        assert_eq!(app.hover_link.as_ref().unwrap().key, (0, 0));
+        app.mouse(wheel(down, KeyModifiers::NONE, cut.x, cut.y));
+        assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
+        app.pans.insert((0, 0), col + 5);
+        header_rows_all(&mut app, 40);
+        assert!(app.link_areas.is_empty());
+    }
+
     /// An app whose first entry is agent text with one code block, drawn
     /// once so the copy glyph has a place on screen.
     fn with_a_code_block() -> App {
