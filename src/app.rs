@@ -1150,6 +1150,7 @@ impl App {
                 self.show_plan = !self.show_plan;
                 Action::None
             }
+            KeyCode::Char('g') if ctrl => Action::Edit(self.input.clone()),
             KeyCode::Char('u') if ctrl => {
                 self.clear_input();
                 self.edited();
@@ -3335,6 +3336,20 @@ mod tests {
         };
         assert_eq!(text, "two words");
         assert_eq!(app.input, "/edit two words");
+    }
+
+    #[test]
+    fn ctrl_g_opens_the_whole_prompt_in_the_editor_and_leaves_it_until_the_edit_ends() {
+        let mut app = app();
+        type_text(&mut app, "a long\ndraft");
+        press(&mut app, KeyCode::Left);
+        let Action::Edit(text) = app.key(ctrl('g'), Instant::now()) else {
+            panic!("ctrl+g should open the editor");
+        };
+        assert_eq!(text, "a long\ndraft");
+        assert_eq!(app.input, "a long\ndraft");
+        app.finish_edit(Ok("rewritten".to_string()));
+        assert_eq!(app.input, "rewritten");
     }
 
     #[test]

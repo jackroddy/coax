@@ -194,7 +194,7 @@ command line, the keys, and the scenario format the fake agent reads.
   screen while the editor runs. The saved text, less its trailing newline,
   replaces the prompt with the cursor at the end, and is not sent. When the
   editor exits with an error the prompt stays as it was and a dim line says
-  so.
+  so. Ctrl+g opens the whole prompt in the same editor, as it stands.
 - `/history` opens a box over the status line that lists the prompts sent in
   this run, newest first, each as its first line cut to fit. Up and Down (or
   `k` and `j`) and a click choose a row, Enter puts the prompt's full text
