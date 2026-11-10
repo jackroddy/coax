@@ -838,6 +838,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                         id: tool.id.clone(),
                         first: lines.len(),
                         height: head,
+                        rows: rows.len(),
                     });
                 }
                 lines.extend(rows);
@@ -900,21 +901,24 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
         links: spots,
     } = build_transcript(app, width, start..end);
     debug_assert_eq!(lines.len(), total);
+    let on_screen = |first: usize, rows: usize| {
+        let top = first.max(start);
+        let bottom = (first + rows).min(end).max(top);
+        Rect {
+            x: area.x,
+            y: area.y + (top - start) as u16,
+            width: area.width,
+            height: (bottom - top) as u16,
+        }
+    };
     app.folds = folds
         .iter()
-        .filter_map(|fold| {
-            let top = fold.first.max(start);
-            let bottom = (fold.first + fold.height).min(end);
-            (top < bottom).then(|| FoldArea {
-                area: Rect {
-                    x: area.x,
-                    y: area.y + (top - start) as u16,
-                    width: area.width,
-                    height: (bottom - top) as u16,
-                },
-                id: fold.id.clone(),
-            })
+        .map(|fold| FoldArea {
+            area: on_screen(fold.first, fold.height),
+            whole: on_screen(fold.first, fold.rows),
+            id: fold.id.clone(),
         })
+        .filter(|fold| fold.whole.height > 0)
         .collect();
     app.link_areas = spots
         .into_iter()
@@ -978,6 +982,14 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
         .collect();
     let visible: Vec<Line> = lines.into_iter().take(end).skip(start).collect();
     frame.render_widget(Paragraph::new(visible), area);
+    if let Some(fold) = app
+        .folds
+        .iter()
+        .find(|fold| app.hover_fold.as_ref() == Some(&fold.id))
+    {
+        let tint = Style::new().bg(palette::get().tint);
+        frame.buffer_mut().set_style(fold.whole, tint);
+    }
     app.v_bar = None;
     if area.width < outer.width {
         let bar = VBar {
@@ -1036,8 +1048,11 @@ struct Fold {
     id: ToolCallId,
     first: usize,
 
-    /// The rows of the call's head, which a click folds or unfolds.
+    /// The rows of the call's head.
     height: usize,
+
+    /// The rows of the whole call, head included.
+    rows: usize,
 }
 
 /// A code block drawn this frame, by its first row among the transcript lines.
@@ -1065,10 +1080,14 @@ pub struct LinkArea {
     pub title: Option<String>,
 }
 
-/// An expandable tool call's head rows on screen, which a click folds or
+/// An expandable tool call on screen, which a click anywhere on it folds or
 /// unfolds.
 pub struct FoldArea {
+    /// The call's head rows.
     pub area: Rect,
+
+    /// All of the call's rows.
+    pub whole: Rect,
     pub id: ToolCallId,
 }
 

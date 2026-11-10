@@ -506,7 +506,7 @@ impl App {
                 self.hover_fold = self
                     .folds
                     .iter()
-                    .find(|fold| fold.area.contains(position))
+                    .find(|fold| fold.whole.contains(position))
                     .map(|fold| fold.id.clone());
                 return self.hover_over(position);
             }
@@ -654,6 +654,12 @@ impl App {
 
     /// Take hold of the thumb under a press, or move it to the press first
     /// when the press is on the track.
+    fn flip_fold(&mut self, id: ToolCallId) {
+        if !self.expanded.remove(&id) {
+            self.expanded.insert(id);
+        }
+    }
+
     fn press_bar(&mut self, position: Position) -> bool {
         let Some((bar, grab)) = self.bar_at(position) else {
             return false;
@@ -721,13 +727,15 @@ impl App {
                 return Action::Copy(text);
             }
             if let Some(fold) = self.folds.iter().find(|fold| fold.area.contains(position)) {
-                let id = fold.id.clone();
-                if !self.expanded.remove(&id) {
-                    self.expanded.insert(id);
-                }
+                self.flip_fold(fold.id.clone());
                 return Action::None;
             }
-            self.press_bar(position);
+            if self.press_bar(position) {
+                return Action::None;
+            }
+            if let Some(fold) = self.folds.iter().find(|fold| fold.whole.contains(position)) {
+                self.flip_fold(fold.id.clone());
+            }
             return Action::None;
         };
         let anchor = chip.area.x;
@@ -2057,6 +2065,7 @@ mod tests {
         app.wide.clear();
         app.folds = vec![ui::FoldArea {
             area: Rect::new(0, 4, 60, 2),
+            whole: Rect::new(0, 4, 60, 2),
             id: ToolCallId::new("t1"),
         }];
         app.mouse(wheel(MouseEventKind::Moved, KeyModifiers::NONE, 3, 5));
@@ -2096,6 +2105,65 @@ mod tests {
         assert!(rows(&mut app).contains("- old line"));
         click(&mut app, x, y);
         assert!(!rows(&mut app).contains("old line"));
+    }
+
+    fn unfolded_edit(app: &mut App) -> ui::FoldArea {
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{Diff, ToolCallContent, ToolCallStatus, ToolKind};
+
+        app.wide.clear();
+        let mut diff = Diff::new("src/main.rs", "new line");
+        diff.old_text = Some("old line".to_string());
+        app.transcript.entries.push(Entry::Tool(Tool {
+            id: "e1".into(),
+            title: "Edit src/main.rs".to_string(),
+            kind: ToolKind::Edit,
+            status: ToolCallStatus::Completed,
+            locations: Vec::new(),
+            content: vec![ToolCallContent::Diff(diff)],
+            cancelled: false,
+            changed: (0, 0),
+            revision: 0,
+            agent: false,
+            children: Vec::new(),
+        }));
+        app.expanded.insert("e1".into());
+        header_rows_all(app, 80);
+        let fold = &app.folds[0];
+        ui::FoldArea {
+            area: fold.area,
+            whole: fold.whole,
+            id: fold.id.clone(),
+        }
+    }
+
+    #[test]
+    fn a_click_in_an_unfolded_calls_body_folds_it() {
+        let mut app = with_settings();
+        let fold = unfolded_edit(&mut app);
+        assert!(fold.whole.height > fold.area.height);
+        let last = fold.whole.bottom() - 1;
+        click(&mut app, fold.whole.x + 2, last);
+        assert!(!header_rows_all(&mut app, 80).contains("old line"));
+    }
+
+    #[test]
+    fn hovering_anywhere_on_a_foldable_call_shades_all_of_it_with_the_tint() {
+        let mut app = with_settings();
+        let fold = unfolded_edit(&mut app);
+        let last = fold.whole.bottom() - 1;
+        app.mouse(wheel(
+            MouseEventKind::Moved,
+            KeyModifiers::NONE,
+            fold.whole.x + 2,
+            last,
+        ));
+        assert_eq!(app.hover_fold, Some(fold.id.clone()));
+        let buffer = header_buffer(&mut app, 80);
+        let tint = crate::palette::get().tint;
+        assert_eq!(buffer[(fold.whole.x, fold.whole.y)].bg, tint);
+        assert_eq!(buffer[(fold.whole.x + 5, last)].bg, tint);
+        assert_ne!(buffer[(fold.whole.x, fold.whole.bottom())].bg, tint);
     }
 
     fn typed(app: &mut App, text: &str) {
@@ -2780,6 +2848,7 @@ mod tests {
         app.wide.clear();
         app.folds = vec![ui::FoldArea {
             area: Rect::new(0, 4, 60, 2),
+            whole: Rect::new(0, 4, 60, 2),
             id: ToolCallId::new("t1"),
         }];
         click(&mut app, 3, 5);
@@ -3687,6 +3756,7 @@ mod tests {
         app.wide.clear();
         app.folds = vec![ui::FoldArea {
             area: Rect::new(0, 4, 60, 2),
+            whole: Rect::new(0, 4, 60, 2),
             id: ToolCallId::new("t1"),
         }];
         let moved = |column, row| wheel(MouseEventKind::Moved, KeyModifiers::NONE, column, row);
