@@ -3,7 +3,7 @@
   "title": "A click anywhere in an unfolded tool call folds it",
   "body": "An expandable tool call folds and unfolds on a click on its head row. `draw_transcript` in `ui.rs` records each head's rows on screen as a `FoldArea`, and `App`'s click handling folds the call whose `FoldArea` holds the click. When an unfolded call is taller than the transcript and its head has scrolled off the top, you have to scroll back up to fold it.\n\n## Proposal\n\n- A fold's `FoldArea` covers the call's whole drawn area, its head and its body.\n- A click in the body still goes first to whatever is under it: a link, a copy button, the scroll bar, or a nested call's own head. The innermost fold under the click takes it.\n- Hovering anywhere over a call that can fold shades the whole call with the palette's `tint`. The fold marker turns `accent` as now.\n\n## Rejected\n\n- A sticky head, pinned at the top of the transcript while its body is in view. It costs a row and a second drawing path. A click in the body covers the same need.\n\n## Open\n\n- coax-2eb9e5 may give a left drag in the transcript to text selection. A click with no drag would still fold, which can surprise someone who clicked to clear a selection.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -12,19 +12,22 @@
   ],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-10T22:42:45.346009823Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T19:50:22.598673269Z",
-  "updated_at": "2026-11-10T22:27:45.346009823Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T22:29:38.97806647Z",
+  "closed_at": "2026-11-10T22:29:38.97806647Z",
+  "close_reason": "Done in a7ec3a2. `FoldArea::whole` takes body clicks after links, copy buttons, the head and pan bars, and the hovered call is painted with `tint`. Nested folds do not exist, since a subagent's children do not fold on their own, so the innermost-body rule was dropped.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "69398c0",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "a7ec3a2",
+      "branch": "dev"
+    }
   }
 }
