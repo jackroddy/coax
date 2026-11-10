@@ -3,7 +3,7 @@
   "title": "Agents can colour text by palette name",
   "body": "Agent text reaches coax as markdown and is drawn through cmr. Markdown has no way to colour text, so an agent cannot mark a word red or green. coax already has a palette in `config.toml` with 11 names (accent, muted, selection, foreground, red, yellow, orange, green, cyan, blue, magenta). It maps cmr's code colours through those names in `screen_style` in `src/ui.rs`.\n\n## Proposal\n\n- Agents colour text by palette name, never by hex value, so the colours follow Jack's theme and stay readable on it. An unknown name renders as plain text.\n- cmr learns an inline colour syntax and returns the colour as a name. coax maps the name through the palette.\n- The coax output style (coax-3d286f) lists the syntax and the names. It says when colour helps: status words, warnings, summaries of what passed and what failed. It is not for decoration.\n\n## Open\n\n- The syntax. Candidates are a pandoc-style span, as in `[failed]{.red}`; a short tag of coax's own, as in `{red|failed}`; or an HTML span, which cmr would have to parse and the output style bans today. Outside coax, in Claude Code or another client, the markup shows as typed.\n- coax-1898d3 (links with a hover popup and a decade action) also needs an inline syntax of coax's own. The two should share one form, for example `[text]{.red}` and `[text]{foam=coax-12e8af}`.\n- Whether colour can nest with bold or code, and whether a coloured span can cross a line break.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T09:24:57.917760089Z",
-  "updated_at": "2026-11-09T10:31:37.602662709Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T22:05:33.425088056Z",
+  "closed_at": "2026-11-10T22:05:33.425088056Z",
+  "close_reason": "Landed in 7a387c5 as the `color:<name>` link scheme, as in `[failed](color:red)`. Jack kept the name. The wording for agents stays with coax-3d286f.",
+  "resolution": "done",
   "notes": [
     {
       "id": "e1c8b621",
@@ -33,6 +33,9 @@
       "commit": "3a6ef1f",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e70e227",
+      "branch": "dev"
+    }
   }
 }
