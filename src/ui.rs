@@ -27,8 +27,7 @@ const MAX_PLAN_ROWS: usize = 6;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let foreground = Style::new().fg(palette::get().foreground);
-    frame.buffer_mut().set_style(area, foreground);
+    frame.buffer_mut().set_style(area, palette::base());
     app.prompt_width = (area.width as usize).saturating_sub(PROMPT_LEAD.len());
     let input = input_view(
         &app.input,
@@ -154,7 +153,7 @@ fn draw_link_popup(frame: &mut Frame, app: &App) {
     let block = Block::bordered()
         .border_style(dim())
         .padding(Padding::horizontal(1));
-    frame.render_widget(Clear, area);
+    clear(frame, area);
     frame.render_widget(Paragraph::new(rows).block(block), area);
 }
 
@@ -657,33 +656,36 @@ fn paint(row: &mut Line<'static>, col: usize, width: usize, colour: Color) {
 }
 
 fn screen_style(style: cmr::Style) -> Style {
+    let palette = palette::get();
     let mut out = Style::new();
     if let Some(color) = style.fg {
-        let palette = palette::get();
         out = out.fg(match color {
-            cmr::Color::Black => Color::Black,
+            cmr::Color::Black => palette.black,
             cmr::Color::Red => palette.red,
             cmr::Color::Green => palette.green,
             cmr::Color::Yellow => palette.yellow,
             cmr::Color::Blue => palette.blue,
             cmr::Color::Magenta => palette.magenta,
             cmr::Color::Cyan => palette.cyan,
-            cmr::Color::Gray => Color::Gray,
-            cmr::Color::DarkGray => palette.muted.unwrap_or(Color::DarkGray),
-            cmr::Color::LightRed => palette.orange,
-            cmr::Color::LightGreen => palette.green,
-            cmr::Color::LightYellow => palette.yellow,
-            cmr::Color::LightBlue => palette.blue,
-            cmr::Color::LightMagenta => palette.magenta,
-            cmr::Color::LightCyan => palette.cyan,
-            cmr::Color::White => Color::White,
+            cmr::Color::Gray => palette.white,
+            cmr::Color::DarkGray => palette.bright_black,
+            cmr::Color::LightRed => palette.bright_red,
+            cmr::Color::LightGreen => palette.bright_green,
+            cmr::Color::LightYellow => palette.bright_yellow,
+            cmr::Color::LightBlue => palette.bright_blue,
+            cmr::Color::LightMagenta => palette.bright_magenta,
+            cmr::Color::LightCyan => palette.bright_cyan,
+            cmr::Color::White => palette.bright_white,
         });
     }
     if style.bold {
         out = out.add_modifier(Modifier::BOLD);
     }
     if style.dim {
-        out = out.add_modifier(Modifier::DIM);
+        out = match style.fg {
+            None => out.fg(palette.muted),
+            Some(_) => out.add_modifier(Modifier::DIM),
+        };
     }
     if style.underline {
         out = out.add_modifier(Modifier::UNDERLINED);
@@ -1580,7 +1582,7 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     if !app.queued.is_empty() {
         block = block.title_bottom(Line::styled(format!("{} more", app.queued.len()), dim()));
     }
-    frame.render_widget(Clear, area);
+    clear(frame, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -1660,7 +1662,7 @@ fn draw_commands(frame: &mut Frame, app: &App, above: Rect) {
             }
         })
         .collect();
-    frame.render_widget(Clear, area);
+    clear(frame, area);
     frame.render_widget(Paragraph::new(lines).block(pane("commands", false)), area);
 }
 
@@ -1686,7 +1688,7 @@ fn draw_confirm(frame: &mut Frame, over: Rect, app: &App) {
     };
     let block = pane("send to the agent", true)
         .title_bottom(Line::styled("enter send   esc cancel", dim()).right_aligned());
-    frame.render_widget(Clear, area);
+    clear(frame, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -1866,17 +1868,20 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
     if let Some(message) = &menu.error {
         lines.push(Line::styled(cut(message, inner), dim()));
     }
-    frame.render_widget(Clear, area);
+    clear(frame, area);
     frame.render_widget(Paragraph::new(lines).block(pane(&title, true)), area);
     app.menu_area = Some(area);
     app.menu_first = first;
 }
 
 pub fn dim() -> Style {
-    match palette::get().muted {
-        Some(color) => Style::new().fg(color),
-        None => Style::default().add_modifier(Modifier::DIM),
-    }
+    Style::new().fg(palette::get().muted)
+}
+
+/// Clear `area` for a box drawn over the screen, back to the base style.
+fn clear(frame: &mut Frame, area: Rect) {
+    frame.render_widget(Clear, area);
+    frame.buffer_mut().set_style(area, palette::base());
 }
 
 fn focus() -> Style {

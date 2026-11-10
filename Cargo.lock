@@ -351,6 +351,7 @@ dependencies = [
  "cmr",
  "crossterm",
  "decade-channel",
+ "libc",
  "ratatui",
  "serde",
  "serde_json",

@@ -47,12 +47,19 @@ command line, the keys, and the scenario format the fake agent reads.
   the options numbered; a digit answers, Esc cancels. The answer stays in
   the conversation as a dim `⎿` line. `--allow` answers every
   request with the first allow option instead, for scripted runs.
-- A `[palette]` table in `config.toml` sets the colours, under omarchy's
-  names: `accent`, `muted`, `selection`, `foreground`, `red`, `yellow`,
-  `orange`, `green`, `cyan`, `blue` and `magenta`. A value is `"#RRGGBB"` or an
-  ANSI colour name. A name left out keeps its ANSI colour, and without
-  `muted` dim text uses the terminal's dim attribute. A bad value is an error
-  naming the file.
+- A `[palette]` table in `config.toml` sets the colours. It holds the
+  terminal's slots under the names terminal themes use: `black`, `red`,
+  `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, the same eight as
+  `bright_black` to `bright_white`, `foreground` and `background`. Each takes
+  `"#RRGGBB"` or an ANSI colour name, and a slot left out keeps the
+  terminal's colour. With `background` set, coax paints every cell with it.
+  coax's own slots take a terminal slot's name as well, and default to one:
+  `accent` to `yellow`, `muted` (dim text and rules) and `selection` (the
+  chosen row) to `bright_black`, and `orange` to `bright_red`. `tint`, a fill
+  just off the background, mixes 7% of the foreground into the background.
+  It takes their RGB from the config or, at startup, from the terminal's
+  answers to OSC 10 and OSC 11, and falls back to `selection` when neither
+  has them. A bad name or value is an error naming the file.
 - Wide code blocks and tables in the agent's text keep their full width, where
   before a code line was cut with `…` and a table was squeezed or stacked. A
   block wider than the box shows a window onto it, with a scroll bar row
@@ -203,9 +210,9 @@ command line, the keys, and the scenario format the fake agent reads.
   row still do nothing, so no key recalls an earlier prompt.
 - Links in agent text, written `[text](target)` with an optional `"title"`.
   The scheme of the target decides what the link does.
-  - `color:<name>` draws the text in that palette colour (`accent`, `muted`,
-    `selection`, `foreground`, `red`, `yellow`, `orange`, `green`, `cyan`,
-    `blue`, `magenta`) without an underline. An unknown name is plain text.
+  - `color:<name>` draws the text in the palette slot of that name, any of
+    the terminal's or coax's own, without an underline. An unknown name is
+    plain text.
     The link has no hover and no click.
   - `file:<path>` or `file:<path>#<line>` draws the text underlined in blue.
     Hovering opens a popup with the path relative to the folder coax runs in,

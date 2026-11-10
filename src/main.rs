@@ -71,7 +71,7 @@ fn load_config() -> (Config, PathBuf) {
     match Config::load(&path) {
         Ok(config) => {
             coax::log::info("config", json!({"path": path}));
-            coax::palette::init(config.palette.resolve());
+            coax::palette::init(config.palette.resolve(coax::palette::query_terminal()));
             (config, path)
         }
         Err(error) => fail(2, &error),

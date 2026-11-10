@@ -198,6 +198,8 @@ impl<'a> Picker<'a> {
     }
 
     fn draw(&self, frame: &mut Frame, now: i64) {
+        let area = frame.area();
+        frame.buffer_mut().set_style(area, palette::base());
         let agents_height = self.names.len().max(2) as u16 + 2;
         let sessions = !self.sessions.is_empty();
         let room = frame.area().height.saturating_sub(3 + agents_height);

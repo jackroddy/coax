@@ -17,6 +17,7 @@ agent-client-protocol = { version = "5", features = ["process", "stdio", "unstab
 cmr = { version = "0.1.0", path = "../cmr" }
 crossterm = "0.29.0"
 decade-channel = { version = "0.1.0", path = "../decade/decade-channel" }
+libc = "0.2"
 ratatui = "0.30"
 serde = "1.0.229"
 serde_json = "1.0.154"

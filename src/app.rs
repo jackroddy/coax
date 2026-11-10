@@ -2562,8 +2562,9 @@ mod tests {
         let auto = &buffer[(mode.x, 29)];
         assert_eq!(auto.fg, crate::palette::get().yellow);
         assert!(!auto.modifier.contains(Modifier::DIM));
-        assert!(buffer[(model.x, 29)].modifier.contains(Modifier::DIM));
-        assert!(buffer[(mode.x + 5, 29)].modifier.contains(Modifier::DIM));
+        let muted = crate::palette::get().muted;
+        assert_eq!(buffer[(model.x, 29)].fg, muted);
+        assert_eq!(buffer[(mode.x + 5, 29)].fg, muted);
     }
 
     #[test]
