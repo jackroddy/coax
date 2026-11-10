@@ -7,13 +7,15 @@
   "priority": 2,
   "labels": [],
   "parent": null,
-  "blocked_by": [],
+  "blocked_by": [
+    "coax-1cab7b"
+  ],
   "related": [],
   "assignee": null,
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T19:50:22.598673269Z",
-  "updated_at": "2026-11-10T22:18:38.233641637Z",
+  "updated_at": "2026-11-10T22:18:38.241681Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
