@@ -3,7 +3,7 @@
   "title": "The screen's look is designed",
   "body": "`src/ui.rs` is deliberately plain: prefixes, a dimmed thought, a tool line\nwith its status, a status bar in reverse video. Jack has strong views on how\na chat should look, and the dislike of Claude Code's own TUI is the reason\ncoax exists, so the design is his to direct. Nothing here is to be\nredesigned on a session's own initiative; take direction and apply it.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:28:08.26836425Z",
-  "updated_at": "2026-11-09T20:32:49.197092627Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T23:34:01.504595771Z",
+  "closed_at": "2026-11-10T23:34:01.504595771Z",
+  "close_reason": "The redesign landed in the commits its notes list. The first daily drive filed its look changes as their own issues, among them coax-25b164, coax-445a0d, coax-1cab7b, coax-79bd97, coax-bb8853, coax-06ff60 and coax-784c36. New look changes get their own issues.",
+  "resolution": "done",
   "notes": [
     {
       "id": "13dea810",
@@ -64,6 +64,9 @@
       "commit": "0548ccc",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8825ec6",
+      "branch": "dev"
+    }
   }
 }
