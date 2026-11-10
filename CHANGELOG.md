@@ -214,11 +214,13 @@ command line, the keys, and the scenario format the fake agent reads.
   editor exits with an error the prompt stays as it was and a dim line says
   so. Ctrl+g opens the whole prompt in the same editor, as it stands.
 - `/history` opens a box over the status line that lists the prompts sent in
-  this run, newest first, each as its first line cut to fit. Up and Down (or
-  `k` and `j`) and a click choose a row, Enter puts the prompt's full text
-  in the prompt with the cursor at the end, and Esc closes the box. The
-  list is not saved between runs. Up and Down on a prompt that fits on one
-  row still do nothing, so no key recalls an earlier prompt.
+  this run and the prompts of a resumed session, newest first. Each row is
+  the prompt's first line cut to fit, with a dim `N lines` after it when the
+  prompt has more. The box is at most 60 columns wide and shows 10 rows,
+  scrolling past them. Up and Down (or `k` and `j`) and a click choose a
+  row, Enter puts the prompt's full text in the prompt with the cursor at
+  the end, and Esc closes the box. Up on an empty prompt opens the same box.
+  With text in the prompt, Up only moves the cursor.
 - Links in agent text, written `[text](target)` with an optional `"title"`.
   The scheme of the target decides what the link does.
   - `color:<name>` draws the text in the palette slot of that name, any of

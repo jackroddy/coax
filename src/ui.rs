@@ -1793,6 +1793,10 @@ fn first_line(text: &str) -> &str {
         .unwrap_or("")
 }
 
+/// The widest and tallest the history box gets, in columns and rows.
+const HISTORY_WIDTH: u16 = 60;
+const HISTORY_ROWS: usize = 10;
+
 /// The picker box hanging under a header chip.
 fn draw_menu(frame: &mut Frame, app: &mut App) {
     app.menu_area = None;
@@ -1833,7 +1837,11 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
                 .history
                 .iter()
                 .rev()
-                .map(|text| (first_line(text).to_string(), None, false))
+                .map(|text| {
+                    let lines = text.lines().count();
+                    let note = (lines > 1).then(|| format!("{lines} lines"));
+                    (first_line(text).to_string(), note, false)
+                })
                 .collect();
             ("history".to_string(), rows)
         }
@@ -1850,6 +1858,12 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
         .max(title.width() + 2)
         + 4;
     let width = (wanted as u16).min(screen.width.saturating_sub(4).max(24).min(screen.width));
+    let history = matches!(menu.target, MenuTarget::History);
+    let width = if history {
+        width.min(HISTORY_WIDTH)
+    } else {
+        width
+    };
     let warning = menu.confirm.as_ref().and_then(|value| match &menu.target {
         MenuTarget::Setting(id) => {
             let setting = settings.iter().find(|setting| setting.id == *id)?;
@@ -1879,6 +1893,7 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
     let visible = rows
         .len()
         .min((screen.height as usize).saturating_sub(4 + error))
+        .min(if history { HISTORY_ROWS } else { usize::MAX })
         .max(1);
     let first = (menu.cursor + 1).saturating_sub(visible);
     // the box sits on the status line, which has the chips it hangs from

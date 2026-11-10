@@ -903,13 +903,7 @@ impl App {
                     self.transcript.notice("no earlier prompts".to_string());
                     return Action::None;
                 }
-                self.menu = Some(Menu {
-                    target: MenuTarget::History,
-                    cursor: 0,
-                    anchor: 0,
-                    error: None,
-                    confirm: None,
-                });
+                self.open_history();
                 Action::None
             }
             Kind::Edit => {
@@ -969,6 +963,32 @@ impl App {
                 Action::None
             }
             _ => Action::None,
+        }
+    }
+
+    fn open_history(&mut self) {
+        self.menu = Some(Menu {
+            target: MenuTarget::History,
+            cursor: 0,
+            anchor: 0,
+            error: None,
+            confirm: None,
+        });
+    }
+
+    /// Keep the prompts of a loaded session for `/history`, oldest first.
+    pub fn remember_loaded(&mut self) {
+        let loaded: Vec<String> = self
+            .transcript
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::User(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        for text in loaded {
+            self.remember(&text);
         }
     }
 
@@ -1224,6 +1244,12 @@ impl App {
             KeyCode::Esc if self.transcript.in_flight => self.cancel(),
             KeyCode::Enter if alt || shift => {
                 self.insert("\n");
+                Action::None
+            }
+            KeyCode::Up if self.input.is_empty() => {
+                if !self.history.is_empty() {
+                    self.open_history();
+                }
                 Action::None
             }
             KeyCode::Up => {
@@ -1531,6 +1557,7 @@ async fn session(
     while let Ok(event) = link.events.try_recv() {
         app.event(event);
     }
+    app.remember_loaded();
     if let Some(text) = first_prompt {
         app.transcript.prompt(text.clone());
         link.prompt(app.session.clone(), text)?;
@@ -3640,16 +3667,37 @@ mod tests {
     }
 
     #[test]
-    fn up_and_down_never_recall_earlier_prompts() {
+    fn up_on_an_empty_prompt_opens_the_history_box_and_up_in_typed_text_does_not() {
         let mut app = app();
+        press(&mut app, KeyCode::Up);
+        assert!(app.menu.is_none());
+        assert!(app.transcript.entries.is_empty());
         send(&mut app, "first");
         send(&mut app, "second");
-        press(&mut app, KeyCode::Up);
-        assert_eq!(app.input, "");
         type_text(&mut app, "draft");
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::Down);
+        assert!(app.menu.is_none());
         assert_eq!(app.input, "draft");
+        app.clear_input();
+        press(&mut app, KeyCode::Up);
+        assert!(matches!(
+            app.menu.as_ref().map(|menu| &menu.target),
+            Some(MenuTarget::History)
+        ));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.input, "second");
+    }
+
+    #[test]
+    fn a_loaded_sessions_prompts_join_the_history_oldest_first() {
+        let mut app = app();
+        app.transcript.prompt("from last time".to_string());
+        app.transcript.in_flight = false;
+        app.transcript.prompt("and after".to_string());
+        app.transcript.in_flight = false;
+        app.remember_loaded();
+        assert_eq!(app.history, ["from last time", "and after"]);
     }
 
     #[test]
@@ -3726,18 +3774,38 @@ mod tests {
         let screen = header_rows_all(&mut app, 100);
         assert!(screen.contains('…'));
         let area = app.menu_area.expect("the box is drawn");
-        assert_eq!(area.width, 96);
+        assert_eq!(area.width, 60);
     }
 
     #[test]
-    fn a_menu_widens_to_fit_its_longest_row_up_to_four_columns_short_of_the_screen() {
+    fn the_history_box_shows_at_most_ten_rows_and_notes_a_prompt_of_several_lines() {
+        let mut app = app();
+        send(&mut app, "two\nlines");
+        for n in 0..14 {
+            send(&mut app, &format!("prompt {n}"));
+        }
+        open_history(&mut app);
+        let screen = header_rows_all(&mut app, 100);
+        assert_eq!(app.menu_area.unwrap().height, 10 + 2);
+        for _ in 0..14 {
+            press(&mut app, KeyCode::Down);
+        }
+        let screen_end = header_rows_all(&mut app, 100);
+        assert!(!screen.contains("2 lines"));
+        assert!(screen_end.contains("two  2 lines"), "{screen_end}");
+    }
+
+    #[test]
+    fn a_history_row_wider_than_the_box_is_cut_at_sixty_columns() {
         let mut app = app();
         let long = "a".repeat(80);
         send(&mut app, &long);
         open_history(&mut app);
         let screen = header_rows_all(&mut app, 120);
-        assert!(screen.contains(&long), "{screen}");
-        assert_eq!(app.menu_area.unwrap().width, 80 + 2 + 4);
+        let area = app.menu_area.unwrap();
+        assert_eq!(area.width, 60);
+        let row = screen.lines().nth(area.y as usize + 1).unwrap();
+        assert!(row.contains('…') && !row.contains(&long), "{row}");
     }
 
     #[test]
