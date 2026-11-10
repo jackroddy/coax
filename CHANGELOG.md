@@ -93,8 +93,9 @@ command line, the keys, and the scenario format the fake agent reads.
 - The status line also shows the context as `ctx 28k/1.0M 3%`, yellow past
   80% and red past 95%, and the session's tokens as `↑28k ↓4` with the cost
   after them, such as `$0.14`, when the agent sends one. On a narrow screen
-  the tokens and cost go first, then the context, then the plan summary, and
-  then settings from the right.
+  the model config settings and settings with no category move into `⋯`
+  first. Then the tokens and cost go, then the context, then the plan
+  summary, and then the remaining settings from the right.
 - The scenario format gains an optional top-level `config_options` array (the
   settings the agent offers, as ACP config options) and `modes`, and an
   optional `usage` on an act, which the prompt response reports. The fake

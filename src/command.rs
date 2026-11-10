@@ -163,6 +163,7 @@ mod tests {
             unguarded: false,
             from_modes: false,
             model: false,
+            rarely_changed: false,
         }
     }
 

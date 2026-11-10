@@ -84,10 +84,16 @@ fn settings_width(widths: &[usize], hidden: bool) -> usize {
 }
 
 /// What fits on a line `width` columns wide: how many settings, whether a `⋯`
-/// stands for the rest, and the status items kept. The items go first, the
-/// highest rank first. Then settings go from the right. The first setting
-/// and the rank 0 items stay.
-fn fit_line(widths: &[usize], mut items: Vec<Item>, width: usize) -> (usize, bool, Vec<Item>) {
+/// stands for the rest, and the status items kept. The settings past the
+/// first `steady` go first, then the items, the highest rank first, then the
+/// rest of the settings from the right. The first setting and the rank 0
+/// items stay.
+fn fit_line(
+    widths: &[usize],
+    steady: usize,
+    mut items: Vec<Item>,
+    width: usize,
+) -> (usize, bool, Vec<Item>) {
     let mut shown = widths.len();
     loop {
         let hidden = shown < widths.len();
@@ -103,7 +109,9 @@ fn fit_line(widths: &[usize], mut items: Vec<Item>, width: usize) -> (usize, boo
             .filter(|(_, item)| item.rank > 0)
             .max_by_key(|(_, item)| item.rank)
             .map(|(index, _)| index);
-        if let Some(index) = droppable {
+        if shown > steady.max(1) {
+            shown -= 1;
+        } else if let Some(index) = droppable {
             items.remove(index);
         } else if shown > 1 {
             shown -= 1;
@@ -193,7 +201,11 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|setting| setting.label.to_lowercase())
         .collect();
     let widths: Vec<usize> = texts.iter().map(|text| text.width()).collect();
-    let (shown, hidden, items) = fit_line(&widths, status(app), area.width as usize);
+    let steady = settings
+        .iter()
+        .filter(|setting| !setting.rarely_changed)
+        .count();
+    let (shown, hidden, items) = fit_line(&widths, steady, status(app), area.width as usize);
 
     let mut spans = vec![Span::raw(" ")];
     let mut x = area.x + 1;
@@ -270,7 +282,7 @@ mod tests {
 
     #[test]
     fn a_wide_line_shows_every_setting_and_every_item() {
-        let (shown, hidden, kept) = fit_line(&WIDTHS, items(), 200);
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 4, items(), 200);
         assert_eq!((shown, hidden), (4, false));
         assert_eq!(names(&kept), ["plan", "context", "tokens", "idle"]);
     }
@@ -279,7 +291,7 @@ mod tests {
     fn a_narrowing_line_drops_tokens_then_context_then_plan_then_settings_from_the_right() {
         // settings take 30 + 9 columns, items 21 + 9, and 4 more for the spaces
         let fit = |width| {
-            let (shown, hidden, kept) = fit_line(&WIDTHS, items(), width);
+            let (shown, hidden, kept) = fit_line(&WIDTHS, 4, items(), width);
             (shown, hidden, kept.len())
         };
         assert_eq!(fit(73), (4, false, 4));
@@ -290,16 +302,26 @@ mod tests {
 
     #[test]
     fn once_the_items_are_down_to_the_state_settings_leave_into_the_overflow_mark() {
-        let (shown, hidden, kept) = fit_line(&WIDTHS, items(), 44);
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 4, items(), 44);
         assert_eq!((shown, hidden), (3, true));
         assert_eq!(names(&kept), ["idle"]);
-        let (shown, hidden, _) = fit_line(&WIDTHS, items(), 30);
+        let (shown, hidden, _) = fit_line(&WIDTHS, 4, items(), 30);
         assert_eq!((shown, hidden), (2, true));
     }
 
     #[test]
+    fn rarely_changed_settings_leave_into_the_overflow_mark_before_any_item_drops() {
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 2, items(), 72);
+        assert_eq!((shown, hidden), (3, true));
+        assert_eq!(names(&kept), ["plan", "context", "tokens", "idle"]);
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 2, items(), 58);
+        assert_eq!((shown, hidden), (2, true));
+        assert_eq!(names(&kept), ["plan", "context", "tokens", "idle"]);
+    }
+
+    #[test]
     fn the_first_setting_and_the_state_stay_however_narrow_the_line_gets() {
-        let (shown, hidden, kept) = fit_line(&WIDTHS, items(), 3);
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 4, items(), 3);
         assert_eq!((shown, hidden), (1, true));
         assert_eq!(names(&kept), ["idle"]);
     }

@@ -51,6 +51,9 @@ pub struct Setting {
 
     /// Whether the setting picks the model.
     pub model: bool,
+
+    /// Whether the setting is model config or has no category.
+    pub rarely_changed: bool,
 }
 
 pub enum Control {
@@ -211,6 +214,7 @@ fn setting(option: &SessionConfigOption) -> Option<Setting> {
         unguarded: is_mode && is_unguarded(&current),
         from_modes: false,
         model: matches!(option.category, Some(SessionConfigOptionCategory::Model)),
+        rarely_changed: rank(option.category.as_ref()) > 2,
     })
 }
 
@@ -239,6 +243,7 @@ fn mode_setting(modes: &SessionModeState) -> Setting {
         unguarded: is_unguarded(&current),
         from_modes: true,
         model: false,
+        rarely_changed: false,
     }
 }
 
