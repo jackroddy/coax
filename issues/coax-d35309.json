@@ -3,26 +3,29 @@
   "title": "/edit cannot open a prompt that was typed before it",
   "body": "`/edit` (d2094e5) opens the prompt in `$VISUAL`, then `$EDITOR`, then `vi`, with coax suspended. Because a command must start the prompt, typing `/edit` replaces whatever was there. So the editor opens on the text typed after the command name, as in `/edit some draft`, or empty for a bare `/edit`. There is no way to edit a long prompt already typed, which is the main reason to reach for an editor.\n\n## Options\n\n- A key that opens the whole current prompt in the editor, as Ctrl+g does in some shells and agents. Lean: this one. It needs a key, and keys are versioned, so it moves the minor version. Jack dislikes key actions, so it is his call.\n- `/edit` keeps the prompt as it was before the user started typing the command. coax remembers the text when the prompt changes from not starting with `/` to starting with it, and offers that text to the editor. That uses no key, but the behaviour is invisible.\n- Leave `/edit` as it is.",
   "type": "decision",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-10T21:55:12.796064101Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T10:11:37.978850369Z",
-  "updated_at": "2026-11-10T21:40:12.796064101Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T21:40:50.254862381Z",
+  "closed_at": "2026-11-10T21:40:50.254862381Z",
+  "close_reason": "Took the key option in e70e227. Ctrl+g sends `Action::Edit` with the whole prompt, and `/edit` is unchanged. An editor drawn inside coax's prompt area was judged not worth its cost for now.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "27bed5d",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e70e227",
+      "branch": "dev"
+    }
   }
 }
