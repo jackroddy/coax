@@ -1,0 +1,28 @@
+{
+  "id": "coax-2eb9e5",
+  "title": "How does a person select and copy text from the transcript?",
+  "body": "`App` turns on mouse capture at startup (`EnableMouseCapture` in `app.rs`) for hover popups, clicks, wheel scrolling, panning wide blocks and dragging the scroll bar. While coax captures the mouse, the terminal gets no drag, so its own selection stops working. The first-session issue coax-fc0c83 left selection to the terminal before capture existed. Today the only way to copy is a code block's copy button, which sends the block's text through OSC 52 (`clipboard::osc52`).\n\n## Options\n\n- The terminal selects, past capture. Many terminals bypass capture while Shift is held. This costs no code. The selection takes what is on screen, including box borders, glyphs and the line breaks from wrapping, and covers only the visible rows. It also depends on the terminal and on decade passing the drag through.\n- coax selects. A left drag over the transcript marks a range, coax draws it highlighted, scrolls when the drag passes the top or bottom edge, and copies on release through OSC 52. `draw_transcript` would record, for each drawn row, the text each cell came from, so the copy holds unwrapped text with no borders. A drag that starts on a scroll bar or a wide block keeps its current meaning.\n- Capture can be toggled. A key turns mouse capture off so the terminal selects, and on again. This is cheap, but hover, click and wheel stop while it is off.\n\nI lean to coax selecting. It is the most work, and the only option that copies clean text across more than one screen.\n\n## Open\n\n- Does a copy take the rendered text or the agent's markdown source?\n- Does decade pass Shift with a drag through to the terminal's own selection?",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T00:31:30.609659627Z",
+  "updated_at": "2026-11-10T00:31:30.609659627Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "95a68b4",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
