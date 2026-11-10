@@ -1,0 +1,28 @@
+{
+  "id": "coax-784c36",
+  "title": "Adjacent fenced blocks with tab names draw as one box with tabs",
+  "body": "coax draws each fenced block in its own box. An agent comparing versions of one table, or competing designs of one function, sends them one after another, so the person scrolls between them to compare.\n\n## Proposal\n\n- A fence's opening line can name a tab after the language, as in `rust tab=\"owned\"`. coax merges adjacent fences that each name a tab into one box.\n- The tab names sit in the box's header row as chips. A click shows that tab, the first tab shows by default, and coax keeps the choice per box, as it keeps `pans`.\n- The copy button takes the shown tab's text.\n- A `markdown` fence with a tab name renders as markdown, once coax-bb8853 lands, so tables can be compared this way.\n\nAny other renderer shows the fences as consecutive code blocks, so the text stays readable outside coax.\n\n## Cost\n\n- cmr's `fence` keeps only the first word of the opening line, so `Block::Code` needs the rest of it.\n- The header row also gets the `raw|render` chip from coax-bb8853 and the `wrap|pan` chip from coax-06ff60. The three need one design.\n- The coax output style has to teach agents the form, under coax-5e39b9.\n\n## Open\n\n- What happens when tab names do not fit the box's width?",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T22:59:33.672669323Z",
+  "updated_at": "2026-11-10T22:59:33.672669323Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "a1ffd60",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
