@@ -3,26 +3,29 @@
   "title": "Up and Down in the prompt skip over wrapped rows",
   "body": "The prompt box draws its text in rows. `wrap_rows` in `ui.rs` breaks the text at word breaks to the box's width, and every `\\n` starts a new row. The cursor keys see only the `\\n` lines. Up and Down in `App`'s prompt key handling call `prompt::line_above` and `prompt::line_below`. Both find the neighbouring line by searching for `\\n` and keep the display column.\n\nWhen a line wraps, its rows are one line to these functions. In a single paragraph that wraps to three rows, Up and Down do nothing, because no line lies above or below it. With the cursor on the first row of a wrapped paragraph, Down jumps past the paragraph's remaining rows to the next `\\n` line.\n\n## Proposal\n\nUp and Down move by drawn row. They keep the display column, as they do now. To find the rows, the movement code needs the width `wrap_rows` was given. `App` would keep the prompt's width from the last draw, the way it keeps `page` for Page Up and Page Down.\n\nCtrl-A and Ctrl-E stay on the `\\n` line. coax takes them from readline and Emacs, and both move by logical line.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-10T20:33:06.429921612Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T23:54:16.222541601Z",
-  "updated_at": "2026-11-10T20:18:06.429921612Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T20:52:26.849224915Z",
+  "closed_at": "2026-11-10T20:52:26.849224915Z",
+  "close_reason": "Done in 14b6bdf. `prompt::row_above` and `prompt::row_below` move by the rows `prompt::wrap_rows` draws, at the width `App::prompt_width` keeps from the last draw. Ctrl-A and Ctrl-E still move by `\\n` line.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "95a68b4",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "14b6bdf",
+      "branch": "dev"
+    }
   }
 }
