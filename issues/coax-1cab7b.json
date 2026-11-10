@@ -3,20 +3,20 @@
   "title": "The palette holds the terminal's colour slots and coax's own roles mapped onto them",
   "body": "`Palette` in `palette.rs` holds 11 colours: `accent`, `muted`, `selection`, `foreground`, and the hues `red`, `yellow`, `orange`, `green`, `cyan`, `blue` and `magenta`. They come only from the `[palette]` table in `config.toml`, and each falls back to an ANSI colour, so an empty table follows the terminal's theme. Several things on screen bypass it:\n\n- No cell gets a background except the selected row in pickers and menus. The terminal's background shows everywhere else, and coax cannot name it.\n- cmr's dim, used for code gutters, comments, quotes and rules, maps to the terminal's DIM attribute in `screen_style` (`ui.rs`) and ignores `muted`.\n- Your messages, the prompt, agent text and link text are drawn with no style, so they take the terminal's foreground rather than `foreground`.\n- `INK` is unused, and cmr's Black, Gray and White map to fixed ANSI colours that cmr's theme never emits.\n\n## Proposal\n\nThe palette has two layers.\n\nTerminal slots, named as terminal themes name them. Each defaults to the terminal's own colour of that name.\n\n| slot | default |\n|---|---|\n| `black` to `white`, 8 slots | the terminal's colour of that name |\n| `bright_black` to `bright_white`, 8 slots | the terminal's bright colour of that name |\n| `foreground` | the terminal's foreground |\n| `background` | unset, so the terminal's background shows |\n\ncoax slots, for roles a terminal has no slot for. Each defaults to a terminal slot, which is the standard mapping.\n\n| slot | default | meaning |\n|---|---|---|\n| `accent` | `yellow` | your colour, and hover |\n| `muted` | `bright_black` | secondary text |\n| `selection` | `bright_black` | chosen row background |\n| `orange` | `bright_red` | spare hue |\n| `tint` | derived | a barely visible fill, for hover shading and text selection |\n\n- A config value is a hex colour or another slot's name, as in `accent = \"bright_cyan\"`. A name keeps following the theme, and a hex value pins the colour.\n- When `background` is set, coax paints every cell with it.\n- `tint` mixes about 6 to 8 percent of the foreground into the background. coax needs both as RGB, from a hex value in the config or from the terminal through OSC 11 and OSC 10. With neither, `tint` is `selection`.\n- cmr's dim draws with `muted`, and unstyled text draws with `foreground`.\n- `INK` and the unreachable cmr mappings go.\n- `color:` links accept every slot name.\n\n## Cost\n\nThe `[palette]` keys change, which is a config change, not a versioned one. `muted` moves from the DIM attribute to `bright_black`, which looks different in a terminal whose DIM is not bright black.\n\n## Open\n\n- Does decade answer OSC 10 and OSC 11 for the program in its pane? This needs a trial.\n- Should `muted` keep DIM as its default, with `bright_black` as an option?\n- A terminal's selection and cursor colours have no escape code to name them, so `selection` maps to a numbered slot and the cursor stays the terminal's.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-10T22:36:22.576705191Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T22:18:38.207048395Z",
-  "updated_at": "2026-11-10T22:21:22.576705191Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T22:27:45.337367636Z",
+  "closed_at": "2026-11-10T22:27:45.337367636Z",
+  "close_reason": "Done in 8c3b646 as proposed, with `muted` defaulting to `bright_black`. `palette::query_terminal` reads OSC 10 and OSC 11 for `tint`, and `palette::base` paints the background when set.",
+  "resolution": "done",
   "notes": [
     {
       "id": "4ea6761b",
@@ -32,6 +32,9 @@
       "commit": "e70e227",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8c3b646",
+      "branch": "dev"
+    }
   }
 }
