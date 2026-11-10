@@ -157,6 +157,13 @@ command line, the keys, and the scenario format the fake agent reads.
   and a click puts the block's whole text on the clipboard through an OSC 52
   escape sequence. The glyph then reads `copied` for a second. Your terminal
   has to allow OSC 52, and under tmux `set-clipboard` has to be `on`.
+- coax draws a code block fenced as `markdown` or `md` as markdown inside its
+  box, at the box's width. The header row shows the dim words `render raw`,
+  with the view on screen in the accent colour. A click on either word
+  switches that block. A click on the copy glyph copies the block's source in
+  either view. A code block inside is drawn with a gutter and cut at the
+  box's edge, with no copy glyph of its own. Links inside the rendered view
+  do not respond to the pointer.
 - A click on an edit call shows its diff under it: removed lines in red after
   a `-`, added lines in green after a `+`, and the unchanged lines around
   them dim. A click on a command call shows its output, laid out as markdown.
@@ -168,6 +175,8 @@ command line, the keys, and the scenario format the fake agent reads.
   whole call is shaded with the palette's `tint`.
 - `scenarios/blocks.json` plays an agent message with code blocks, an edit and
   a command with output, for the fake agent.
+- `scenarios/markdown.json` plays a `markdown` block holding a heading, a
+  list, a code block and a table.
 
 - A conversation taller than the screen has a scroll bar in the last column
   of the transcript, which is then one column narrower. The track is a dim

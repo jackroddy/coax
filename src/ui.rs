@@ -335,7 +335,127 @@ enum Part {
 
         /// Where the links of the rows are drawn, before the block pans.
         runs: Vec<Run>,
+
+        /// A `markdown` block drawn as markdown.
+        rendered: Option<MarkdownView>,
     },
+}
+
+/// The rows of a `markdown` block drawn as markdown, and the width of its
+/// box, no wider than the layout width.
+struct MarkdownView {
+    rows: Vec<Line<'static>>,
+    natural: usize,
+}
+
+/// A word on a block's header row that switches how the block shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Word {
+    Render,
+    Raw,
+}
+
+impl Word {
+    fn text(self) -> &'static str {
+        match self {
+            Word::Render => "render",
+            Word::Raw => "raw",
+        }
+    }
+}
+
+/// The words of one choice on a block's header row, and the one in force.
+struct Toggle {
+    words: &'static [Word],
+    active: Word,
+}
+
+/// Columns between the language and the first toggle, and between toggles.
+const TOGGLE_GAP: usize = 3;
+
+/// The columns `toggles` take on a header row, the gap before each included.
+fn toggles_width(toggles: &[Toggle]) -> usize {
+    toggles
+        .iter()
+        .map(|toggle| {
+            let words: usize = toggle.words.iter().map(|word| word.text().width()).sum();
+            TOGGLE_GAP + words + toggle.words.len() - 1
+        })
+        .sum()
+}
+
+/// Draw `toggles` into a header row's `cells` from column `col`, dim with
+/// the active word in the accent colour, and give each word's column, width
+/// and word.
+fn put_toggles(
+    cells: &mut [(char, Style)],
+    mut col: usize,
+    toggles: &[Toggle],
+) -> Vec<(usize, usize, Word)> {
+    let mut spots = Vec::new();
+    for toggle in toggles {
+        col += TOGGLE_GAP;
+        for (n, word) in toggle.words.iter().enumerate() {
+            if n > 0 {
+                col += 1;
+            }
+            let style = if *word == toggle.active {
+                Style::new().fg(palette::get().accent)
+            } else {
+                dim()
+            };
+            let text = word.text();
+            for (k, ch) in text.chars().enumerate() {
+                if let Some(cell) = cells.get_mut(col + k) {
+                    *cell = (ch, style);
+                }
+            }
+            spots.push((col, text.width(), *word));
+            col += text.width();
+        }
+    }
+    spots
+}
+
+const RENDER_RAW: &[Word] = &[Word::Render, Word::Raw];
+
+/// The toggles of a `markdown` block, for measuring its header row.
+const RENDER_RAW_TOGGLE: &[Toggle] = &[Toggle {
+    words: RENDER_RAW,
+    active: Word::Render,
+}];
+
+/// A `markdown` block's `source` drawn as markdown under its `head` row, in
+/// a box no wider than `width`. `header` is the width the head row takes
+/// after its gutter.
+fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize) -> MarkdownView {
+    let blocks = cmr::parse(source);
+    let links = cmr::links(&blocks);
+    let gutter = head
+        .spans
+        .first()
+        .map_or(Style::default(), |span| span.style);
+    let inner = width.saturating_sub(2 + COPY_ROOM).max(1);
+    let mut rows = vec![head.clone()];
+    for row in cmr::layout(&blocks, inner) {
+        let mut spans = vec![Span::styled("│ ", gutter)];
+        spans.extend(
+            row.into_iter()
+                .map(|(text, style)| Span::styled(text, link_style(style, &links))),
+        );
+        rows.push(trim_end(Line::from(spans)));
+    }
+    let widest = rows[1..].iter().map(Line::width).max().unwrap_or(0);
+    let natural = widest.max(header + 2) + COPY_ROOM;
+    MarkdownView {
+        rows,
+        natural: natural.min(width),
+    }
+}
+
+/// Whether a fence's language names markdown.
+fn is_markdown(lang: &str) -> bool {
+    lang.eq_ignore_ascii_case("markdown") || lang.eq_ignore_ascii_case("md")
 }
 
 /// A link's text on one row of a part, by column.
@@ -520,18 +640,26 @@ fn block_rows(
 fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link]) -> Option<Part> {
     match block {
         cmr::Block::Code { lang, lines } => {
-            let longest = lines.iter().map(|line| line.width());
-            let header = lang.iter().map(|lang| lang.width());
+            let markdown = lang.as_deref().is_some_and(is_markdown);
+            let toggles = if markdown { RENDER_RAW_TOGGLE } else { &[] };
+            let header = lang.as_ref().map_or(0, |lang| {
+                let toggles = toggles_width(toggles);
+                lang.width() + toggles + if toggles > 0 { TOGGLE_GAP - 1 } else { 0 }
+            });
+            let longest = lines.iter().map(|line| line.width()).max().unwrap_or(0);
 
             // the gutter is two columns: `│ ` on a line, `┌ ` before the language
-            let natural = longest.chain(header).max().unwrap_or(0) + 2 + COPY_ROOM;
+            let natural = longest.max(header) + 2 + COPY_ROOM;
             let (rows, runs) = block_rows(block, natural, links);
+            let source = lines.join("\n");
+            let rendered = markdown.then(|| markdown_view(&rows[0], &source, header, width));
             Some(Part::Block {
                 block: index,
                 rows,
                 natural,
-                copy: Some(lines.join("\n")),
+                copy: Some(source),
                 runs,
+                rendered,
             })
         }
         cmr::Block::Table { .. } => {
@@ -543,6 +671,7 @@ fn kept_whole(index: usize, block: &cmr::Block, width: usize, links: &[cmr::Link
                 natural,
                 copy: None,
                 runs,
+                rendered: None,
             })
         }
         _ => None,
@@ -599,22 +728,26 @@ fn blank_cut_head(cells: &mut [(char, Style)]) {
     }
 }
 
-/// `window` with `label` in the last columns.
-fn window_with_corner(
+/// A block's header row: `window` with `toggles` after the row's own text
+/// and `label` in the last columns, and where each toggle word was drawn.
+fn header_row(
     row: &Line<'static>,
     offset: usize,
     visible: usize,
+    toggles: &[Toggle],
     label: &str,
     style: Style,
-) -> Line<'static> {
+) -> (Line<'static>, Vec<(usize, usize, Word)>) {
     let mut cells = window_cells(row, offset, visible);
+    let mut spots = put_toggles(&mut cells, row.width().saturating_sub(offset), toggles);
     let label: Vec<char> = label.chars().take(visible).collect();
     let start = visible - label.len();
     for (n, ch) in label.iter().enumerate() {
         cells[start + n] = (*ch, style);
     }
     blank_cut_head(&mut cells[..start]);
-    cells_line(cells)
+    spots.retain(|(col, width, _)| col + width <= start);
+    (cells_line(cells), spots)
 }
 
 /// The thumb of a scroll bar `visible` columns wide over a block that pans
@@ -746,6 +879,30 @@ struct Built {
     copies: Vec<Copy>,
     folds: Vec<Fold>,
     links: Vec<LinkSpot>,
+    toggles: Vec<ToggleSpot>,
+}
+
+/// A toggle word drawn this frame, by its place among the transcript lines.
+struct ToggleSpot {
+    key: (usize, usize),
+    line: usize,
+    col: usize,
+    width: usize,
+    word: Word,
+}
+
+/// The rows a block shows and the width of its box: the source, or the
+/// markdown drawn when there is some and `raw` is off.
+fn block_view<'a>(
+    rows: &'a [Line<'static>],
+    natural: usize,
+    rendered: Option<&'a MarkdownView>,
+    raw: bool,
+) -> (&'a [Line<'static>], usize) {
+    match rendered {
+        Some(view) if !raw => (&view.rows, view.natural),
+        _ => (rows, natural),
+    }
 }
 
 /// A link's text drawn this frame, by its place among the transcript lines.
@@ -767,6 +924,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
     let mut copies: Vec<Copy> = Vec::new();
     let mut folds: Vec<Fold> = Vec::new();
     let mut spots: Vec<LinkSpot> = Vec::new();
+    let mut toggle_spots: Vec<ToggleSpot> = Vec::new();
     let hovered = app.hover_link.as_ref().map(|hover| hover.key);
     let copied = app
         .copied
@@ -787,8 +945,17 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                     .iter()
                     .map(|part| match part {
                         Part::Flow { rows, .. } => rows.len(),
-                        Part::Block { rows, natural, .. } => {
-                            rows.len() + usize::from(*natural > visible_width)
+                        Part::Block {
+                            block,
+                            rows,
+                            natural,
+                            rendered,
+                            ..
+                        } => {
+                            let raw = app.raw.contains(&(index, *block));
+                            let (rows, natural) =
+                                block_view(rows, *natural, rendered.as_ref(), raw);
+                            rows.len() + usize::from(natural > visible_width)
                         }
                     })
                     .sum::<usize>();
@@ -826,10 +993,23 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                             natural,
                             copy,
                             runs,
+                            rendered,
                         } => {
-                            let shown = (*natural).min(visible_width);
-                            let max = natural - shown;
                             let key = (index, *block);
+                            let raw = app.raw.contains(&key);
+                            let (block_rows, natural) =
+                                block_view(block_rows, *natural, rendered.as_ref(), raw);
+                            let runs = if rendered.is_some() && !raw {
+                                &[][..]
+                            } else {
+                                &runs[..]
+                            };
+                            let toggle = rendered.as_ref().map(|_| Toggle {
+                                words: RENDER_RAW,
+                                active: if raw { Word::Raw } else { Word::Render },
+                            });
+                            let shown = natural.min(visible_width);
+                            let max = natural - shown;
                             let offset = app.pans.get(&key).copied().unwrap_or(0).min(max);
 
                             // one row for the border above the box's rows
@@ -865,7 +1045,18 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                                 } else {
                                     (COPY_GLYPH, dim())
                                 };
-                                rows.push(window_with_corner(row, offset, shown, label, style));
+                                let (row, words) =
+                                    header_row(row, offset, shown, toggle.as_slice(), label, style);
+                                rows.push(row);
+                                toggle_spots.extend(words.into_iter().map(|(col, width, word)| {
+                                    ToggleSpot {
+                                        key,
+                                        line: first,
+                                        col,
+                                        width,
+                                        word,
+                                    }
+                                }));
                             }
                             for run in runs {
                                 let Some((col, width)) = panned(run.col, run.width, offset, shown)
@@ -930,6 +1121,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
         copies,
         folds,
         links: spots,
+        toggles: toggle_spots,
     }
 }
 
@@ -965,6 +1157,7 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
         copies,
         folds,
         links: spots,
+        toggles,
     } = build_transcript(app, width, start..end);
     debug_assert_eq!(lines.len(), total);
     let on_screen = |first: usize, rows: usize| {
@@ -1013,6 +1206,20 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
                 1,
             ),
             key: copy.key,
+        })
+        .collect();
+    app.toggles = toggles
+        .iter()
+        .filter(|toggle| (start..end).contains(&toggle.line))
+        .map(|toggle| ToggleArea {
+            area: Rect::new(
+                area.x + 2 + toggle.col as u16,
+                area.y + (toggle.line - start) as u16,
+                toggle.width as u16,
+                1,
+            ),
+            key: toggle.key,
+            word: toggle.word,
         })
         .collect();
     app.bars = wides
@@ -1134,6 +1341,15 @@ pub struct CopyArea {
 
     /// The entry and the block within it.
     pub key: (usize, usize),
+}
+
+/// A toggle word on a block's header row on screen, found by the mouse.
+pub struct ToggleArea {
+    pub area: Rect,
+
+    /// The entry and the block within it.
+    pub key: (usize, usize),
+    pub word: Word,
 }
 
 /// A link's text on screen, found by the mouse.
@@ -2412,6 +2628,52 @@ mod tests {
         assert!(matches!(&parts[..], [Part::Flow { .. }]));
     }
 
+    fn rendered_of(text: &str, width: usize) -> Vec<String> {
+        let parts = markdown(text, width);
+        let [
+            Part::Block {
+                rendered: Some(view),
+                ..
+            },
+        ] = &parts[..]
+        else {
+            panic!("expected one markdown block");
+        };
+        plain(&view.rows)
+    }
+
+    #[test]
+    fn a_markdown_block_is_drawn_as_markdown_inside_its_box() {
+        let rows = rendered_of("```markdown\n# Title\n\n- one\n```", 40);
+        assert_eq!(rows, ["┌ markdown", "│ Title", "│", "│ • one"]);
+    }
+
+    #[test]
+    fn a_three_backtick_fence_in_a_four_backtick_markdown_block_draws_as_a_code_block_inside() {
+        let rows = rendered_of(
+            "````md\nbefore\n\n```rust\nfn main() {}\n```\n\nafter\n````",
+            40,
+        );
+        assert_eq!(
+            rows,
+            [
+                "┌ md",
+                "│ before",
+                "│",
+                "│ ┌ rust",
+                "│ │ fn main() {}",
+                "│",
+                "│ after",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_code_block_in_another_language_has_no_markdown_view() {
+        let parts = markdown("```rust\nfn main() {}\n```", 40);
+        assert!(matches!(&parts[..], [Part::Block { rendered: None, .. }]));
+    }
+
     #[test]
     fn every_code_block_is_a_block_of_its_own_with_its_text_to_copy() {
         let parts = markdown(
@@ -2574,7 +2836,11 @@ mod tests {
     #[test]
     fn the_copy_glyph_takes_the_last_column_of_the_first_row() {
         let row = Line::from("0123456789");
-        let at = |offset| window_with_corner(&row, offset, 6, "#", Style::default()).to_string();
+        let at = |offset| {
+            header_row(&row, offset, 6, &[], "#", Style::default())
+                .0
+                .to_string()
+        };
         assert_eq!(at(0), "01234#");
         assert_eq!(at(4), "45678#");
     }
@@ -2689,7 +2955,7 @@ mod tests {
     #[test]
     fn a_corner_label_over_a_wide_character_blanks_the_character_it_cuts() {
         let row = Line::from("日本語日本語");
-        let shown = window_with_corner(&row, 0, 6, "⧉", Style::default());
+        let shown = header_row(&row, 0, 6, &[], "⧉", Style::default()).0;
         assert_eq!(shown.width(), 6);
         assert_eq!(shown.to_string(), "日本 ⧉");
     }

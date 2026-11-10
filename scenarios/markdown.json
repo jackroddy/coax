@@ -1,0 +1,20 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Here is the issue body:\n\n````markdown\n# Show markdown blocks rendered\n\nA block fenced as `markdown` draws as **markdown**:\n\n- headings and lists\n- code blocks, cut at the box\n\n```rust\nfn main() {\n    println!(\"hello from a nested fence that is long enough to be cut at the edge\");\n}\n```\n\n| key | does |\n|---|---|\n| render | draws it |\n| raw | shows the source |\n````\n\nThat is the draft."
+            }
+          }
+        },
+        {
+          "stop": "end_turn"
+        }
+      ]
+    }
+  ]
+}

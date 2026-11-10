@@ -34,7 +34,7 @@ use crate::registry;
 use crate::report::{self, Reporter, Snapshot};
 use crate::session::{Entry, Transcript};
 use crate::settings::{Control, Setting, Settings};
-use crate::ui;
+use crate::ui::{self, Word};
 
 const WHEEL_LINES: usize = 3;
 
@@ -128,6 +128,12 @@ pub struct App {
 
     /// How far each wide block is panned, by entry and block.
     pub pans: HashMap<(usize, usize), usize>,
+
+    /// The `markdown` blocks shown as their source, by entry and block.
+    pub raw: HashSet<(usize, usize)>,
+
+    /// The toggle words on screen, set by the last draw.
+    pub toggles: Vec<ui::ToggleArea>,
 
     /// A line shown on the prompt's rule until the next key: what the
     /// prompt's text names that is not a command, or the answer to `/log`.
@@ -816,6 +822,17 @@ impl App {
         let Some(chip) = self.chips.iter().find(|chip| chip.area.contains(position)) else {
             if let Some(action) = self.click_link(position) {
                 return action;
+            }
+            if let Some(toggle) = self
+                .toggles
+                .iter()
+                .find(|toggle| toggle.area.contains(position))
+            {
+                match toggle.word {
+                    Word::Render => self.raw.remove(&toggle.key),
+                    Word::Raw => self.raw.insert(toggle.key),
+                };
+                return Action::None;
             }
             if let Some(key) = self.copy_at(position) {
                 let Some(text) = self.rendered.copy_text(key) else {
@@ -1564,6 +1581,8 @@ async fn session(
         menu_first: 0,
         guard: None,
         pans: HashMap::new(),
+        raw: HashSet::new(),
+        toggles: Vec::new(),
         wide: Vec::new(),
         unknown: None,
         v_bar: None,
@@ -1882,6 +1901,8 @@ mod tests {
             menu_first: 0,
             guard: None,
             pans: HashMap::new(),
+            raw: HashSet::new(),
+            toggles: Vec::new(),
             unknown: None,
             v_bar: None,
             hover_v_bar: false,
@@ -2233,6 +2254,86 @@ mod tests {
             Action::None
         ));
         assert!(app.copied.is_none());
+    }
+
+    /// An app whose first entry is one `markdown` block, drawn once so its
+    /// toggle words have a place on screen.
+    fn with_a_markdown_block() -> App {
+        let mut app = app();
+        app.wide.clear();
+        app.transcript.entries.push(Entry::Agent(
+            "```markdown\n# Title\n\nsome **bold** text\n```".to_string(),
+        ));
+        header(&mut app, 80);
+        app
+    }
+
+    fn toggle_area(app: &App, word: Word) -> Rect {
+        app.toggles
+            .iter()
+            .find(|toggle| toggle.word == word)
+            .unwrap()
+            .area
+    }
+
+    #[test]
+    fn a_markdown_block_shows_rendered_until_raw_is_clicked_and_again_after_render_is() {
+        let mut app = with_a_markdown_block();
+        let screen = header_rows_all(&mut app, 80);
+        assert!(screen.contains("render raw"), "{screen}");
+        assert!(
+            screen.contains("│ Title") && !screen.contains("# Title"),
+            "{screen}"
+        );
+        let raw = toggle_area(&app, Word::Raw);
+        assert!(matches!(click(&mut app, raw.x, raw.y), Action::None));
+        let screen = header_rows_all(&mut app, 80);
+        assert!(
+            screen.contains("# Title") && screen.contains("**bold**"),
+            "{screen}"
+        );
+        let render = toggle_area(&app, Word::Render);
+        click(&mut app, render.x + render.width - 1, render.y);
+        let screen = header_rows_all(&mut app, 80);
+        assert!(!screen.contains("# Title"), "{screen}");
+    }
+
+    #[test]
+    fn the_active_toggle_word_is_in_the_accent_colour() {
+        let mut app = with_a_markdown_block();
+        let colour = |app: &mut App, word: Word| {
+            let area = toggle_area(app, word);
+            header_buffer(app, 80)[(area.x, area.y)].fg
+        };
+        let accent = crate::palette::get().accent;
+        assert_eq!(colour(&mut app, Word::Render), accent);
+        assert_ne!(colour(&mut app, Word::Raw), accent);
+        app.raw.insert((0, 0));
+        header(&mut app, 80);
+        assert_eq!(colour(&mut app, Word::Raw), accent);
+    }
+
+    #[test]
+    fn the_copy_glyph_of_a_markdown_block_takes_its_source_in_either_view() {
+        let source = "# Title\n\nsome **bold** text";
+        let mut app = with_a_markdown_block();
+        for raw in [false, true] {
+            if raw {
+                app.raw.insert((0, 0));
+                header(&mut app, 80);
+            }
+            let glyph = app.copies[0].area;
+            let Action::Copy(text) = click(&mut app, glyph.x + glyph.width - 1, glyph.y) else {
+                panic!("expected a copy");
+            };
+            assert_eq!(text, source);
+        }
+    }
+
+    #[test]
+    fn a_code_block_in_another_language_has_no_toggle_words() {
+        let app = with_a_code_block();
+        assert!(app.toggles.is_empty());
     }
 
     #[test]
