@@ -1,0 +1,28 @@
+{
+  "id": "coax-94151d",
+  "title": "Each message shows its time in its border",
+  "body": "coax draws your prompts and the agent's replies in rounded boxes (`bubble` and `framed` in `ui.rs`). `Entry::User` and `Entry::Agent` in `session.rs` hold only the message's text, so the transcript shows nothing about when a message was sent.\n\n## Proposal\n\n- `Entry::User` and `Entry::Agent` carry the local time the message began. For a prompt, that is when you sent it. For a reply, it is when its first chunk arrived.\n- The top border shows the time, dim, as `HH:MM`, at the corner nearest the screen edge. That puts it on the right for your prompts and on the left for replies. A message from an earlier day also shows the date.\n- The time is left out when the box is too narrow to hold it.\n\n## Open\n\n- Does the Claude adapter's history replay on `session/load` carry each message's time, in `_meta` or elsewhere? If it does not, a resumed session's messages have no times, and only messages from this run show one. This needs a trial against the adapter.\n- Should a reply also show how long the turn took, as in `14:32 · 41s`?",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T20:16:58.467967728Z",
+  "updated_at": "2026-11-10T20:16:58.467967728Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "69398c0",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
