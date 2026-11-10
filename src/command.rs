@@ -26,13 +26,17 @@ pub fn parse(text: &str) -> Typed<'_> {
         let (name, input) = split_name(rest);
         return Typed::Agent { name, input };
     }
-    match text.strip_prefix('/') {
-        Some(rest) => {
-            let (name, input) = split_name(rest);
-            Typed::Coax { name, input }
-        }
-        None => Typed::Plain,
+    let Some(rest) = text.strip_prefix('/') else {
+        return Typed::Plain;
+    };
+    let (name, input) = split_name(rest);
+
+    // no command name holds a slash, so a first word
+    // with a second one is a path such as /home/x
+    if name.contains('/') {
+        return Typed::Plain;
     }
+    Typed::Coax { name, input }
 }
 
 fn split_name(rest: &str) -> (&str, &str) {
@@ -54,7 +58,9 @@ pub fn unknown(text: &str) -> Option<String> {
 /// Whether the cursor is still inside the command's name, so a list of
 /// matches makes sense.
 pub fn naming(text: &str) -> bool {
-    text.starts_with('/') && !text.contains(char::is_whitespace)
+    text.starts_with('/')
+        && !text.contains(char::is_whitespace)
+        && !matches!(parse(text), Typed::Plain)
 }
 
 /// What a setting is called as a command: lowercase, spaces as `-`.
@@ -174,6 +180,19 @@ mod tests {
         assert_eq!(parse("/mode now"), coax("mode", "now"));
         assert_eq!(parse("/"), coax("", ""));
         assert_eq!(parse("/edit a\nb"), coax("edit", "a\nb"));
+    }
+
+    #[test]
+    fn a_first_word_with_a_second_slash_is_a_path_and_reads_as_plain_text() {
+        assert_eq!(parse("/home/jack/x is broken"), Typed::Plain);
+        assert_eq!(parse("/tmp/"), Typed::Plain);
+        assert_eq!(unknown("/home/jack/x is broken"), None);
+        assert!(!naming("/home/jack"));
+        assert_eq!(
+            unknown("/nosuch a/b"),
+            Some("no command /nosuch".to_string())
+        );
+        assert!(naming("/mod"));
     }
 
     #[test]

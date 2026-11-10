@@ -165,7 +165,9 @@ command line, the keys, and the scenario format the fake agent reads.
   PageDown and End still scroll.
 - Enter on a `/name` or `//name` that matches no command leaves the text in the
   prompt and shows a dim `no command /name` (or `no agent command //name`)
-  in the rule under the prompt until the next key.
+  in the rule under the prompt until the next key. A prompt whose first word
+  holds a second `/`, such as `/home/jack/x is broken`, is a path and sends
+  as a normal message.
 - The prompt has a cursor, and the terminal cursor is drawn at it, on
   wrapped rows too. Left and Right move by a character. Alt+Left, Alt+Right,
   Ctrl+Left, Ctrl+Right, Alt+b and Alt+f move by a word. Ctrl+a and Ctrl+e go
