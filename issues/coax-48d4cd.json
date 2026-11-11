@@ -3,26 +3,29 @@
   "title": "A wrapped prompt row starts with the space it broke at",
   "body": "`prompt::wrap_rows` breaks the prompt into rows at word breaks. When a word does not fit, the space before it goes to the start of the next row rather than the end of the row above. A 40-column prompt holding `... twelve thirteen fourteen` drew its last row as ` fourteen`, one column in from the others.\n\n## Proposal\n\nThe space a row breaks at stays at the end of the row above, as in agent text. The cursor and Up and Down (`prompt::row_above`, `prompt::row_below`) use the same rows, so their tests in `prompt.rs` need checking.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T03:12:20.807912637Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T00:32:20.25881295Z",
-  "updated_at": "2026-11-11T02:57:20.807912637Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T02:59:03.727749124Z",
+  "closed_at": "2026-11-11T02:59:03.727749124Z",
+  "close_reason": "Fixed in 944f742. In `wrap_line` a row may run one column past the width for the space it breaks at, so the next row starts at the word. `input_view` draws a cursor on that space in the row's last column.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e619019",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "944f742",
+      "branch": "dev"
+    }
   }
 }
