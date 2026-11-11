@@ -14,6 +14,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, ExitKey, MenuTarget};
+use crate::clock::Time;
 use crate::command;
 use crate::diff::line_diff;
 use crate::form::{Form, Kind as FormKind, Row};
@@ -22,7 +23,7 @@ use crate::links::{self, Kind};
 use crate::palette;
 use crate::prompt;
 use crate::select::{self, LineText};
-use crate::session::{Child, Entry, Tool};
+use crate::session::{Child, Entry, Message, Tool};
 use crate::settings::{self, Control};
 
 const MAX_PLAN_ROWS: usize = 6;
@@ -1165,13 +1166,14 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
         .as_ref()
         .filter(|(_, until)| *until > Instant::now())
         .map(|(key, _)| *key);
+    let today = Time::now();
     for (index, entry) in app.transcript.entries.iter().enumerate() {
         match entry {
-            Entry::User(text) => lines.append(bubble(text, width)),
-            Entry::Agent(text) => {
+            Entry::User(prompt) => lines.append(bubble(prompt, today, width)),
+            Entry::Agent(reply) => {
                 let widest = (width * 9 / 10).max(5);
                 let visible_width = widest - 4;
-                let parts = app.rendered.agent(index, text, visible_width);
+                let parts = app.rendered.agent(index, &reply.text, visible_width);
 
                 // a frame's two border rows, then each part's rows and the
                 // scroll bar row under a block that pans
@@ -1374,7 +1376,8 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                         rows.push(scroll_bar(shown, max, offset, hot), None);
                     }
                 }
-                lines.append(framed(rows, palette::get().blue, None));
+                let label = border_label(reply, today, visible_width);
+                lines.append(framed(rows, palette::get().blue, None, label.as_deref()));
             }
             Entry::Thought(text) => wrapped("✻ ", "  ", dim(), text, usable, dim(), &mut lines),
             Entry::Tool(tool) => {
@@ -1731,10 +1734,10 @@ pub struct WideBlock {
 
 /// A message of yours in an accent bubble against the right edge, at most
 /// 70% of `width` wide.
-fn bubble(text: &str, width: usize) -> Drawn {
+fn bubble(prompt: &Message, today: Time, width: usize) -> Drawn {
     let widest = (width * 7 / 10).max(5);
     let mut rows = Drawn::default();
-    for paragraph in text.split('\n') {
+    for paragraph in prompt.text.split('\n') {
         let pieces = wrap_joined(paragraph, widest - 4);
         if pieces.is_empty() {
             rows.push_text(Line::default(), 0, cmr::Join::Break);
@@ -1743,7 +1746,20 @@ fn bubble(text: &str, width: usize) -> Drawn {
             rows.push_text(Line::from(piece), 0, join);
         }
     }
-    framed(rows, palette::get().accent, Some(width))
+    let label = border_label(prompt, today, widest - 4);
+    framed(rows, palette::get().accent, Some(width), label.as_deref())
+}
+
+/// The time `message` began, and the turn's length when it has one, or
+/// `None` when the message has no time or the label and its spaces are
+/// wider than `room`.
+fn border_label(message: &Message, today: Time, room: usize) -> Option<String> {
+    let mut label = message.time?.label(today);
+    if let Some(took) = message.took {
+        label.push_str(" · ");
+        label.push_str(&elapsed_text(took));
+    }
+    (label.width() + 2 <= room).then_some(label)
 }
 
 /// `paragraph` wrapped at `width`, each row with how it follows the one
@@ -1770,9 +1786,17 @@ fn wrap_joined(paragraph: &str, width: usize) -> Vec<(String, cmr::Join)> {
 
 /// `rows` inside a rounded border of colour `border` with a space of padding
 /// each side. With `Some(width)` the box sits against the right edge of that
-/// width, and otherwise against the left.
-fn framed(rows: Drawn, border: Color, right_edge: Option<usize>) -> Drawn {
-    let inner = rows.lines.iter().map(Line::width).max().unwrap_or(0);
+/// width, and otherwise against the left. A `label` sits dim in the top
+/// border at the corner nearest that edge, and the box widens to hold it.
+fn framed(rows: Drawn, border: Color, right_edge: Option<usize>, label: Option<&str>) -> Drawn {
+    let label_width = label.map_or(0, |label| label.width() + 2);
+    let inner = rows
+        .lines
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0)
+        .max(label_width);
     let pad = right_edge.map_or(0, |width| width.saturating_sub(inner + 4));
     let edge = Style::new().fg(border);
     let side = |left: &str, middle: &str, right: &str| {
@@ -1782,7 +1806,23 @@ fn framed(rows: Drawn, border: Color, right_edge: Option<usize>) -> Drawn {
         ])
     };
     let mut lines = Drawn::default();
-    lines.push(side("╭", "─", "╮"), None);
+    let top = match label {
+        None => side("╭", "─", "╮"),
+        Some(label) => {
+            let run = "─".repeat(inner + 1 - label_width);
+            let (before, after) = match right_edge {
+                Some(_) => (format!("╭{run} "), " ─╮".to_string()),
+                None => ("╭─ ".to_string(), format!(" {run}╮")),
+            };
+            Line::from(vec![
+                Span::raw(" ".repeat(pad)),
+                Span::styled(before, edge),
+                Span::styled(label.to_string(), dim()),
+                Span::styled(after, edge),
+            ])
+        }
+    };
+    lines.push(top, None);
     for (row, mut text) in rows.lines.into_iter().zip(rows.texts) {
         let gap = inner - row.width();
         let mut spans = vec![Span::raw(" ".repeat(pad)), Span::styled("│ ", edge)];
@@ -2900,9 +2940,78 @@ mod tests {
         assert_eq!(view.cursor.1, 4);
     }
 
+    const TODAY: Time = Time {
+        year: 2026,
+        month: 11,
+        day: 10,
+        hour: 15,
+        minute: 0,
+    };
+
+    const EARLIER: Time = Time {
+        hour: 14,
+        minute: 32,
+        ..TODAY
+    };
+
+    fn untimed(text: &str) -> Message {
+        Message::new(text.to_string(), None)
+    }
+
+    #[test]
+    fn a_prompts_border_shows_its_time_on_the_right() {
+        let prompt = Message::new("hello there".to_string(), Some(EARLIER));
+        let lines = plain(&bubble(&prompt, TODAY, 40).lines);
+        assert_eq!(lines[0], format!("{}╭───── 14:32 ─╮", " ".repeat(25)));
+        assert_eq!(lines[1], format!("{}│ hello there │", " ".repeat(25)));
+    }
+
+    #[test]
+    fn a_short_prompt_widens_its_bubble_to_hold_the_time() {
+        let prompt = Message::new("hi".to_string(), Some(EARLIER));
+        let lines = plain(&bubble(&prompt, TODAY, 40).lines);
+        assert_eq!(lines[0], format!("{}╭─ 14:32 ─╮", " ".repeat(29)));
+        assert_eq!(lines[1], format!("{}│ hi      │", " ".repeat(29)));
+    }
+
+    #[test]
+    fn a_replys_border_shows_its_time_on_the_left_with_the_turn_length() {
+        let mut reply = Message::new("the answer is here".to_string(), Some(EARLIER));
+        reply.took = Some(Duration::from_secs(41));
+        let label = border_label(&reply, TODAY, 60);
+        let rows = drawn(vec![Line::from("the answer is here")]);
+        let lines = plain(&framed(rows, Color::Blue, None, label.as_deref()).lines);
+        assert_eq!(lines[0], "╭─ 14:32 · 41s ──────╮");
+        assert_eq!(lines[1], "│ the answer is here │");
+    }
+
+    #[test]
+    fn a_message_from_an_earlier_day_also_shows_the_date() {
+        let yesterday = Time { day: 9, ..EARLIER };
+        let prompt = Message::new("hello there".to_string(), Some(yesterday));
+        let lines = plain(&bubble(&prompt, TODAY, 60).lines);
+        assert!(lines[0].ends_with("╭─ 2026-11-09 14:32 ─╮"));
+    }
+
+    #[test]
+    fn a_box_too_narrow_for_the_time_leaves_it_out() {
+        let prompt = Message::new("hi".to_string(), Some(EARLIER));
+        let lines = plain(&bubble(&prompt, TODAY, 10).lines);
+        assert_eq!(lines[0], format!("{}╭────╮", " ".repeat(4)));
+    }
+
+    #[test]
+    fn a_replayed_message_without_a_time_shows_none() {
+        let reply = untimed("from last time");
+        assert_eq!(border_label(&reply, TODAY, 60), None);
+        let lines = plain(&bubble(&reply, TODAY, 40).lines);
+        assert!(lines[0].trim_start().starts_with("╭──────────────"));
+        assert!(!lines[0].contains(':'));
+    }
+
     #[test]
     fn a_short_message_gets_a_bubble_as_wide_as_its_text_plus_four() {
-        let lines = plain(&bubble("hi", 40).lines);
+        let lines = plain(&bubble(&untimed("hi"), TODAY, 40).lines);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0], format!("{}╭────╮", " ".repeat(34)));
         assert_eq!(lines[1], format!("{}│ hi │", " ".repeat(34)));
@@ -2912,7 +3021,7 @@ mod tests {
     #[test]
     fn a_bubble_sits_flush_against_the_right_edge_at_any_width() {
         for width in [20, 60, 100] {
-            for line in bubble("hello there", width).lines {
+            for line in bubble(&untimed("hello there"), TODAY, width).lines {
                 assert_eq!(line.width(), width);
             }
         }
@@ -2921,7 +3030,7 @@ mod tests {
     #[test]
     fn a_long_message_wraps_inside_a_bubble_of_seventy_percent_of_the_width() {
         let text = "one two three four five six seven eight nine ten eleven twelve";
-        let lines = bubble(text, 40).lines;
+        let lines = bubble(&untimed(text), TODAY, 40).lines;
         assert!(lines.len() > 3);
         for line in &lines {
             assert_eq!(line.width(), 40);
@@ -2942,7 +3051,7 @@ mod tests {
             trim_end(Line::from("short   ")),
             trim_end(Line::from("a longer line   ")),
         ];
-        let lines = plain(&framed(drawn(rows), Color::Blue, None).lines);
+        let lines = plain(&framed(drawn(rows), Color::Blue, None, None).lines);
         assert_eq!(lines[0], "╭───────────────╮");
         assert_eq!(lines[1], "│ short         │");
         assert_eq!(lines[2], "│ a longer line │");
@@ -2951,7 +3060,7 @@ mod tests {
 
     #[test]
     fn a_bubble_border_takes_the_given_colour_and_has_no_background() {
-        let lines = framed(drawn(vec![Line::from("hi")]), Color::Red, Some(20)).lines;
+        let lines = framed(drawn(vec![Line::from("hi")]), Color::Red, Some(20), None).lines;
         for span in lines.iter().flat_map(|line| &line.spans) {
             assert_eq!(span.style.bg, None);
         }

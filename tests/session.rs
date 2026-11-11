@@ -82,7 +82,15 @@ fn check_hello(transcript: &Transcript) {
     let Entry::Agent(answer) = &transcript.entries[3] else {
         unreachable!()
     };
-    assert!(answer.starts_with("Hello. The entry point is a hello world, "));
+    assert!(answer.time.is_some());
+    assert!(answer.took.is_none());
+    assert!(matches!(&transcript.entries[0], Entry::User(prompt) if prompt.time.is_some()));
+    assert!(matches!(&transcript.entries[6], Entry::Agent(last) if last.took.is_some()));
+    assert!(
+        answer
+            .text
+            .starts_with("Hello. The entry point is a hello world, ")
+    );
     assert!(
         matches!(&transcript.entries[5], Entry::Permission { title, choice } if title == "Write NOTES.md" && choice == "Allow once")
     );
@@ -125,7 +133,7 @@ async fn a_prompt_past_the_last_act_gets_a_message_and_ends_the_turn() {
     acp::run(fake::agent(scenario), "fake", async |link| {
         let transcript = one_prompt(link, "anyone there").await?;
         assert!(
-            matches!(&transcript.entries[1], Entry::Agent(text) if text.contains("no more acts"))
+            matches!(&transcript.entries[1], Entry::Agent(reply) if reply.text.contains("no more acts"))
         );
         assert_eq!(transcript.last_stop, Some(StopReason::EndTurn));
         Ok(())
@@ -172,7 +180,7 @@ async fn a_cancel_during_an_act_ends_the_turn_with_cancelled() {
             }
         }
         assert_eq!(transcript.last_stop, Some(StopReason::Cancelled));
-        assert!(matches!(&transcript.entries[0], Entry::Agent(text) if text == "starting"));
+        assert!(matches!(&transcript.entries[0], Entry::Agent(reply) if reply.text == "starting"));
         Ok(())
     })
     .await
@@ -266,7 +274,7 @@ async fn a_form_step_asks_for_a_form_and_the_act_goes_on_once_it_is_answered() {
         assert_eq!(fields, 4);
         assert!(matches!(
             &transcript.entries[0],
-            Entry::Agent(text) if text.ends_with("Thanks, starting now.")
+            Entry::Agent(reply) if reply.text.ends_with("Thanks, starting now.")
         ));
         Ok(())
     })
@@ -335,11 +343,12 @@ async fn loading_a_session_replays_its_history_into_the_transcript() {
         while let Ok(Event::Update(update)) = link.events.try_recv() {
             transcript.apply(*update);
         }
-        assert!(matches!(&transcript.entries[0], Entry::User(text) if text == "What does src/main.rs do?"));
+        assert!(matches!(&transcript.entries[0], Entry::User(prompt) if prompt.text == "What does src/main.rs do?" && prompt.time.is_none()));
         assert!(matches!(&transcript.entries[1], Entry::Tool(tool) if tool.title == "Read src/main.rs"));
         assert!(matches!(
             &transcript.entries[2],
-            Entry::Agent(text) if text == "It is a hello world. Nothing else lives there yet."
+            Entry::Agent(reply) if reply.text == "It is a hello world. Nothing else lives there yet."
+                && reply.time.is_none()
         ));
         assert_eq!(transcript.entries.len(), 3);
         Ok(())
@@ -554,10 +563,10 @@ async fn a_subagents_calls_and_text_group_under_its_task_call() {
 async fn text_never_merges_across_a_subagent_boundary() {
     let transcript = subagent_transcript().await;
     assert!(
-        matches!(&transcript.entries[1], Entry::Agent(text) if text == "Spawning two helpers. ")
+        matches!(&transcript.entries[1], Entry::Agent(reply) if reply.text == "Spawning two helpers. ")
     );
     assert!(
-        matches!(&transcript.entries[4], Entry::Agent(text) if text == "Both helpers are done.")
+        matches!(&transcript.entries[4], Entry::Agent(reply) if reply.text == "Both helpers are done.")
     );
 }
 
@@ -596,10 +605,10 @@ async fn an_edits_diff_and_a_runs_output_arrive_in_the_calls_content() {
     .await
     .unwrap();
     let transcript = saved.lock().unwrap().take().unwrap();
-    let Entry::Agent(text) = &transcript.entries[1] else {
+    let Entry::Agent(reply) = &transcript.entries[1] else {
         panic!("expected the agent's text first");
     };
-    assert!(text.contains("```rust"));
+    assert!(reply.text.contains("```rust"));
     let Entry::Tool(edit) = &transcript.entries[2] else {
         panic!("expected the edit");
     };

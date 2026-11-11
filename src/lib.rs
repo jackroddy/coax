@@ -2,6 +2,7 @@ pub mod acp;
 pub mod agents;
 pub mod app;
 pub mod clipboard;
+pub mod clock;
 pub mod command;
 pub mod config;
 pub mod diff;

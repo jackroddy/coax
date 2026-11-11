@@ -1,9 +1,10 @@
 type Meta = serde_json::Map<String, serde_json::Value>;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
+use crate::clock::Time;
 use crate::diff;
 use crate::log;
 use agent_client_protocol::v1::schema::{
@@ -63,9 +64,31 @@ enum Role {
     Thought,
 }
 
+/// A prompt or a reply.
+pub struct Message {
+    pub text: String,
+
+    /// When the message began, or `None` for one replayed from an earlier
+    /// run.
+    pub time: Option<Time>,
+
+    /// How long the turn took, on the last reply of a turn that ended.
+    pub took: Option<Duration>,
+}
+
+impl Message {
+    pub fn new(text: String, time: Option<Time>) -> Message {
+        Message {
+            text,
+            time,
+            took: None,
+        }
+    }
+}
+
 pub enum Entry {
-    User(String),
-    Agent(String),
+    User(Message),
+    Agent(Message),
     Thought(String),
     Tool(Tool),
     Permission { title: String, choice: String },
@@ -91,14 +114,15 @@ pub struct Transcript {
 
 impl Transcript {
     pub fn prompt(&mut self, text: String) {
-        self.entries.push(Entry::User(text));
+        self.entries
+            .push(Entry::User(Message::new(text, Some(Time::now()))));
         self.in_flight = true;
         self.turn_started = Some(Instant::now());
         self.last_message = None;
     }
 
     pub fn finished(&mut self, stop: StopReason) {
-        self.in_flight = false;
+        self.end_turn();
         self.last_stop = Some(stop);
         if stop == StopReason::Cancelled {
             self.cancel_running();
@@ -109,7 +133,7 @@ impl Transcript {
     /// agent's last words: a status on its first line, then what it wrote
     /// to stderr.
     pub fn agent_exited(&mut self, reason: &str) {
-        self.in_flight = false;
+        self.end_turn();
         self.cancel_running();
         let reason = reason
             .strip_prefix("Process exited with ")
@@ -120,6 +144,26 @@ impl Transcript {
         let rest: Vec<&str> = lines.collect();
         for line in &rest[rest.len().saturating_sub(STDERR_LINES)..] {
             self.notice(line.trim().to_string());
+        }
+    }
+
+    /// Stop the turn, and give its last reply the turn's length.
+    fn end_turn(&mut self) {
+        self.in_flight = false;
+        let Some(started) = self.turn_started else {
+            return;
+        };
+        let reply = self
+            .entries
+            .iter_mut()
+            .rev()
+            .take_while(|entry| !matches!(entry, Entry::User(_)))
+            .find_map(|entry| match entry {
+                Entry::Agent(reply) => Some(reply),
+                _ => None,
+            });
+        if let Some(reply) = reply {
+            reply.took = Some(started.elapsed());
         }
     }
 
@@ -211,18 +255,21 @@ impl Transcript {
             }
             return;
         }
+        // a chunk outside a turn is history the agent replays on a load,
+        // and the adapter sends no time with it
+        let time = self.in_flight.then(Time::now);
         match (self.entries.last_mut(), role) {
-            (Some(Entry::Agent(last)), Role::Agent)
+            (Some(Entry::Agent(Message { text: last, .. })), Role::Agent)
             | (Some(Entry::Thought(last)), Role::Thought)
-            | (Some(Entry::User(last)), Role::User)
+            | (Some(Entry::User(Message { text: last, .. })), Role::User)
                 if joins =>
             {
                 last.push_str(&text);
             }
             _ => self.entries.push(match role {
-                Role::Agent => Entry::Agent(text),
+                Role::Agent => Entry::Agent(Message::new(text, time)),
                 Role::Thought => Entry::Thought(text),
-                Role::User => Entry::User(text),
+                Role::User => Entry::User(Message::new(text, time)),
             }),
         }
     }
@@ -355,7 +402,7 @@ mod tests {
         transcript.apply(SessionUpdate::AgentMessageChunk(chunk("hel")));
         transcript.apply(SessionUpdate::AgentMessageChunk(chunk("lo")));
         assert_eq!(transcript.entries.len(), 1);
-        assert!(matches!(&transcript.entries[0], Entry::Agent(text) if text == "hello"));
+        assert!(matches!(&transcript.entries[0], Entry::Agent(reply) if reply.text == "hello"));
     }
 
     #[test]
@@ -435,7 +482,7 @@ mod tests {
         let mut orphan = chunk("lost");
         orphan.meta = Some(tagged("missing"));
         transcript.apply(SessionUpdate::AgentMessageChunk(orphan));
-        assert!(matches!(&transcript.entries[0], Entry::Agent(text) if text == "lost"));
+        assert!(matches!(&transcript.entries[0], Entry::Agent(reply) if reply.text == "lost"));
     }
 
     #[test]
@@ -511,7 +558,7 @@ mod tests {
             .entries
             .iter()
             .map(|entry| match entry {
-                Entry::User(text) | Entry::Agent(text) => text.as_str(),
+                Entry::User(message) | Entry::Agent(message) => message.text.as_str(),
                 _ => "?",
             })
             .collect();

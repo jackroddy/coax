@@ -1144,7 +1144,7 @@ impl App {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                Entry::User(text) => Some(text.clone()),
+                Entry::User(prompt) => Some(prompt.text.clone()),
                 _ => None,
             })
             .collect();
@@ -1990,7 +1990,16 @@ mod tests {
     use ratatui::layout::Rect;
 
     use super::*;
+    use crate::session::Message;
     use crate::ui::WideBlock;
+
+    fn reply(text: impl Into<String>) -> Entry {
+        Entry::Agent(Message::new(text.into(), None))
+    }
+
+    fn prompt(text: impl Into<String>) -> Entry {
+        Entry::User(Message::new(text.into(), None))
+    }
 
     fn app() -> App {
         App {
@@ -2283,7 +2292,7 @@ mod tests {
         let line = "x".repeat(80);
         app.transcript
             .entries
-            .push(Entry::Agent(format!("```rust\n{line}\n```")));
+            .push(reply(format!("```rust\n{line}\n```")));
         let screen = header_rows_all(&mut app, 40);
         assert_eq!(app.bars.len(), 1);
         let bar = &app.bars[0];
@@ -2298,7 +2307,7 @@ mod tests {
         let mut app = app();
         app.wide.clear();
         let note = "y".repeat(60);
-        app.transcript.entries.push(Entry::Agent(format!(
+        app.transcript.entries.push(reply(format!(
             "| name | note |\n|---|---|\n| [alpha](file:src/ui.rs#4) | {note} |"
         )));
         let text_under = |app: &mut App| {
@@ -2341,9 +2350,9 @@ mod tests {
     fn with_a_code_block() -> App {
         let mut app = app();
         app.wide.clear();
-        app.transcript.entries.push(Entry::Agent(
-            "```rs\nfn main() {\n    run();\n}\n```".to_string(),
-        ));
+        app.transcript
+            .entries
+            .push(reply("```rs\nfn main() {\n    run();\n}\n```".to_string()));
         header(&mut app, 80);
         app
     }
@@ -2376,7 +2385,7 @@ mod tests {
     fn with_a_markdown_block() -> App {
         let mut app = app();
         app.wide.clear();
-        app.transcript.entries.push(Entry::Agent(
+        app.transcript.entries.push(reply(
             "```markdown\n# Title\n\nsome **bold** text\n```".to_string(),
         ));
         header(&mut app, 80);
@@ -2433,7 +2442,7 @@ mod tests {
     fn with_tabs(width: u16) -> App {
         let mut app = app();
         app.wide.clear();
-        app.transcript.entries.push(Entry::Agent(
+        app.transcript.entries.push(reply(
             "```rust tab=\"owned\"\nlet a = 1;\n```\n\n```rust tab=\"borrowed\"\nlet b = 2;\n```\n\n```rust tab=\"boxed\"\nlet c = 3;\n```"
                 .to_string(),
         ));
@@ -2510,7 +2519,7 @@ mod tests {
         let line = "x".repeat(60);
         app.transcript
             .entries
-            .push(Entry::Agent(format!("```{lang}\n{line}\n```")));
+            .push(reply(format!("```{lang}\n{line}\n```")));
         header(&mut app, 40);
         app
     }
@@ -2552,7 +2561,7 @@ mod tests {
         app.wide.clear();
         app.transcript
             .entries
-            .push(Entry::Agent("```rust\nfn main() {}\n```".to_string()));
+            .push(reply("```rust\nfn main() {}\n```".to_string()));
         let screen = header_rows_all(&mut app, 40);
         assert!(!screen.contains("wrap pan"), "{screen}");
     }
@@ -2818,7 +2827,7 @@ mod tests {
         let long = "x".repeat(200);
         app.transcript
             .entries
-            .push(Entry::Agent(format!("```\n{long}\n```")));
+            .push(reply(format!("```\n{long}\n```")));
         assert_eq!(right_edge(&mut app), Some(71));
         assert!(app.v_bar.is_none());
         for n in 0..60 {
@@ -3267,7 +3276,7 @@ mod tests {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                Entry::User(text) => Some(text.as_str()),
+                Entry::User(prompt) => Some(prompt.text.as_str()),
                 _ => None,
             })
             .collect()
@@ -4557,7 +4566,7 @@ mod tests {
     fn a_drag_across_a_wrapped_paragraph_copies_one_line_joined_with_a_space() {
         let words: Vec<String> = (1..=40).map(|n| format!("word{n}")).collect();
         let text = words.join(" ");
-        let mut app = drawn_with(vec![Entry::Agent(text.clone())]);
+        let mut app = drawn_with(vec![reply(text.clone())]);
         let from = text_spot(&app, "word1 ", false);
         let to = text_spot(&app, "word40", true);
         assert!(to.y > from.y, "the paragraph wraps");
@@ -4567,7 +4576,7 @@ mod tests {
     #[test]
     fn a_drag_across_a_word_split_over_rows_joins_it_with_nothing() {
         let word = format!("a{}z", "x".repeat(100));
-        let mut app = drawn_with(vec![Entry::Agent(word.clone())]);
+        let mut app = drawn_with(vec![reply(word.clone())]);
         let from = text_spot(&app, "ax", false);
         let to = text_spot(&app, "xz", true);
         assert!(to.y > from.y, "the word is split");
@@ -4576,7 +4585,7 @@ mod tests {
 
     #[test]
     fn a_line_break_in_a_message_stays_a_line_break_in_a_copy() {
-        let mut app = drawn_with(vec![Entry::User("first line\nsecond line".to_string())]);
+        let mut app = drawn_with(vec![prompt("first line\nsecond line".to_string())]);
         let from = text_spot(&app, "first", false);
         let to = text_spot(&app, "second line", true);
         assert_eq!(
@@ -4589,7 +4598,7 @@ mod tests {
     fn a_copy_leaves_out_borders_gutters_and_a_code_blocks_header() {
         let long = "abcdefghij".repeat(10);
         let text = format!("before\n\n```\n{long}\nshort\n```\n\nafter");
-        let mut app = drawn_with(vec![Entry::Agent(text)]);
+        let mut app = drawn_with(vec![reply(text)]);
         let from = text_spot(&app, "before", false);
         let to = text_spot(&app, "after", true);
         let copy = copied_by(drag_over(&mut app, from, to));
@@ -4603,7 +4612,7 @@ mod tests {
 
     #[test]
     fn the_selection_stays_after_the_release_and_goes_at_the_next_click() {
-        let mut app = drawn_with(vec![Entry::Agent("one two three".to_string())]);
+        let mut app = drawn_with(vec![reply("one two three".to_string())]);
         let from = text_spot(&app, "one", false);
         let to = text_spot(&app, "two", true);
         assert_eq!(copied_by(drag_over(&mut app, from, to)), "one two");
