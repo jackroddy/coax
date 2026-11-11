@@ -1800,7 +1800,7 @@ async fn session(
                 app.guard = None;
                 Action::None
             },
-            _ = spin.tick(), if app.transcript.in_flight => {
+            _ = spin.tick(), if app.transcript.in_flight || app.transcript.running_agents(Instant::now()) > 0 => {
                 app.spinner = app.spinner.wrapping_add(1);
                 Action::None
             },
@@ -1900,7 +1900,7 @@ fn report_to_decade(reporter: &mut Option<Reporter>, app: &mut App) {
         .as_ref()
         .map(|p| p.title.as_str())
         .or(app.form.as_ref().map(|asked| asked.form.message.as_str()));
-    let now = Snapshot::of(&app.transcript, question, &app.settings);
+    let now = Snapshot::of(&app.transcript, question, &app.settings, Instant::now());
     if let Err(error) = open.send(now) {
         log::info("decade.disconnect", json!({"reason": error.to_string()}));
         *reporter = None;
@@ -2745,6 +2745,7 @@ mod tests {
             revision: 0,
             agent: false,
             children: Vec::new(),
+            last_child_update: None,
         };
         app.transcript.entries.push(Entry::Tool(tool));
         let rows = |app: &mut App| header_rows_all(app, 80);
@@ -2776,6 +2777,7 @@ mod tests {
             revision: 0,
             agent: false,
             children: Vec::new(),
+            last_child_update: None,
         }));
         app.expanded.insert("e1".into());
         header_rows_all(app, 80);
@@ -3196,6 +3198,7 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    const WORKING_ROW: u16 = 22;
     const CONTEXT_ROW: u16 = 26;
     const STATUS_ROW: u16 = 27;
     const PROGRESS_ROW: u16 = 28;
@@ -3461,6 +3464,51 @@ mod tests {
         assert!(row.ends_with(" last turn 41s "), "{row}");
     }
 
+    fn running_task(id: &'static str) -> agent_client_protocol::v1::schema::SessionUpdate {
+        use agent_client_protocol::v1::schema::{SessionUpdate, ToolCall, ToolCallStatus};
+
+        let mut meta = serde_json::Map::new();
+        meta.insert("claudeCode".to_string(), json!({ "toolName": "Task" }));
+        let mut call = ToolCall::new(id, "Survey").status(ToolCallStatus::InProgress);
+        call.meta = Some(meta);
+        SessionUpdate::ToolCall(call)
+    }
+
+    #[test]
+    fn the_working_line_shows_the_turn_and_the_running_subagents_side_by_side_in_their_colours() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        app.transcript.apply(running_task("t1"));
+        app.transcript.apply(running_task("t2"));
+        let row = working_row(&mut app, 100);
+        assert!(
+            row.starts_with(" ◐ working · 0s  ◴ 2 agents running · esc to cancel "),
+            "{row}"
+        );
+        let palette = crate::palette::get();
+        let buffer = header_buffer(&mut app, 100);
+        let working = column(&mut app, 100, WORKING_ROW, "◐");
+        assert_eq!(buffer[(working, WORKING_ROW)].fg, palette.yellow);
+        let agents = column(&mut app, 100, WORKING_ROW, "◴");
+        assert_eq!(buffer[(agents, WORKING_ROW)].fg, palette.cyan);
+        assert_eq!(buffer[(agents + 2, WORKING_ROW)].fg, palette.cyan);
+    }
+
+    #[test]
+    fn the_working_line_shows_the_running_subagents_alone_after_the_turn_ends() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        app.transcript.apply(running_task("t1"));
+        app.transcript
+            .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
+        assert_eq!(working_row(&mut app, 100).trim_end(), " ◴ 1 agent running");
+        app.spinner = 1;
+        assert_eq!(working_row(&mut app, 100).trim_end(), " ◷ 1 agent running");
+        let x = column(&mut app, 100, WORKING_ROW, "1 agent");
+        let buffer = header_buffer(&mut app, 100);
+        assert_eq!(buffer[(x, WORKING_ROW)].fg, crate::palette::get().cyan);
+    }
+
     #[test]
     fn a_narrow_status_line_keeps_the_first_setting_and_ends_the_settings_in_the_overflow_mark() {
         let mut app = with_settings();
@@ -3513,7 +3561,7 @@ mod tests {
     fn working_row(app: &mut App, width: u16) -> String {
         let buffer = header_buffer(app, width);
         (0..width)
-            .map(|x| buffer[(x, 22)].symbol().to_string())
+            .map(|x| buffer[(x, WORKING_ROW)].symbol().to_string())
             .collect()
     }
 

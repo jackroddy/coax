@@ -21,6 +21,9 @@ const SEPARATOR: &str = " · ";
 /// The frames of the working spinner.
 pub const SPINNER: [char; 4] = ['◐', '◓', '◑', '◒'];
 
+/// The frames of the running-subagent spinner.
+pub const AGENT_SPINNER: [char; 4] = ['◴', '◷', '◶', '◵'];
+
 /// The first row of `area` for screens with no session status: `coax`, a
 /// dot and `title`, then a dim rule under it.
 pub fn title_bar(frame: &mut Frame, area: Rect, title: &str) {

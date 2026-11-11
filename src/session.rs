@@ -36,6 +36,9 @@ pub struct Tool {
 
     /// What a subagent started by this call did, in arrival order.
     pub children: Vec<Child>,
+
+    /// When the latest of `children` arrived or changed.
+    pub last_child_update: Option<Instant>,
 }
 
 impl Tool {
@@ -46,6 +49,37 @@ impl Tool {
             .filter(|child| matches!(child, Child::Tool(_)))
             .count()
     }
+
+    /// Whether the call is a subagent that is still working at `now`.
+    pub fn agent_running(&self, now: Instant) -> bool {
+        if !(self.agent || !self.children.is_empty()) || self.cancelled {
+            return false;
+        }
+        match self.status {
+            ToolCallStatus::Pending | ToolCallStatus::InProgress => true,
+
+            // the adapter marks a background subagent's call completed
+            // when it launches and sends nothing when it ends, so its
+            // running calls and its recent updates are all that show it
+            // is still working
+            ToolCallStatus::Completed => {
+                self.children.iter().any(|child| {
+                    matches!(child, Child::Tool(tool) if !tool.cancelled && running(tool.status))
+                }) || self
+                    .last_child_update
+                    .is_some_and(|at| now.saturating_duration_since(at) < AGENT_QUIET)
+            }
+            _ => false,
+        }
+    }
+}
+
+/// How long a subagent whose call has completed still counts as running
+/// after its last child update.
+pub const AGENT_QUIET: Duration = Duration::from_secs(10);
+
+fn running(status: ToolCallStatus) -> bool {
+    matches!(status, ToolCallStatus::Pending | ToolCallStatus::InProgress)
 }
 
 pub enum Child {
@@ -167,13 +201,18 @@ impl Transcript {
         }
     }
 
+    /// How many subagents are still working at `now`.
+    pub fn running_agents(&self, now: Instant) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| matches!(entry, Entry::Tool(tool) if tool.agent_running(now)))
+            .count()
+    }
+
     /// Mark every call that has not finished as cancelled.
     pub fn cancel_running(&mut self) {
         fn mark(tool: &mut Tool) {
-            if matches!(
-                tool.status,
-                ToolCallStatus::Pending | ToolCallStatus::InProgress
-            ) {
+            if running(tool.status) {
                 tool.cancelled = true;
             }
             for child in &mut tool.children {
@@ -274,10 +313,13 @@ impl Transcript {
         }
     }
 
-    /// The tool call that a subagent's output, tagged by `meta`, belongs to.
+    /// The tool call that a subagent's output, tagged by `meta`, belongs to,
+    /// stamped with the time the output arrived.
     fn parent(&mut self, meta: Option<&Meta>) -> Option<&mut Tool> {
         let id = parent_tool_call(meta)?;
-        find_tool(&mut self.entries, &id)
+        let parent = find_tool(&mut self.entries, &id)?;
+        parent.last_child_update = Some(Instant::now());
+        Some(parent)
     }
 
     fn update_tool(&mut self, update: ToolCallUpdate) {
@@ -315,6 +357,7 @@ impl Transcript {
             tool.content = content;
             tool.revision += 1;
         }
+        self.parent(meta.as_ref());
     }
 }
 
@@ -366,6 +409,7 @@ fn tool(call: ToolCall) -> Tool {
         revision: 0,
         agent: starts_subagent(call.meta.as_ref()),
         children: Vec::new(),
+        last_child_update: None,
     }
 }
 
@@ -648,5 +692,70 @@ mod tests {
             )));
         }
         assert!(matches!(&transcript.entries[0], Entry::Tool(tool) if tool.revision == 2));
+    }
+
+    fn subagent(id: &'static str, status: ToolCallStatus) -> SessionUpdate {
+        let mut meta = Meta::new();
+        meta.insert(
+            "claudeCode".to_string(),
+            serde_json::json!({ "toolName": "Task" }),
+        );
+        let mut call = ToolCall::new(id, "Survey").status(status);
+        call.meta = Some(meta);
+        SessionUpdate::ToolCall(call)
+    }
+
+    fn child_call(id: &'static str, parent: &str, status: ToolCallStatus) -> SessionUpdate {
+        let mut call = ToolCall::new(id, "Read").status(status);
+        call.meta = Some(tagged(parent));
+        SessionUpdate::ToolCall(call)
+    }
+
+    fn child_done(id: &'static str, parent: &str) -> SessionUpdate {
+        let mut update = ToolCallUpdate::new(
+            id,
+            ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+        );
+        update.meta = Some(tagged(parent));
+        SessionUpdate::ToolCallUpdate(update)
+    }
+
+    #[test]
+    fn a_foreground_subagent_counts_while_its_call_is_in_progress() {
+        let mut transcript = Transcript::default();
+        transcript.apply(subagent("t1", ToolCallStatus::InProgress));
+        transcript.apply(subagent("t2", ToolCallStatus::InProgress));
+        let later = Instant::now() + AGENT_QUIET * 2;
+        assert_eq!(transcript.running_agents(later), 2);
+        transcript.apply(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "t1",
+            ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+        )));
+        assert_eq!(transcript.running_agents(later), 1);
+    }
+
+    #[test]
+    fn a_background_subagent_counts_while_its_children_run_and_for_the_quiet_period_after() {
+        let mut transcript = Transcript::default();
+        transcript.apply(subagent("t1", ToolCallStatus::Completed));
+        assert_eq!(transcript.running_agents(Instant::now()), 0);
+        transcript.apply(child_call("c1", "t1", ToolCallStatus::InProgress));
+        let later = Instant::now() + AGENT_QUIET * 2;
+        assert_eq!(transcript.running_agents(later), 1);
+        transcript.apply(child_done("c1", "t1"));
+        let heard = Instant::now();
+        assert_eq!(transcript.running_agents(heard), 1);
+        assert_eq!(transcript.running_agents(heard + AGENT_QUIET / 2), 1);
+        assert_eq!(transcript.running_agents(later), 0);
+    }
+
+    #[test]
+    fn a_cancelled_or_failed_subagent_does_not_count() {
+        let mut transcript = Transcript::default();
+        transcript.apply(subagent("t1", ToolCallStatus::InProgress));
+        transcript.apply(subagent("t2", ToolCallStatus::Failed));
+        transcript.apply(child_call("c2", "t2", ToolCallStatus::InProgress));
+        transcript.finished(StopReason::Cancelled);
+        assert_eq!(transcript.running_agents(Instant::now()), 0);
     }
 }

@@ -22,7 +22,12 @@ fn socket_dir(name: &str) -> PathBuf {
 }
 
 fn report(reporter: &mut Reporter, transcript: &Transcript, question: Option<&str>) {
-    let now = Snapshot::of(transcript, question, &Settings::default());
+    let now = Snapshot::of(
+        transcript,
+        question,
+        &Settings::default(),
+        std::time::Instant::now(),
+    );
     reporter.send(now).unwrap();
 }
 

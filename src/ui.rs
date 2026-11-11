@@ -51,7 +51,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Some((lines, _)) => lines.len().clamp(1, (area.height / 2) as usize),
         None => input.height(),
     };
-    let working_rows = u16::from(app.transcript.in_flight);
+    let agents = app.transcript.running_agents(Instant::now());
+    let working_rows = u16::from(app.transcript.in_flight || agents > 0);
     let waiting_rows = app.waiting.len().min(MAX_WAITING_ROWS) as u16;
     let [
         transcript_area,
@@ -85,13 +86,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_plan(frame, plan_area, app);
     let waiting = waiting_lines(&app.waiting, waiting_area.width as usize);
     frame.render_widget(Paragraph::new(waiting), waiting_area);
-    if app.transcript.in_flight {
+    let turn = app.transcript.in_flight.then(|| {
         let elapsed = app
             .transcript
             .turn_started
             .map_or(Duration::ZERO, |start| start.elapsed());
-        let waiting = app.permission.is_some() || app.form.is_some();
-        let line = working_line(app.spinner, elapsed, waiting);
+        (elapsed, app.permission.is_some() || app.form.is_some())
+    });
+    if turn.is_some() || agents > 0 {
+        let line = working_line(app.spinner, turn, agents);
         frame.render_widget(Paragraph::new(line), working_area);
     }
     match form {
@@ -147,25 +150,38 @@ fn waiting_lines(waiting: &VecDeque<String>, width: usize) -> Vec<Line<'static>>
     lines
 }
 
-/// The row above the prompt while a turn runs: the spinner, the time since
-/// the prompt was sent and the cancel key, or that a permission waits.
-fn working_line(spinner: usize, elapsed: Duration, waiting: bool) -> Line<'static> {
-    let yellow = Style::new().fg(palette::get().yellow);
-    let time = Span::styled(format!(" · {}", elapsed_text(elapsed)), dim());
-    if waiting {
-        return Line::from(vec![
-            Span::raw(" "),
-            Span::styled("waiting for you", yellow),
-            time,
-        ]);
+/// The row above the prompt while a turn runs or a subagent works: the
+/// turn's spinner, the time since the prompt was sent, or that a permission
+/// waits, then the subagent spinner and count, then the cancel key. `turn`
+/// is the turn's elapsed time and whether a permission or form waits.
+fn working_line(spinner: usize, turn: Option<(Duration, bool)>, agents: usize) -> Line<'static> {
+    let palette = palette::get();
+    let yellow = Style::new().fg(palette.yellow);
+    let mut spans = vec![Span::raw(" ")];
+    if let Some((elapsed, waiting)) = turn {
+        if waiting {
+            spans.push(Span::styled("waiting for you", yellow));
+        } else {
+            let frame = header::SPINNER[spinner % header::SPINNER.len()];
+            spans.push(Span::styled(format!("{frame} working"), yellow));
+        }
+        spans.push(Span::styled(format!(" · {}", elapsed_text(elapsed)), dim()));
     }
-    let spinner = header::SPINNER[spinner % header::SPINNER.len()];
-    Line::from(vec![
-        Span::raw(" "),
-        Span::styled(format!("{spinner} working"), yellow),
-        time,
-        Span::styled(" · esc to cancel", dim()),
-    ])
+    if agents > 0 {
+        if turn.is_some() {
+            spans.push(Span::raw("  "));
+        }
+        let frame = header::AGENT_SPINNER[spinner % header::AGENT_SPINNER.len()];
+        let noun = if agents == 1 { "agent" } else { "agents" };
+        spans.push(Span::styled(
+            format!("{frame} {agents} {noun} running"),
+            Style::new().fg(palette.cyan),
+        ));
+    }
+    if turn.is_some_and(|(_, waiting)| !waiting) {
+        spans.push(Span::styled(" · esc to cancel", dim()));
+    }
+    Line::from(spans)
 }
 
 pub fn elapsed_text(elapsed: Duration) -> String {
@@ -2959,6 +2975,7 @@ mod tests {
             revision: 0,
             agent: false,
             children: Vec::new(),
+            last_child_update: None,
         }
     }
 

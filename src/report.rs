@@ -1,5 +1,6 @@
 use std::io;
 use std::path::Path;
+use std::time::Instant;
 
 use agent_client_protocol::v1::schema::{StopReason, ToolCallStatus};
 use decade_channel::{Agent, AgentState, AgentUpdate, Channel, Context, Message, Show, Tokens};
@@ -25,10 +26,15 @@ pub struct Snapshot {
 impl Snapshot {
     /// `question` is the title of the permission request waiting for an
     /// answer, if one is.
-    pub fn of(transcript: &Transcript, question: Option<&str>, settings: &Settings) -> Snapshot {
+    pub fn of(
+        transcript: &Transcript,
+        question: Option<&str>,
+        settings: &Settings,
+        now: Instant,
+    ) -> Snapshot {
         let state = if question.is_some() {
             AgentState::Attention
-        } else if transcript.in_flight {
+        } else if transcript.in_flight || transcript.running_agents(now) > 0 {
             AgentState::Working
         } else {
             match transcript.last_stop {
@@ -199,7 +205,7 @@ mod tests {
     use super::*;
 
     fn snapshot(transcript: &Transcript, question: Option<&str>) -> Snapshot {
-        Snapshot::of(transcript, question, &Settings::default())
+        Snapshot::of(transcript, question, &Settings::default(), Instant::now())
     }
 
     fn state_of(update: Option<AgentUpdate>) -> Option<Option<AgentState>> {
@@ -286,13 +292,38 @@ mod tests {
     }
 
     #[test]
+    fn the_agent_reports_working_while_a_subagent_runs_after_the_turn_ended() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("hi".to_string());
+        let call: ToolCall = serde_json::from_value(serde_json::json!({
+            "toolCallId": "t1", "title": "Survey", "status": "in_progress",
+            "_meta": {"claudeCode": {"toolName": "Task"}}
+        }))
+        .unwrap();
+        transcript.apply(SessionUpdate::ToolCall(call));
+        transcript.finished(StopReason::EndTurn);
+        assert_eq!(snapshot(&transcript, None).state, Some(AgentState::Working));
+        assert_eq!(
+            snapshot(&transcript, Some("Write NOTES.md")).state,
+            Some(AgentState::Attention)
+        );
+        let update: agent_client_protocol::v1::schema::ToolCallUpdate =
+            serde_json::from_value(serde_json::json!({
+                "toolCallId": "t1", "status": "completed"
+            }))
+            .unwrap();
+        transcript.apply(SessionUpdate::ToolCallUpdate(update));
+        assert_eq!(snapshot(&transcript, None).state, Some(AgentState::Done));
+    }
+
+    #[test]
     fn model_context_tokens_and_cost_come_from_the_settings() {
         let transcript = Transcript::default();
         let mut settings = Settings::default();
         settings.apply(&SessionUpdate::UsageUpdate(
             UsageUpdate::new(81_000, 200_000).cost(Cost::new(1.5, "USD")),
         ));
-        let now = Snapshot::of(&transcript, None, &settings);
+        let now = Snapshot::of(&transcript, None, &settings, Instant::now());
         assert_eq!(
             now.context,
             Some(Context {
@@ -312,7 +343,7 @@ mod tests {
         settings.apply(&SessionUpdate::UsageUpdate(
             UsageUpdate::new(1, 2).cost(Cost::new(2.0, "EUR")),
         ));
-        let now = Snapshot::of(&Transcript::default(), None, &settings);
+        let now = Snapshot::of(&Transcript::default(), None, &settings, Instant::now());
         assert_eq!(now.cost, None);
     }
 }

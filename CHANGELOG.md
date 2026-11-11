@@ -347,6 +347,15 @@ command line, the keys, and the scenario format the fake agent reads.
   hold the time. coax leaves the time out of a box that cannot widen enough.
   Messages replayed when a session loads have no time, because the Claude
   Code adapter sends none.
+- coax counts the subagents still running on the row above the prompt, as
+  in `◴ 2 agents running`, in cyan with a spinner of its own. During a turn
+  the count follows the turn's spinner and time. After the turn ends the row
+  stays while any subagent runs. A subagent counts while its call is open.
+  The Claude adapter marks a background subagent's call completed when it
+  starts, so a background subagent also counts while any of its calls runs
+  and for 10 seconds after its last update. coax reports the agent to decade
+  as working while the count is above zero. `scenarios/background.json`
+  plays a background subagent.
 
 ### Changed
 

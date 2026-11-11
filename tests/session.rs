@@ -563,6 +563,34 @@ async fn a_subagents_calls_and_text_group_under_its_task_call() {
     );
 }
 
+const BACKGROUND: &str = include_str!("../scenarios/background.json");
+
+#[tokio::test]
+async fn a_background_subagent_counts_after_the_turn_until_its_updates_go_quiet() {
+    use coax::session::AGENT_QUIET;
+    use std::time::Instant;
+
+    let scenario = Scenario::parse(BACKGROUND).unwrap();
+    let saved = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let keep = saved.clone();
+    acp::run(fake::agent(scenario), "fake", async move |link| {
+        *keep.lock().unwrap() = Some(one_prompt(link, "go").await?);
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let transcript = saved.lock().unwrap().take().unwrap();
+    assert!(!transcript.in_flight);
+    let Entry::Tool(task) = &transcript.entries[1] else {
+        panic!("expected the Task call");
+    };
+    assert_eq!(task.status, ToolCallStatus::Completed);
+    assert_eq!(task.tool_count(), 1);
+    let now = Instant::now();
+    assert_eq!(transcript.running_agents(now), 1);
+    assert_eq!(transcript.running_agents(now + AGENT_QUIET), 0);
+}
+
 #[tokio::test]
 async fn text_never_merges_across_a_subagent_boundary() {
     let transcript = subagent_transcript().await;

@@ -1,0 +1,60 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Survey the entry point",
+            "kind": "think",
+            "status": "completed",
+            "_meta": {
+              "claudeCode": {
+                "toolName": "Task"
+              }
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "A helper is reading in the background."
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "c1",
+            "title": "Read src/main.rs",
+            "kind": "read",
+            "status": "in_progress",
+            "_meta": {
+              "claudeCode": {
+                "parentToolUseId": "t1"
+              }
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "c1",
+            "status": "completed",
+            "_meta": {
+              "claudeCode": {
+                "parentToolUseId": "t1"
+              }
+            }
+          }
+        },
+        {
+          "stop": "end_turn"
+        }
+      ]
+    }
+  ]
+}
