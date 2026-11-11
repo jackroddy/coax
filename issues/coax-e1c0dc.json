@@ -3,26 +3,29 @@
   "title": "The status line is drawn in colour",
   "body": "The status line under the prompt (`draw_status` and `status` in `header.rs`) draws almost everything in the muted colour. Only the mode value when the agent does not ask, a stop reason and hover get a colour. Jack wants more colour there, starting from a scheme he refines once he sees it.\n\n## Proposal\n\n| item | colour |\n|---|---|\n| mode value | `cyan`, or `yellow` when the agent does not ask |\n| model | `blue`, muted during a turn |\n| thought level | `magenta` |\n| other settings | `muted` |\n| separators | `muted` |\n| `↑` and `↓` | `cyan` and `green`, numbers in the foreground colour |\n| cost | `orange` |\n| `plan n/m` | `yellow` while steps remain, `green` when done |\n| `decade` | `cyan` |\n| `<version> available` | `accent` |\n| `idle` | `muted`, or `yellow` with a stop reason |\n\nHover stays `accent`. `Setting` in `settings.rs` needs to know whether it is the mode, the model, the thought level or another setting, from the config option's category.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T01:28:41.198429949Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T01:13:26.902371618Z",
-  "updated_at": "2026-11-11T01:13:41.198429949Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T01:16:04.933193508Z",
+  "closed_at": "2026-11-11T01:16:04.933193508Z",
+  "close_reason": "Landed in 7d5dc8e on `dev`, following the colour table in the body. A `Category` on `Setting` replaces the `model` and `rarely_changed` flags. A status `Item` holds spans so the token counts carry two colours.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "7b6cbe5",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "7d5dc8e",
+      "branch": "dev"
+    }
   }
 }
