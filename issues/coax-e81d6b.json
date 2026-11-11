@@ -13,9 +13,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T04:43:32.950669538Z",
-  "updated_at": "2026-11-11T04:52:52.644324072Z",
+  "updated_at": "2026-11-11T04:52:58.053856244Z",
   "closed_at": "2026-11-11T04:52:52.644324072Z",
-  "close_reason": "Landed in 1d077c7 on dev. A first Esc during a turn arms a cancel guard, and the rule under the prompt reads `press esc again to cancel`. A second Esc within `GUARD_WINDOW` cancels the turn. `ExitKey` is now `GuardKey` with an `Esc` variant. Ctrl+c still cancels on one press, and the working line reads `esc esc to cancel`.",
+  "close_reason": "Landed in 1d077c7 on dev. A first Esc during a turn arms a cancel guard. The rule under the prompt then reads `press esc again to cancel`. A second Esc within `GUARD_WINDOW` cancels the turn. `ExitKey` is now `GuardKey` with an `Esc` variant. Ctrl+c still cancels on one press. The working line reads `esc esc to cancel`.",
   "resolution": "done",
   "notes": [
     {
