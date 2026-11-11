@@ -1,10 +1,10 @@
 {
   "slug": "claude-adapter-holds-turns-for-subagents",
-  "text": "The Claude adapter v0.101.0 leaves a `session/prompt` unanswered while a background subagent the turn started is still running, unless the client advertises `backgroundSubagents` among its `jetbrains.air` meta capabilities. coax does not advertise it, so such a turn stays in flight until the subagent ends. Source: `endsTurnsWithLiveSubagents` and `turnAwaitingSubagents` in the adapter's bundled JavaScript.",
+  "text": "The Claude adapter v0.101.0 marks a background subagent's `Task` call completed at launch, then leaves the turn's `session/prompt` unanswered until the subagent ends or Claude Code takes a new prompt, unless the client advertises `backgroundSubagents` in `jetbrains.air` meta, which coax does not. coax shows such a turn as held (`Transcript::held`, 4d4ac77). Source: `endsTurnsWithLiveSubagents` and `turnAwaitingSubagents` in the adapter's bundled JavaScript.",
   "created_at": "2026-11-11T00:32:20.20705182Z",
-  "updated_at": "2026-11-11T00:32:20.20705182Z",
+  "updated_at": "2026-11-11T05:14:03.822019387Z",
   "stamp": {
-    "commit": "e619019",
+    "commit": "2849bbf",
     "branch": "dev"
   }
 }
