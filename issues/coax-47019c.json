@@ -3,20 +3,20 @@
   "title": "coax shows how many subagents are still working, to the person and to decade",
   "body": "coax draws a subagent as a folded `agent` block in the transcript. Nothing outside the transcript says whether any subagents are still running or how many. The working line and the progress row speak only of the main turn, and the report to decade (`report.rs`) carries no subagent count. When a turn ends while a background subagent still runs, coax shows idle and decade hears the agent is done.\n\nHow the Claude adapter reports subagents decides how coax can count them:\n\n- A foreground subagent's `Task` call stays `in_progress` until the subagent returns.\n- A background subagent's `Task` call is marked `completed` the moment it launches. Its inner tool calls keep arriving, stamped with `_meta.claudeCode.parentToolUseId`, and nothing marks when it ends.\n\n## Proposal\n\n- A subagent counts as running while its `Task` call is open. For a background subagent, it also counts while any of its inner calls is pending or in progress, or while one arrived in the last few seconds.\n- The footer's progress row shows the count on its right whenever it is above zero, as in `2 agents running`, during a turn or after it.\n- coax reports the agent to decade as working while the count is above zero, even with no turn in flight.\n\n## Open\n\n- The background rule is a guess from activity, since the adapter sends no end signal. The quiet period it waits needs tuning live.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T04:43:34.855599106Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T03:05:24.052066912Z",
-  "updated_at": "2026-11-11T04:32:40.256053888Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T04:34:17.291147452Z",
+  "closed_at": "2026-11-11T04:34:17.291147452Z",
+  "close_reason": "Landed in f4e9b89. `Transcript::running_agents(now)` counts the subagents still running, with a 10 s quiet period in `AGENT_QUIET` for a background subagent whose call is completed. The working line shows the count with a cyan `◴◷◶◵` spinner beside the turn's own, and stays after the turn while the count is above zero. `Snapshot::of` reports working while the count is above zero. `scenarios/background.json` plays a background subagent. The quiet period still needs tuning against the live adapter.",
+  "resolution": "done",
   "notes": [
     {
       "id": "9128d1b4",
@@ -40,6 +40,9 @@
       "commit": "aecbbd8",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "f4e9b89",
+      "branch": "dev"
+    }
   }
 }
