@@ -321,12 +321,13 @@ command line, the keys, and the scenario format the fake agent reads.
   selects text and does not open or fold it.
 
 - coax draws the local time a message began in the top border of its box,
-  dim, as `HH:MM`. A prompt's time sits on the right and a reply's on the
-  left. A message from an earlier day also shows the date. The last reply of
-  a turn also shows how long the turn took, as in `14:32 · 41s`. A short
-  message's box widens to hold the time. coax leaves the time out of a box
-  that cannot widen enough. Messages replayed when a session loads have no
-  time, because the Claude Code adapter sends none.
+  dim, on a 12-hour clock as `2:32 PM`. A prompt's time sits on the right
+  and a reply's on the left. A message from an earlier day also shows the
+  date, as in `2026-11-09 2:32 PM`. The last reply of a turn also shows how
+  long the turn took, as in `2:32 PM · 41s`. A short message's box widens to
+  hold the time. coax leaves the time out of a box that cannot widen enough.
+  Messages replayed when a session loads have no time, because the Claude
+  Code adapter sends none.
 
 ### Changed
 

@@ -30,9 +30,15 @@ impl Time {
         }
     }
 
-    /// `HH:MM`, after the date when `today` falls on another day.
+    /// The time on a 12-hour clock, as `2:32 PM`, after the date when
+    /// `today` falls on another day.
     pub fn label(self, today: Time) -> String {
-        let clock = format!("{:02}:{:02}", self.hour, self.minute);
+        let hour = match self.hour % 12 {
+            0 => 12,
+            hour => hour,
+        };
+        let half = if self.hour < 12 { "AM" } else { "PM" };
+        let clock = format!("{hour}:{:02} {half}", self.minute);
         if (self.year, self.month, self.day) == (today.year, today.month, today.day) {
             clock
         } else {
@@ -82,6 +88,21 @@ mod tests {
             hour,
             minute,
         }
+    }
+
+    #[test]
+    fn a_label_reads_a_12_hour_clock_with_am_or_pm() {
+        let today = at(2026, 11, 10, 23, 59);
+        assert_eq!(at(2026, 11, 10, 14, 32).label(today), "2:32 PM");
+        assert_eq!(at(2026, 11, 10, 0, 5).label(today), "12:05 AM");
+        assert_eq!(at(2026, 11, 10, 12, 0).label(today), "12:00 PM");
+        assert_eq!(at(2026, 11, 10, 9, 7).label(today), "9:07 AM");
+    }
+
+    #[test]
+    fn a_label_from_an_earlier_day_starts_with_the_date() {
+        let today = at(2026, 11, 10, 9, 0);
+        assert_eq!(at(2026, 11, 9, 14, 32).label(today), "2026-11-09 2:32 PM");
     }
 
     #[test]

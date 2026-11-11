@@ -2991,7 +2991,7 @@ mod tests {
     fn a_prompts_border_shows_its_time_on_the_right() {
         let prompt = Message::new("hello there".to_string(), Some(EARLIER));
         let lines = plain(&bubble(&prompt, TODAY, 40).lines);
-        assert_eq!(lines[0], format!("{}╭───── 14:32 ─╮", " ".repeat(25)));
+        assert_eq!(lines[0], format!("{}╭─── 2:32 PM ─╮", " ".repeat(25)));
         assert_eq!(lines[1], format!("{}│ hello there │", " ".repeat(25)));
     }
 
@@ -2999,8 +2999,8 @@ mod tests {
     fn a_short_prompt_widens_its_bubble_to_hold_the_time() {
         let prompt = Message::new("hi".to_string(), Some(EARLIER));
         let lines = plain(&bubble(&prompt, TODAY, 40).lines);
-        assert_eq!(lines[0], format!("{}╭─ 14:32 ─╮", " ".repeat(29)));
-        assert_eq!(lines[1], format!("{}│ hi      │", " ".repeat(29)));
+        assert_eq!(lines[0], format!("{}╭─ 2:32 PM ─╮", " ".repeat(27)));
+        assert_eq!(lines[1], format!("{}│ hi        │", " ".repeat(27)));
     }
 
     #[test]
@@ -3010,7 +3010,7 @@ mod tests {
         let label = border_label(&reply, TODAY, 60);
         let rows = drawn(vec![Line::from("the answer is here")]);
         let lines = plain(&framed(rows, Color::Blue, None, label.as_deref()).lines);
-        assert_eq!(lines[0], "╭─ 14:32 · 41s ──────╮");
+        assert_eq!(lines[0], "╭─ 2:32 PM · 41s ────╮");
         assert_eq!(lines[1], "│ the answer is here │");
     }
 
@@ -3019,7 +3019,7 @@ mod tests {
         let yesterday = Time { day: 9, ..EARLIER };
         let prompt = Message::new("hello there".to_string(), Some(yesterday));
         let lines = plain(&bubble(&prompt, TODAY, 60).lines);
-        assert!(lines[0].ends_with("╭─ 2026-11-09 14:32 ─╮"));
+        assert!(lines[0].ends_with("╭─ 2026-11-09 2:32 PM ─╮"));
     }
 
     #[test]
