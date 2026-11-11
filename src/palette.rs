@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 
 use ratatui::style::{Color, Style};
 use serde::{Deserialize, Deserializer, de};
+use serde_json::json;
+
+use crate::log;
 
 /// The colours the screen is drawn with: the terminal's slots, named as
 /// terminal themes name them, and coax's own roles.
@@ -294,28 +297,68 @@ pub fn query_terminal() -> Reported {
         return Reported::default();
     }
 
+    log::info("terminal.query", json!({}));
+    let began = Instant::now();
+
     // every terminal answers the DA1 query at the end, so
     // its reply marks that the colour replies are all in
     let mut stdout = io::stdout();
     let _ = stdout.write_all(b"\x1b]10;?\x07\x1b]11;?\x07\x1b[c");
     let _ = stdout.flush();
+
+    // non-blocking, so a read cannot wait past the limit
+    // even when poll reports input that is gone by then
+    let flags = set_nonblocking(libc::STDIN_FILENO);
+    let (replies, answered) = read_replies(libc::STDIN_FILENO, QUERY_WAIT);
+    if let Some(flags) = flags {
+        // SAFETY: F_SETFL on stdin with the flags F_GETFL returned
+        unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_SETFL, flags) };
+    }
+    let _ = crossterm::terminal::disable_raw_mode();
+    log::info(
+        "terminal.replied",
+        json!({
+            "ms": began.elapsed().as_millis() as u64,
+            "bytes": replies.len(),
+            "ended": if answered { "reply" } else { "time limit" },
+        }),
+    );
+    parse_replies(&replies)
+}
+
+/// Make `fd` non-blocking, and return its old flags to restore.
+fn set_nonblocking(fd: i32) -> Option<i32> {
+    // SAFETY: F_GETFL and F_SETFL only read and set the flags of `fd`
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return None;
+    }
+    // SAFETY: as above
+    let set = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+    (set >= 0).then_some(flags)
+}
+
+/// Read `fd` until the DA1 reply arrives or `wait` runs out, and say
+/// whether the reply arrived.
+fn read_replies(fd: i32, wait: Duration) -> (Vec<u8>, bool) {
     let mut replies = Vec::new();
-    let deadline = Instant::now() + QUERY_WAIT;
+    let deadline = Instant::now() + wait;
     while !ends_with_device_attributes(&replies) {
         let left = deadline.saturating_duration_since(Instant::now());
-        let Some(chunk) = read_stdin(left) else {
+        let Some(chunk) = read_ready(fd, left) else {
             break;
         };
         replies.extend_from_slice(&chunk);
     }
-    let _ = crossterm::terminal::disable_raw_mode();
-    parse_replies(&replies)
+    let answered = ends_with_device_attributes(&replies);
+    (replies, answered)
 }
 
-/// The bytes waiting on stdin within `wait`, or `None` when there are none.
-fn read_stdin(wait: Duration) -> Option<Vec<u8>> {
+/// The bytes waiting on `fd` within `wait`: empty when a read finds none
+/// after all, and `None` when the wait runs out or `fd` closes.
+fn read_ready(fd: i32, wait: Duration) -> Option<Vec<u8>> {
     let mut poll = libc::pollfd {
-        fd: libc::STDIN_FILENO,
+        fd,
         events: libc::POLLIN,
         revents: 0,
     };
@@ -331,8 +374,12 @@ fn read_stdin(wait: Duration) -> Option<Vec<u8>> {
     let mut buffer = [0u8; 1024];
 
     // SAFETY: `buffer` is writable for the length passed
-    let read = unsafe { libc::read(libc::STDIN_FILENO, buffer.as_mut_ptr().cast(), buffer.len()) };
-    (read > 0).then(|| buffer[..read as usize].to_vec())
+    let read = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
+    if read > 0 {
+        return Some(buffer[..read as usize].to_vec());
+    }
+    let would_block = io::Error::last_os_error().kind() == io::ErrorKind::WouldBlock;
+    (read < 0 && would_block).then(Vec::new)
 }
 
 fn ends_with_device_attributes(replies: &[u8]) -> bool {
@@ -469,6 +516,53 @@ mod tests {
             assert!(palette.named(name).is_some(), "{name}");
         }
         assert_eq!(palette.named("brown"), None);
+    }
+
+    /// A pipe's read and write ends, the read end non-blocking as stdin is
+    /// during the query.
+    fn pipe() -> (i32, i32) {
+        let mut fds = [0; 2];
+        // SAFETY: `fds` holds the two descriptors pipe fills in
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        assert!(set_nonblocking(fds[0]).is_some());
+        (fds[0], fds[1])
+    }
+
+    fn send(fd: i32, bytes: &[u8]) {
+        // SAFETY: `bytes` is readable for the length passed
+        let written = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
+        assert_eq!(written, bytes.len() as isize);
+    }
+
+    fn close(fds: [i32; 2]) {
+        for fd in fds {
+            // SAFETY: each descriptor came from pipe and is closed once
+            unsafe { libc::close(fd) };
+        }
+    }
+
+    #[test]
+    fn the_reading_stops_at_the_time_limit_when_the_reply_never_ends() {
+        let (read, write) = pipe();
+        send(write, b"\x1b]10;rgb:e7e7/dddd/c8c8\x07");
+        let began = Instant::now();
+        let (replies, answered) = read_replies(read, Duration::from_millis(50));
+        assert!(!answered);
+        assert!(replies.starts_with(b"\x1b]10;"));
+        assert!(began.elapsed() < Duration::from_secs(1));
+        close([read, write]);
+    }
+
+    #[test]
+    fn the_reading_stops_as_soon_as_the_device_attributes_reply_arrives() {
+        let (read, write) = pipe();
+        send(write, b"\x1b]11;rgb:1f/1a/24\x07\x1b[?62c");
+        let began = Instant::now();
+        let (replies, answered) = read_replies(read, Duration::from_secs(5));
+        assert!(answered);
+        assert_eq!(parse_replies(&replies).background, Some([0x1f, 0x1a, 0x24]));
+        assert!(began.elapsed() < Duration::from_secs(1));
+        close([read, write]);
     }
 
     #[test]
