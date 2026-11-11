@@ -41,7 +41,7 @@ use crate::ui::{self, Word};
 const WHEEL_LINES: usize = 3;
 
 /// How long a first ^c, ^d or esc waits for the second.
-const GUARD_WINDOW: Duration = Duration::from_millis(1500);
+pub const GUARD_WINDOW: Duration = Duration::from_millis(1500);
 
 /// The key that armed the guard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1827,7 +1827,7 @@ async fn session(
                 app.guard = None;
                 Action::None
             },
-            _ = spin.tick(), if app.transcript.in_flight || app.transcript.running_agents(Instant::now()) > 0 => {
+            _ = spin.tick(), if app.transcript.in_flight || app.guard.is_some() || app.transcript.running_agents(Instant::now()) > 0 => {
                 app.spinner = app.spinner.wrapping_add(1);
                 Action::None
             },
@@ -3275,6 +3275,19 @@ mod tests {
         app.key(esc(), start);
         assert!(matches!(app.key(ctrl('c'), start), Action::Cancel));
         assert_eq!(app.guard.map(|guard| guard.key), Some(GuardKey::CtrlC));
+    }
+
+    #[test]
+    fn the_rule_under_the_prompt_drops_the_message_once_the_window_ends() {
+        let mut app = with_settings();
+        app.transcript.in_flight = true;
+        app.key(esc(), Instant::now());
+        assert!(header_rows_all(&mut app, 100).contains("press esc again to cancel"));
+        app.guard = Some(Guard {
+            key: GuardKey::Esc,
+            until: Instant::now(),
+        });
+        assert!(!header_rows_all(&mut app, 100).contains("again to cancel"));
     }
 
     use ratatui::Terminal;

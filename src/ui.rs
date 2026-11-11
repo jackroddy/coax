@@ -13,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, GuardKey, MenuTarget};
+use crate::app::{App, GUARD_WINDOW, Guard, GuardKey, MenuTarget};
 use crate::clock::Time;
 use crate::command;
 use crate::diff::line_diff;
@@ -113,7 +113,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     draw_confirm(frame, transcript_area, app);
-    draw_guard_rule(frame, lower_rule, app);
+    draw_guard_rule(frame, lower_rule, app, now);
     header::draw_context(frame, context_area, app);
     header::draw_status(frame, status_area, app);
     header::draw_progress(frame, progress_area, app);
@@ -289,28 +289,35 @@ pub fn draw_waiting(frame: &mut Frame, message: &str) {
 }
 
 /// The rule under the prompt, carrying the guard's message while armed.
-fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
-    let Some(guard) = app.guard else {
+fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App, now: Instant) {
+    let Some(guard) = app.guard.filter(|guard| guard.until > now) else {
         return match &app.unknown {
             Some(message) => draw_notice_rule(frame, area, message),
             None if app.exited => draw_notice_rule(frame, area, "the agent has exited"),
             None => draw_rule(frame, area, HEAVY),
         };
     };
+    frame.render_widget(Paragraph::new(guard_line(guard, area.width, now)), area);
+}
+
+/// The armed guard's rule, with the share of the window left in yellow.
+fn guard_line(guard: Guard, width: u16, now: Instant) -> Line<'static> {
     let message = match guard.key {
         GuardKey::CtrlC => "press ^c again to quit",
         GuardKey::CtrlD => "press ^d again to quit",
         GuardKey::Esc => "press esc again to cancel",
     };
-    let rest = (area.width as usize).saturating_sub(message.width() + 4);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(format!("{HEAVY}{HEAVY} "), dim()),
-            Span::styled(message, Style::new().fg(palette::get().yellow)),
-            Span::styled(format!(" {}", HEAVY.repeat(rest)), dim()),
-        ])),
-        area,
-    );
+    let rest = (width as usize).saturating_sub(message.width() + 4);
+    let left = guard.until.saturating_duration_since(now).as_millis();
+    let lit = ((rest as u128 * left).div_ceil(GUARD_WINDOW.as_millis()) as usize).min(rest);
+    let yellow = Style::new().fg(palette::get().yellow);
+    Line::from(vec![
+        Span::styled(format!("{HEAVY}{HEAVY} "), dim()),
+        Span::styled(message, yellow),
+        Span::styled(" ", dim()),
+        Span::styled(HEAVY.repeat(lit), yellow),
+        Span::styled(HEAVY.repeat(rest - lit), dim()),
+    ])
 }
 
 /// The rule under the prompt, carrying a dim `message`.
@@ -2945,6 +2952,37 @@ mod tests {
     use agent_client_protocol::v1::schema::{Diff, ToolCallLocation};
 
     use super::*;
+
+    fn yellow_rule(line: &Line) -> usize {
+        let yellow = Style::new().fg(palette::get().yellow);
+        line.spans
+            .iter()
+            .filter(|span| span.style == yellow && span.content.starts_with(HEAVY))
+            .map(|span| span.content.chars().count())
+            .sum()
+    }
+
+    #[test]
+    fn the_guard_rule_is_all_yellow_when_armed_half_at_halfway_and_none_at_the_end() {
+        let start = Instant::now();
+        let until = start + GUARD_WINDOW;
+        for (key, message) in [
+            (GuardKey::CtrlC, "press ^c again to quit"),
+            (GuardKey::CtrlD, "press ^d again to quit"),
+            (GuardKey::Esc, "press esc again to cancel"),
+        ] {
+            let guard = Guard { key, until };
+            let rest = 60 - message.width() - 4;
+            let armed = guard_line(guard, 60, start);
+            assert!(armed.to_string().contains(message));
+            assert_eq!(armed.width(), 60);
+            assert_eq!(yellow_rule(&armed), rest);
+            let halfway = guard_line(guard, 60, start + GUARD_WINDOW / 2);
+            assert_eq!(yellow_rule(&halfway), rest.div_ceil(2));
+            assert_eq!(halfway.width(), 60);
+            assert_eq!(yellow_rule(&guard_line(guard, 60, until)), 0);
+        }
+    }
 
     #[test]
     fn the_working_time_reads_in_seconds_then_minutes_then_hours() {

@@ -457,7 +457,9 @@ command line, the keys, and the scenario format the fake agent reads.
   A second Esc within 1.5 seconds cancels the turn. A form, permission box,
   menu, command list or history box still takes Esc at once. Any other key
   disarms a guard. While a guard is armed, the rule under the prompt says
-  which key to press again, as `press esc again to cancel` for Esc. The picker still quits on Esc and Ctrl+c at once.
+  which key to press again, as `press esc again to cancel` for Esc.
+  The rule after the message is yellow when the guard arms. The yellow part
+  shrinks from the right as the window closes. The picker still quits on Esc and Ctrl+c at once.
 - The mouse wheel scrolls the conversation three lines, so coax now captures
   the mouse and the terminal's own text selection needs Shift held. PageUp and
   PageDown move a full page, and End jumps to the bottom. While scrolled up,
