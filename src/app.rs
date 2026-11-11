@@ -280,8 +280,7 @@ pub struct Asked {
 
 /// The link under the pointer, and where the pointer met it.
 pub struct HoverLink {
-    /// The entry and the link within it.
-    pub key: (usize, usize),
+    pub key: ui::LinkKey,
     pub target: String,
     pub title: Option<String>,
     pub at: Position,
@@ -295,7 +294,7 @@ struct Hovered {
     v_bar: bool,
     bar: Option<(usize, usize)>,
     fold: Option<ToolCallId>,
-    link: Option<(usize, usize)>,
+    link: Option<ui::LinkKey>,
 }
 
 /// A header chip on screen.
@@ -2158,9 +2157,9 @@ mod tests {
             title: None,
         };
         app.link_areas = vec![
-            area(2, (0, 0), "foam:a"),
-            area(10, (0, 1), "file:src/ui.rs#4"),
-            area(20, (0, 2), "https://x.test"),
+            area(2, (0, None, 0), "foam:a"),
+            area(10, (0, None, 1), "file:src/ui.rs#4"),
+            area(20, (0, None, 2), "https://x.test"),
         ];
         app
     }
@@ -2177,7 +2176,7 @@ mod tests {
         };
         assert_eq!(target, "foam:a");
         assert_eq!(argv, ["foam", "show", "a"]);
-        assert_eq!(app.hover_link.as_ref().unwrap().key, (0, 0));
+        assert_eq!(app.hover_link.as_ref().unwrap().key, (0, None, 0));
         assert!(matches!(
             at(&mut app, MouseEventKind::Moved, 4),
             Action::None
@@ -2350,7 +2349,7 @@ mod tests {
             cut.x,
             cut.y,
         ));
-        assert_eq!(app.hover_link.as_ref().unwrap().key, (0, 0));
+        assert_eq!(app.hover_link.as_ref().unwrap().key, (0, None, 0));
         click(&mut app, cut.x, cut.y);
         assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
         app.pans.insert((0, 0), col + 5);
@@ -2383,6 +2382,36 @@ mod tests {
             click(&mut app, x, area.y);
             assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
         }
+    }
+
+    #[test]
+    fn a_file_link_inside_a_rendered_markdown_block_hovers_and_clicks() {
+        let mut app = app();
+        app.wide.clear();
+        app.transcript.entries.push(reply(
+            "see [a](foam:x)\n\n```markdown\nopen [ui](file:src/ui.rs#4)\n```".to_string(),
+        ));
+        let screen = header_rows_all(&mut app, 60);
+        assert_eq!(app.link_areas.len(), 2, "{screen}");
+        let area = app.link_areas[1].area;
+        let row = screen.lines().nth(area.y as usize).unwrap();
+        let text: String = row
+            .chars()
+            .skip(area.x as usize)
+            .take(area.width as usize)
+            .collect();
+        assert_eq!(text, "ui");
+        app.mouse(wheel(
+            MouseEventKind::Moved,
+            KeyModifiers::NONE,
+            area.x,
+            area.y,
+        ));
+        let hover = app.hover_link.as_ref().unwrap();
+        assert_eq!(hover.key, (0, Some(1), 0));
+        assert_eq!(hover.target, "file:src/ui.rs#4");
+        click(&mut app, area.x, area.y);
+        assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
     }
 
     /// An app whose first entry is agent text with one code block, drawn

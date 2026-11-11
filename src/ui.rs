@@ -407,6 +407,10 @@ struct Wrapped {
 struct MarkdownView {
     rows: Drawn,
     natural: usize,
+
+    /// Where the links of the rows are drawn, numbered among the links of
+    /// the block alone.
+    runs: Vec<Run>,
 }
 
 /// A word on a block's header row that switches how the block shows.
@@ -518,9 +522,20 @@ fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize
         .first()
         .map_or(Style::default(), |span| span.style);
     let inner = width.saturating_sub(2 + COPY_ROOM).max(1);
+    let laid = cmr::layout_marked(&blocks, inner);
+
+    // the head row comes first, and `│ ` starts every row after it
+    let runs = link_runs(&laid, &links)
+        .into_iter()
+        .map(|run| Run {
+            row: run.row + 1,
+            col: run.col + 2,
+            ..run
+        })
+        .collect();
     let mut rows = Drawn::default();
     rows.push(head.clone(), None);
-    for (row, mark) in cmr::layout_marked(&blocks, inner) {
+    for (row, mark) in laid {
         let mut spans = vec![Span::styled("│ ", gutter)];
         spans.extend(
             row.into_iter()
@@ -533,6 +548,7 @@ fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize
     MarkdownView {
         rows,
         natural: natural.min(width),
+        runs,
     }
 }
 
@@ -564,7 +580,8 @@ struct Run {
     col: usize,
     width: usize,
 
-    /// The link's place among the links of the whole entry.
+    /// The link's place among the links of the whole entry, or of a
+    /// rendered markdown block for a run in its `MarkdownView`.
     index: usize,
     link: cmr::Link,
 }
@@ -721,6 +738,21 @@ fn flow(parts: &mut Vec<Part>) -> (&mut Drawn, &mut Vec<Run>) {
 /// them. `links` are the links of the whole entry.
 fn block_rows(block: &cmr::Block, width: usize, links: &[cmr::Link]) -> (Drawn, Vec<Run>) {
     let rows = cmr::layout_marked(std::slice::from_ref(block), width);
+    let runs = link_runs(&rows, links);
+    let mut lines = Drawn::default();
+    for (row, mark) in rows {
+        let line = row
+            .into_iter()
+            .map(|(text, style)| Span::styled(text, link_style(style, links)))
+            .collect();
+        lines.push_text(trim_end(line), mark.lead, mark.join);
+    }
+    (lines, runs)
+}
+
+/// Where the links that act on a click sit in laid out `rows`, whose link
+/// numbers index `links`.
+fn link_runs(rows: &[(cmr::Row, cmr::Mark)], links: &[cmr::Link]) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
     for (row, (pieces, _)) in rows.iter().enumerate() {
         let mut col = 0;
@@ -750,15 +782,7 @@ fn block_rows(block: &cmr::Block, width: usize, links: &[cmr::Link]) -> (Drawn, 
             col += piece;
         }
     }
-    let mut lines = Drawn::default();
-    for (row, mark) in rows {
-        let line = row
-            .into_iter()
-            .map(|(text, style)| Span::styled(text, link_style(style, links)))
-            .collect();
-        lines.push_text(trim_end(line), mark.lead, mark.join);
-    }
-    (lines, runs)
+    runs
 }
 
 /// A code block, or a table wider than `width`, as block number `index`
@@ -1177,7 +1201,7 @@ fn shown_tab(tabs: &HashMap<(usize, usize), usize>, key: (usize, usize), count: 
 
 /// A link's text drawn this frame, by its place among the transcript lines.
 struct LinkSpot {
-    key: (usize, usize),
+    key: LinkKey,
     line: usize,
     col: usize,
     width: usize,
@@ -1243,7 +1267,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                             let top = lines.len() + 1 + start;
                             rows.extend(flow);
                             for run in runs {
-                                let key = (index, run.index);
+                                let key = (index, None, run.index);
                                 if hovered == Some(key) {
                                     let row = &mut rows.lines[start + run.row];
                                     paint(row, run.col, run.width, palette::get().accent);
@@ -1275,10 +1299,10 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                     let raw = app.raw.contains(&key);
                     let (block_rows, natural, wrap) =
                         block_view(kept, raw, app.wraps.get(&key).copied());
-                    let runs = if (rendered.is_some() && !raw) || wrap == Some(true) {
-                        &[][..]
-                    } else {
-                        &runs[..]
+                    let (runs, numbered_in) = match rendered {
+                        Some(view) if !raw => (&view.runs[..], Some(*block)),
+                        _ if wrap == Some(true) => (&[][..], None),
+                        _ => (&runs[..], None),
                     };
                     let more;
                     let short_name;
@@ -1424,7 +1448,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                         let Some((col, width)) = panned(run.col, run.width, offset, shown) else {
                             continue;
                         };
-                        let link = (index, run.index);
+                        let link = (index, numbered_in, run.index);
                         if hovered == Some(link) {
                             let row = &mut rows.lines[start + run.row];
                             paint(row, col, width, palette::get().accent);
@@ -1749,11 +1773,14 @@ pub struct ToggleArea {
 pub struct LinkArea {
     pub area: Rect,
 
-    /// The entry and the link within it.
-    pub key: (usize, usize),
+    pub key: LinkKey,
     pub target: String,
     pub title: Option<String>,
 }
+
+/// The entry a link is in, the rendered markdown block that numbers it if
+/// one does, and its number there.
+pub type LinkKey = (usize, Option<usize>, usize);
 
 /// An expandable tool call on screen, which a click anywhere on it folds or
 /// unfolds.

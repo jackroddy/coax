@@ -181,7 +181,7 @@ command line, the keys, and the scenario format the fake agent reads.
   switches that block. A click on the copy glyph copies the block's source in
   either view. A code block inside is drawn with a gutter and wraps at the
   box's edge, with no copy glyph of its own. Links inside the rendered view
-  do not respond to the pointer.
+  show their popup on hover and act on a click, as links in agent text do.
 - A fence can name a tab after its language, as in `rust tab="owned"`.
   coax draws adjacent fences that each name a tab in one box. The header row
   lists the tab names after the language, dim, with the shown tab in the
