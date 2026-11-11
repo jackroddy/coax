@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T03:05:24.038668351Z",
-  "updated_at": "2026-11-11T03:05:24.038668351Z",
+  "updated_at": "2026-11-11T04:28:34.823118831Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "2f8e3b9c",
+      "at": "2026-11-11T04:28:34.823118081Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Debug log of 2026-11-11, 04:23 UTC: with a background subagent running, Jack's prompt `okay` went out at 04:23:40.129 and the adapter ended the held turn at 04:23:41.137, so Claude Code took the prompt within a second. Background subagents do not stall a message. The stalls earlier in the day came during foreground subagents, which are one long tool call, and Claude Code hands a queued message to the model only at the next tool result. Jack ruled out the `jetbrains.air` route. He still sees odd behaviour from a message queued against a foreground subagent, to be tested once coax-47019c lands.",
+      "commit": "79f7f6d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "aecbbd8",
