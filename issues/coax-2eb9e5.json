@@ -3,20 +3,20 @@
   "title": "A drag over the transcript selects text and copies it",
   "body": "`App` turns on mouse capture at startup (`EnableMouseCapture` in `app.rs`) for hover popups, clicks, wheel scrolling, panning wide blocks and dragging the scroll bar. While coax captures the mouse, the terminal gets no drag, so its own selection stops working. The only copy today is a code block's copy button, which sends the block's text through OSC 52 (`clipboard::osc52`).\n\n## Proposal\n\n- A left drag that starts on transcript text marks a range from the press to the pointer. coax draws the range highlighted, and the transcript scrolls while the pointer is above or below it.\n- On release, coax copies the range through OSC 52 and the highlight stays until the next click.\n- A copy takes the rendered text without borders, padding, glyphs or the scroll bar. Where a paragraph wrapped, the rows join into one line again: with a space when the row broke between words, and with nothing when it split a word. A `\\n` goes in only where the text had a line break.\n- `draw_transcript` records, for each drawn row, the columns that hold text, the text itself, and whether the row continues the one above it. The selection and the copy read only that record.\n- A drag that starts on the scroll bar or a wide block keeps its current meaning. A click with no drag still folds, opens a link or copies a block.\n\n## Rejected\n\n- Shift-drag through to the terminal's own selection. Jack has no interest in it.\n- A key that turns mouse capture off. Hover, click and the wheel stop while it is off.\n\n## Open\n\n- How the record learns where cmr wrapped a row. cmr's `layout` returns rows with no mark for a soft break, so cmr may need to return one.\n- Whether a double click selects a word, and a triple click a paragraph.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T00:13:19.840512894Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T00:31:30.609659627Z",
-  "updated_at": "2026-11-10T23:58:19.840512894Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T00:12:31.450101906Z",
+  "closed_at": "2026-11-11T00:12:31.450101906Z",
+  "close_reason": "Landed in cmr b7dcd19 and coax c813ecf. cmr's `layout_marked` gives each row a `Mark` with a `join` and a `lead`. coax records each drawn line's text in `select::Texts`, and a drag selects and copies from that record. A held drag past the top or bottom scrolls on a 50 ms tick. Links and foldable calls now act on the release of a click. Double and triple click are not done.",
+  "resolution": "done",
   "notes": [
     {
       "id": "07108cb7",
@@ -40,6 +40,9 @@
       "commit": "95a68b4",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "c813ecf",
+      "branch": "dev"
+    }
   }
 }
