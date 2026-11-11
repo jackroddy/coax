@@ -3,20 +3,20 @@
   "title": "The second-press window drains visibly in the rule under the prompt",
   "body": "A first Ctrl+c or Ctrl+d arms a guard for `GUARD_WINDOW` (1.5 s), and the heavy rule under the prompt reads `press ^c again to quit` (`draw_guard_rule` in `ui.rs`). Nothing shows how much of the window is left, so the person cannot tell whether a second press will still count. coax-e81d6b adds the same guard for Esc.\n\n## Proposal\n\n- While a guard is armed, the rule after its message is a line of glyphs drawn in yellow, full when the guard arms. The glyphs disappear from the right as the window closes, back to the plain dim rule, which is gone when the window ends.\n- The same drain shows for every guard: quit with Ctrl+c, quit with Ctrl+d, and cancel with Esc.\n- coax redraws on its 150 ms tick while a guard is armed, so the drain moves smoothly enough at 1.5 s.\n\n## Open\n\n- The glyphs: the heavy rule's own `━` turning from yellow back to dim, or a distinct glyph such as `▰` that empties.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T05:05:31.979956503Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T04:44:32.388838329Z",
-  "updated_at": "2026-11-11T04:50:31.979956503Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T04:54:26.633986751Z",
+  "closed_at": "2026-11-11T04:54:26.633986751Z",
+  "close_reason": "Landed in 2849bbf on dev. While a guard is armed, `guard_line` in `ui.rs` draws the rule after the message in yellow for the share of `GUARD_WINDOW` left and dim for the rest. The spinner tick also runs while a guard is armed. The drain shows for Ctrl+c, Ctrl+d and Esc.",
+  "resolution": "done",
   "notes": [
     {
       "id": "648295bb",
@@ -32,6 +32,9 @@
       "commit": "4d4ac77",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "2849bbf",
+      "branch": "dev"
+    }
   }
 }
