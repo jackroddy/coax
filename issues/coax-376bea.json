@@ -3,7 +3,7 @@
   "title": "Dim text is invisible on shaded rows when no palette is set",
   "body": "With no `[palette]` in `config.toml`, `muted`, `selection` and `tint` all fell back to `bright_black`. Dim text drawn on a selected or shaded row, such as the history box's `›` marker and age column, was grey on the same grey and could not be read.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T01:12:25.027444212Z",
-  "updated_at": "2026-11-11T01:12:25.027444212Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T01:12:25.037467454Z",
+  "closed_at": "2026-11-11T01:12:25.037467454Z",
+  "close_reason": "Fixed in 7b6cbe5. `Palette::muted` is optional again, and dim text uses the terminal's dim attribute when the config leaves it out.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "7b6cbe5",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "7b6cbe5",
+      "branch": "dev"
+    }
   }
 }
