@@ -15,11 +15,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T04:30:29.666724618Z",
-  "updated_at": "2026-11-11T04:30:29.678775268Z",
+  "updated_at": "2026-11-11T04:31:57.315891234Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "0b15e560",
+      "at": "2026-11-11T04:31:57.315890504Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "The held-turn line belongs on the working line too, which by then carries the subagent count from coax-47019c. It reads as waiting on the agents, with no spinner for the main agent.",
+      "commit": "79f7f6d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "79f7f6d",
