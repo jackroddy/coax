@@ -40,20 +40,21 @@ use crate::ui::{self, Word};
 
 const WHEEL_LINES: usize = 3;
 
-/// How long a first ^c or ^d waits for the second.
+/// How long a first ^c, ^d or esc waits for the second.
 const GUARD_WINDOW: Duration = Duration::from_millis(1500);
 
-/// The key that armed the exit guard.
+/// The key that armed the guard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExitKey {
+pub enum GuardKey {
     CtrlC,
     CtrlD,
+    Esc,
 }
 
-/// A first exit key, waiting for a second until `until`.
+/// A first guarded key, waiting for a second until `until`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Guard {
-    pub key: ExitKey,
+    pub key: GuardKey,
     pub until: Instant,
 }
 /// How often the working spinner steps.
@@ -1340,7 +1341,7 @@ impl App {
     }
 
     /// Handle a key pressed at `now`. Any key but the one that completes
-    /// the exit guard disarms it.
+    /// the guard disarms it.
     pub fn key(&mut self, key: KeyEvent, now: Instant) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -1348,8 +1349,8 @@ impl App {
         self.unknown = None;
         let armed = self.guard.take().filter(|guard| guard.until > now);
         let exit = match key.code {
-            KeyCode::Char('c') if ctrl => Some(ExitKey::CtrlC),
-            KeyCode::Char('d') if ctrl && self.input.is_empty() => Some(ExitKey::CtrlD),
+            KeyCode::Char('c') if ctrl => Some(GuardKey::CtrlC),
+            KeyCode::Char('d') if ctrl && self.input.is_empty() => Some(GuardKey::CtrlD),
             _ => None,
         };
         if let Some(exit) = exit {
@@ -1357,14 +1358,14 @@ impl App {
                 return Action::Quit;
             }
             let working = self.transcript.in_flight && self.permission.is_none();
-            if exit == ExitKey::CtrlC && working {
+            if exit == GuardKey::CtrlC && working {
                 self.guard = Some(Guard {
                     key: exit,
                     until: now + GUARD_WINDOW,
                 });
                 return self.cancel();
             }
-            if exit == ExitKey::CtrlC && !self.input.is_empty() {
+            if exit == GuardKey::CtrlC && !self.input.is_empty() {
                 self.clear_input();
                 return Action::None;
             }
@@ -1426,7 +1427,16 @@ impl App {
                 self.edited();
                 Action::None
             }
-            KeyCode::Esc if self.transcript.in_flight => self.cancel(),
+            KeyCode::Esc if self.transcript.in_flight => {
+                if armed.is_some_and(|guard| guard.key == GuardKey::Esc) {
+                    return self.cancel();
+                }
+                self.guard = Some(Guard {
+                    key: GuardKey::Esc,
+                    until: now + GUARD_WINDOW,
+                });
+                Action::None
+            }
             KeyCode::Enter if alt || shift => {
                 self.insert("\n");
                 Action::None
@@ -3130,7 +3140,7 @@ mod tests {
         let mut app = app();
         let start = Instant::now();
         assert!(matches!(app.key(ctrl('c'), start), Action::None));
-        assert_eq!(app.guard.map(|guard| guard.key), Some(ExitKey::CtrlC));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(GuardKey::CtrlC));
         let second = start + Duration::from_millis(1400);
         assert!(matches!(app.key(ctrl('c'), second), Action::Quit));
     }
@@ -3164,7 +3174,7 @@ mod tests {
         let mut app = app();
         let start = Instant::now();
         assert!(matches!(app.key(ctrl('d'), start), Action::None));
-        assert_eq!(app.guard.map(|guard| guard.key), Some(ExitKey::CtrlD));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(GuardKey::CtrlD));
         assert!(matches!(app.key(ctrl('d'), start), Action::Quit));
     }
 
@@ -3183,7 +3193,7 @@ mod tests {
         let start = Instant::now();
         app.key(ctrl('c'), start);
         assert!(matches!(app.key(ctrl('d'), start), Action::None));
-        assert_eq!(app.guard.map(|guard| guard.key), Some(ExitKey::CtrlD));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(GuardKey::CtrlD));
     }
 
     #[test]
@@ -3195,6 +3205,76 @@ mod tests {
         assert!(app.guard.is_none());
         assert!(matches!(app.key(ctrl('c'), start), Action::None));
         assert!(app.guard.is_some());
+    }
+
+    fn esc() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn a_first_esc_during_a_turn_arms_the_cancel_guard_and_does_not_cancel() {
+        let mut app = app();
+        app.transcript.in_flight = true;
+        assert!(matches!(app.key(esc(), Instant::now()), Action::None));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(GuardKey::Esc));
+        assert!(app.transcript.in_flight);
+    }
+
+    #[test]
+    fn a_second_esc_inside_the_window_cancels_the_turn() {
+        let mut app = app();
+        app.transcript.in_flight = true;
+        let start = Instant::now();
+        app.key(esc(), start);
+        let second = start + Duration::from_millis(1400);
+        assert!(matches!(app.key(esc(), second), Action::Cancel));
+    }
+
+    #[test]
+    fn another_key_between_the_two_escs_disarms_the_cancel_guard() {
+        let mut app = app();
+        app.transcript.in_flight = true;
+        let start = Instant::now();
+        app.key(esc(), start);
+        app.key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), start);
+        assert!(app.guard.is_none());
+        assert!(matches!(app.key(esc(), start), Action::None));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(GuardKey::Esc));
+    }
+
+    #[test]
+    fn an_esc_after_the_window_arms_the_cancel_guard_again() {
+        let mut app = app();
+        app.transcript.in_flight = true;
+        let start = Instant::now();
+        app.key(esc(), start);
+        let late = start + Duration::from_millis(1600);
+        assert!(matches!(app.key(esc(), late), Action::None));
+        assert_eq!(
+            app.guard.map(|guard| guard.until),
+            Some(late + GUARD_WINDOW)
+        );
+    }
+
+    #[test]
+    fn esc_on_an_open_form_during_a_turn_declines_it_at_once() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        let mut answer = ask_form(&mut app);
+        assert!(matches!(app.key(esc(), Instant::now()), Action::None));
+        assert!(app.form.is_none());
+        assert!(app.guard.is_none());
+        assert!(matches!(answer.try_recv(), Ok(ElicitationAction::Decline)));
+    }
+
+    #[test]
+    fn ctrl_c_cancels_a_running_turn_on_one_press_with_the_esc_guard_armed() {
+        let mut app = app();
+        app.transcript.in_flight = true;
+        let start = Instant::now();
+        app.key(esc(), start);
+        assert!(matches!(app.key(ctrl('c'), start), Action::Cancel));
+        assert_eq!(app.guard.map(|guard| guard.key), Some(GuardKey::CtrlC));
     }
 
     use ratatui::Terminal;
@@ -3500,7 +3580,7 @@ mod tests {
         app.transcript.apply(running_task("t2"));
         let row = working_row(&mut app, 100);
         assert!(
-            row.starts_with(" ◐ working · 0s  ◴ 2 agents running · esc to cancel "),
+            row.starts_with(" ◐ working · 0s  ◴ 2 agents running · esc esc to cancel "),
             "{row}"
         );
         let palette = crate::palette::get();
@@ -3543,7 +3623,7 @@ mod tests {
         agent_says(&mut app, "started a survey");
         assert_eq!(
             working_row(&mut app, 100).trim_end(),
-            " ◴ waiting on 1 agent · esc to cancel"
+            " ◴ waiting on 1 agent · esc esc to cancel"
         );
         let x = column(&mut app, 100, WORKING_ROW, "waiting");
         let buffer = header_buffer(&mut app, 100);
@@ -3551,6 +3631,7 @@ mod tests {
         app.transcript.apply(running_task("t2"));
         agent_says(&mut app, "and another");
         assert!(working_row(&mut app, 100).starts_with(" ◴ waiting on 2 agents · "));
+        assert!(matches!(press(&mut app, KeyCode::Esc), Action::None));
         assert!(matches!(press(&mut app, KeyCode::Esc), Action::Cancel));
     }
 
@@ -3631,7 +3712,7 @@ mod tests {
     fn a_running_turn_shows_the_spinner_time_and_cancel_key_above_the_prompt() {
         let mut app = with_settings();
         app.transcript.prompt("hi".to_string());
-        assert!(working_row(&mut app, 100).starts_with(" ◐ working · 0s · esc to cancel "));
+        assert!(working_row(&mut app, 100).starts_with(" ◐ working · 0s · esc esc to cancel "));
         app.spinner = 1;
         assert!(working_row(&mut app, 100).starts_with(" ◓ working "));
         app.spinner = 5;
@@ -3749,6 +3830,7 @@ mod tests {
             press(&mut app, KeyCode::Enter);
         }
         type_text(&mut app, "four");
+        assert!(matches!(press(&mut app, KeyCode::Esc), Action::None));
         assert!(matches!(press(&mut app, KeyCode::Esc), Action::Cancel));
         assert_eq!(app.input, "two\n\nthree\n\nfour");
         assert!(app.waiting.is_empty());
@@ -4245,6 +4327,7 @@ mod tests {
         assert!(!app.popup().is_empty());
         assert!(matches!(press(&mut app, KeyCode::Esc), Action::None));
         assert!(app.popup().is_empty());
+        assert!(matches!(press(&mut app, KeyCode::Esc), Action::None));
         assert!(matches!(press(&mut app, KeyCode::Esc), Action::Cancel));
     }
 

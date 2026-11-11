@@ -13,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, ExitKey, MenuTarget};
+use crate::app::{App, GuardKey, MenuTarget};
 use crate::clock::Time;
 use crate::command;
 use crate::diff::line_diff;
@@ -187,7 +187,7 @@ fn working_line(spinner: usize, turn: Option<Turn>, agents: usize) -> Line<'stat
                 format!("{agent_frame} waiting on {agents} {noun}"),
                 cyan,
             ));
-            spans.push(Span::styled(" · esc to cancel", dim()));
+            spans.push(Span::styled(" · esc esc to cancel", dim()));
             return Line::from(spans);
         }
         Some(Turn::Asking(elapsed)) => {
@@ -211,7 +211,7 @@ fn working_line(spinner: usize, turn: Option<Turn>, agents: usize) -> Line<'stat
         ));
     }
     if matches!(turn, Some(Turn::Working(_))) {
-        spans.push(Span::styled(" · esc to cancel", dim()));
+        spans.push(Span::styled(" · esc esc to cancel", dim()));
     }
     Line::from(spans)
 }
@@ -288,7 +288,7 @@ pub fn draw_waiting(frame: &mut Frame, message: &str) {
     );
 }
 
-/// The rule under the prompt, carrying the exit guard's message while armed.
+/// The rule under the prompt, carrying the guard's message while armed.
 fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
     let Some(guard) = app.guard else {
         return match &app.unknown {
@@ -298,8 +298,9 @@ fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
         };
     };
     let message = match guard.key {
-        ExitKey::CtrlC => "press ^c again to quit",
-        ExitKey::CtrlD => "press ^d again to quit",
+        GuardKey::CtrlC => "press ^c again to quit",
+        GuardKey::CtrlD => "press ^d again to quit",
+        GuardKey::Esc => "press esc again to cancel",
     };
     let rest = (area.width as usize).saturating_sub(message.width() + 4);
     frame.render_widget(

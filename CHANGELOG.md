@@ -259,7 +259,7 @@ command line, the keys, and the scenario format the fake agent reads.
   other agent, coax holds the prompt and sends it when the turn ends. Until
   its turn starts, the prompt waits in a `queued` row above the working
   line, up to three rows with a count of the rest. The word `queued` is in
-  the accent colour and the prompt's text in the foreground colour. Esc or Ctrl+c cancels the
+  the accent colour and the prompt's text in the foreground colour. A second Esc or a Ctrl+c cancels the
   running turn and every queued prompt, and puts the queued text back in the
   prompt box. The fake agent declares `promptQueueing` and plays the prompts
   it is sent one after another. For an agent that queues, a prompt sent
@@ -361,7 +361,7 @@ command line, the keys, and the scenario format the fake agent reads.
   reports the agent to decade as working while the count is above zero.
   A turn is held when the main agent has written its reply and no call of
   its own runs, so subagents alone keep it open. The row then drops the
-  turn's spinner and reads `◴ waiting on 1 agent · esc to cancel` in cyan.
+  turn's spinner and reads `◴ waiting on 1 agent · esc esc to cancel` in cyan.
   After the turn ends, the status line reads `agents` in cyan in place of
   `idle` while the count is above zero. `scenarios/background.json` plays a
   background subagent.
@@ -432,7 +432,7 @@ command line, the keys, and the scenario format the fake agent reads.
   settings, tokens, cost, decade when connected, and `idle` between
   turns. `decade` is cyan and `idle` dim. While a turn runs, a row
   above the prompt shows a spinner stepping through `◐◓◑◒`, `working`, the
-  time since the prompt was sent and `esc to cancel`. While a permission
+  time since the prompt was sent and `esc esc to cancel`. While a permission
   request waits, the row reads `waiting for you` in yellow, with the time.
   Your messages sit in a rounded box
   in the accent colour against the right edge, at most 70% of the width. The
@@ -449,12 +449,15 @@ command line, the keys, and the scenario format the fake agent reads.
   breaks at stays at the end of that row, so the next row starts at its
   word. There is no footer row of key hints.
 - Ctrl+c no longer quits at once in a session. While the agent is working it
-  cancels the turn, as Esc does, and with text in the prompt it clears the
+  cancels the turn on one press, and with text in the prompt it clears the
   prompt. Otherwise, including with the permission box open, it arms an exit
   guard for 1.5 seconds and a second Ctrl+c in that time quits. Ctrl+d on an
-  empty prompt arms the same guard and a second Ctrl+d quits. Any other key
-  disarms it. While armed, the rule under the prompt says which key to press
-  again. The picker still quits on Esc and Ctrl+c at once.
+  empty prompt arms the same guard and a second Ctrl+d quits. Esc no longer
+  cancels a turn at once. A first Esc during a turn arms a cancel guard.
+  A second Esc within 1.5 seconds cancels the turn. A form, permission box,
+  menu, command list or history box still takes Esc at once. Any other key
+  disarms a guard. While a guard is armed, the rule under the prompt says
+  which key to press again, as `press esc again to cancel` for Esc. The picker still quits on Esc and Ctrl+c at once.
 - The mouse wheel scrolls the conversation three lines, so coax now captures
   the mouse and the terminal's own text selection needs Shift held. PageUp and
   PageDown move a full page, and End jumps to the bottom. While scrolled up,
