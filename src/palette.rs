@@ -300,8 +300,8 @@ pub fn query_terminal() -> Reported {
     log::info("terminal.query", json!({}));
     let began = Instant::now();
 
-    // every terminal answers the DA1 query at the end, so
-    // its reply marks that the colour replies are all in
+    // every terminal answers the DA1 query, so its reply
+    // ends the wait early in one that ignores OSC 10 and 11
     let mut stdout = io::stdout();
     let _ = stdout.write_all(b"\x1b]10;?\x07\x1b]11;?\x07\x1b[c");
     let _ = stdout.flush();
@@ -309,7 +309,7 @@ pub fn query_terminal() -> Reported {
     // non-blocking, so a read cannot wait past the limit
     // even when poll reports input that is gone by then
     let flags = set_nonblocking(libc::STDIN_FILENO);
-    let (replies, answered) = read_replies(libc::STDIN_FILENO, QUERY_WAIT);
+    let (replies, ended) = read_replies(libc::STDIN_FILENO, QUERY_WAIT);
     if let Some(flags) = flags {
         // SAFETY: F_SETFL on stdin with the flags F_GETFL returned
         unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_SETFL, flags) };
@@ -320,7 +320,7 @@ pub fn query_terminal() -> Reported {
         json!({
             "ms": began.elapsed().as_millis() as u64,
             "bytes": replies.len(),
-            "ended": if answered { "reply" } else { "time limit" },
+            "ended": ended,
         }),
     );
     parse_replies(&replies)
@@ -338,20 +338,32 @@ fn set_nonblocking(fd: i32) -> Option<i32> {
     (set >= 0).then_some(flags)
 }
 
-/// Read `fd` until the DA1 reply arrives or `wait` runs out, and say
-/// whether the reply arrived.
-fn read_replies(fd: i32, wait: Duration) -> (Vec<u8>, bool) {
+/// How long the reading goes on for the colours once the DA1 reply is in.
+const AFTER_IDENTITY: Duration = Duration::from_millis(20);
+
+/// Read `fd` until both colour replies are in, or until `AFTER_IDENTITY`
+/// past the DA1 reply, or until `wait` runs out. Return the bytes and what
+/// ended the reading.
+fn read_replies(fd: i32, wait: Duration) -> (Vec<u8>, &'static str) {
     let mut replies = Vec::new();
-    let deadline = Instant::now() + wait;
-    while !ends_with_device_attributes(&replies) {
+    let mut deadline = Instant::now() + wait;
+    let mut identified = false;
+    loop {
+        let reported = parse_replies(&replies);
+        if reported.foreground.is_some() && reported.background.is_some() {
+            return (replies, "colours");
+        }
+        if !identified && ends_with_device_attributes(&replies) {
+            identified = true;
+            deadline = deadline.min(Instant::now() + AFTER_IDENTITY);
+        }
         let left = deadline.saturating_duration_since(Instant::now());
         let Some(chunk) = read_ready(fd, left) else {
-            break;
+            let ended = if identified { "identity" } else { "time limit" };
+            return (replies, ended);
         };
         replies.extend_from_slice(&chunk);
     }
-    let answered = ends_with_device_attributes(&replies);
-    (replies, answered)
 }
 
 /// The bytes waiting on `fd` within `wait`: empty when a read finds none
@@ -546,21 +558,45 @@ mod tests {
         let (read, write) = pipe();
         send(write, b"\x1b]10;rgb:e7e7/dddd/c8c8\x07");
         let began = Instant::now();
-        let (replies, answered) = read_replies(read, Duration::from_millis(50));
-        assert!(!answered);
+        let (replies, ended) = read_replies(read, Duration::from_millis(50));
+        assert_eq!(ended, "time limit");
         assert!(replies.starts_with(b"\x1b]10;"));
         assert!(began.elapsed() < Duration::from_secs(1));
         close([read, write]);
     }
 
     #[test]
-    fn the_reading_stops_as_soon_as_the_device_attributes_reply_arrives() {
+    fn the_reading_stops_as_soon_as_both_colours_are_in() {
         let (read, write) = pipe();
-        send(write, b"\x1b]11;rgb:1f/1a/24\x07\x1b[?62c");
+        send(write, b"\x1b]10;rgb:e7/dd/c8\x07\x1b]11;rgb:1f/1a/24\x07");
         let began = Instant::now();
-        let (replies, answered) = read_replies(read, Duration::from_secs(5));
-        assert!(answered);
-        assert_eq!(parse_replies(&replies).background, Some([0x1f, 0x1a, 0x24]));
+        let (replies, ended) = read_replies(read, Duration::from_secs(5));
+        assert_eq!(ended, "colours");
+        assert_eq!(parse_replies(&replies), JACKS_TERMINAL);
+        assert!(began.elapsed() < Duration::from_secs(1));
+        close([read, write]);
+    }
+
+    #[test]
+    fn colours_that_follow_the_identity_reply_are_still_read() {
+        let (read, write) = pipe();
+        send(
+            write,
+            b"\x1b[?62c\x1b]10;rgb:e7/dd/c8\x07\x1b]11;rgb:1f/1a/24\x07",
+        );
+        let (replies, ended) = read_replies(read, Duration::from_secs(5));
+        assert_eq!(ended, "colours");
+        assert_eq!(parse_replies(&replies), JACKS_TERMINAL);
+        close([read, write]);
+    }
+
+    #[test]
+    fn an_identity_reply_with_no_colours_ends_the_reading_soon_after() {
+        let (read, write) = pipe();
+        send(write, b"\x1b[?62c");
+        let began = Instant::now();
+        let (_, ended) = read_replies(read, Duration::from_secs(5));
+        assert_eq!(ended, "identity");
         assert!(began.elapsed() < Duration::from_secs(1));
         close([read, write]);
     }
