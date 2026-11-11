@@ -208,6 +208,16 @@ fn context_line(context: Option<&settings::Context>, width: usize) -> Line<'stat
     ])
 }
 
+/// The mark before a setting on the status line, by what it sets.
+fn icon(category: Category) -> &'static str {
+    match category {
+        Category::Mode => "◆ ",
+        Category::Model => "● ",
+        Category::ThoughtLevel => "◐ ",
+        _ => "",
+    }
+}
+
 /// The status line: the settings on the left and the session status on the
 /// right.
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -215,7 +225,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
     let settings = app.settings.settings();
     let texts: Vec<String> = settings
         .iter()
-        .map(|setting| setting.label.to_lowercase())
+        .map(|setting| format!("{}{}", icon(setting.category), setting.label.to_lowercase()))
         .collect();
     let widths: Vec<usize> = texts.iter().map(|text| text.width()).collect();
     let steady = settings
@@ -290,7 +300,7 @@ pub fn draw_progress(frame: &mut Frame, area: Rect, app: &App) {
     let note = if transcript.in_flight {
         running_tool(transcript).map(str::to_string)
     } else {
-        last_turn(transcript).map(|took| format!("last turn {}", ui::elapsed_text(took)))
+        last_turn(transcript).map(|took| format!("◷ last turn {}", ui::elapsed_text(took)))
     };
     let line = progress_line(&transcript.plan, note.as_deref(), area.width as usize);
     frame.render_widget(Paragraph::new(line), area);

@@ -2561,7 +2561,6 @@ mod tests {
             let screen = header_rows_all(&mut app, 40);
             assert!(screen.contains("wrap pan"), "{screen}");
             assert!(app.bars.is_empty(), "{screen}");
-            assert!(!screen.contains('━'), "{screen}");
             let rows: Vec<&str> = screen.lines().filter(|row| row.contains('┆')).collect();
             assert_eq!(rows.len(), 2, "{screen}");
             assert!(rows[0].contains("┆ xxx"), "{screen}");
@@ -2774,7 +2773,7 @@ mod tests {
         app.key(enter(), Instant::now());
         let rows = header_rows_all(&mut app, 60);
         let last = rows.lines().nth_back(4).unwrap();
-        assert!(last.starts_with("── no command /nope ─"), "{last}");
+        assert!(last.starts_with("━━ no command /nope ━"), "{last}");
         typed(&mut app, "x");
         assert!(app.unknown.is_none());
         let rows = header_rows_all(&mut app, 60);
@@ -3170,12 +3169,12 @@ mod tests {
         assert_eq!(context.chars().count(), 120);
         let status = status_row(&mut app, 120);
         assert!(
-            status.starts_with(" auto · opus · effort default · fast off  "),
+            status.starts_with(" ◆ auto · ● opus · ◐ effort default · fast off  "),
             "{status}"
         );
         assert!(status.ends_with("↑28k ↓4 · $0.14 · idle "), "{status}");
         assert_eq!(progress_row(&mut app, 120).trim(), "");
-        assert_eq!(screen_row(&mut app, 120, EDGE_ROW).trim(), "");
+        assert_eq!(screen_row(&mut app, 120, EDGE_ROW), "─".repeat(120));
         assert_eq!(app.chips.len(), 4);
     }
 
@@ -3194,9 +3193,9 @@ mod tests {
                 })
                 .collect();
             let expected: &[&str] = if width == 120 {
-                &["auto", "opus", "effort default", "fast off"]
+                &["◆ auto", "● opus", "◐ effort default", "fast off"]
             } else {
-                &["auto", "opus", "⋯"]
+                &["◆ auto", "● opus", "⋯"]
             };
             assert_eq!(labels, expected);
         }
@@ -3212,14 +3211,14 @@ mod tests {
     }
 
     #[test]
-    fn the_footer_rows_have_no_background_and_the_last_row_is_blank() {
+    fn the_footer_rows_have_no_background_and_end_on_a_thin_rule() {
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 100);
         for x in 0..100 {
             for y in CONTEXT_ROW..=EDGE_ROW {
                 assert_eq!(buffer[(x, y)].bg, ratatui::style::Color::Reset, "{x}, {y}");
             }
-            assert_eq!(buffer[(x, EDGE_ROW)].symbol(), " ");
+            assert_eq!(buffer[(x, EDGE_ROW)].symbol(), "─");
         }
     }
 
@@ -3388,7 +3387,7 @@ mod tests {
     fn a_narrow_status_line_keeps_the_first_setting_and_ends_the_settings_in_the_overflow_mark() {
         let mut app = with_settings();
         let line = status_row(&mut app, 30);
-        assert!(line.starts_with(" auto"), "{line}");
+        assert!(line.starts_with(" ◆ auto"), "{line}");
         assert!(line.contains('⋯'), "{line}");
         assert!(line.trim_end().ends_with("idle"), "{line}");
     }
@@ -3588,7 +3587,7 @@ mod tests {
             "{screen}"
         );
         assert_eq!(rows[10], format!("{:<100}", "  Storage"));
-        assert!(rows[25].starts_with("────"), "{screen}");
+        assert!(rows[25].starts_with("━━━━"), "{screen}");
         assert!(rows[..8].iter().all(|row| !row.contains("Storage")));
     }
 

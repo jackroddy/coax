@@ -121,9 +121,11 @@ command line, the keys, and the scenario format the fake agent reads.
   The `▶` and the count are yellow while steps remain and green when all
   are done. The step is in the foreground colour. The right side is dim.
   During a turn it holds the title of the latest tool call still running.
-  Once idle it reads `last turn 41s`. A part with nothing to show is
+  Once idle it reads `◷ last turn 41s`. A part with nothing to show is
   left out. A part too long for the row is cut with `…`.
-- A blank row under the progress row lifts the prompt one row higher.
+- A heavy `━` rule under the prompt opens the footer, and a thin `─`
+  rule under the progress row closes it. On the status line the mode,
+  the model and the thought level start with `◆`, `●` and `◐`.
 - The scenario format gains an optional top-level `config_options` array (the
   settings the agent offers, as ACP config options) and `modes`, and an
   optional `usage` on an act, which the prompt response reports. The fake

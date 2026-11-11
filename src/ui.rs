@@ -64,7 +64,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         context_area,
         status_area,
         progress_area,
-        _blank,
+        baseline,
     ] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
@@ -97,7 +97,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match form {
         Some((lines, focus)) => draw_form(frame, upper_rule, prompt_area, app, lines, focus),
         None => {
-            draw_rule(frame, upper_rule);
+            draw_rule(frame, upper_rule, THIN);
             draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
             draw_commands(frame, app, upper_rule);
         }
@@ -107,6 +107,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     header::draw_context(frame, context_area, app);
     header::draw_status(frame, status_area, app);
     header::draw_progress(frame, progress_area, app);
+    draw_rule(frame, baseline, THIN);
     draw_menu(frame, app, status_area.y, Time::now());
     draw_link_popup(frame, app);
 }
@@ -245,7 +246,7 @@ fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
         return match &app.unknown {
             Some(message) => draw_notice_rule(frame, area, message),
             None if app.exited => draw_notice_rule(frame, area, "the agent has exited"),
-            None => draw_rule(frame, area),
+            None => draw_rule(frame, area, HEAVY),
         };
     };
     let message = match guard.key {
@@ -255,9 +256,9 @@ fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
     let rest = (area.width as usize).saturating_sub(message.width() + 4);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("── ", dim()),
+            Span::styled(format!("{HEAVY}{HEAVY} "), dim()),
             Span::styled(message, Style::new().fg(palette::get().yellow)),
-            Span::styled(format!(" {}", "─".repeat(rest)), dim()),
+            Span::styled(format!(" {}", HEAVY.repeat(rest)), dim()),
         ])),
         area,
     );
@@ -267,14 +268,20 @@ fn draw_guard_rule(frame: &mut Frame, area: Rect, app: &App) {
 fn draw_notice_rule(frame: &mut Frame, area: Rect, message: &str) {
     let rest = (area.width as usize).saturating_sub(message.width() + 4);
     frame.render_widget(
-        Paragraph::new(format!("── {message} {}", "─".repeat(rest))).style(dim()),
+        Paragraph::new(format!("{HEAVY}{HEAVY} {message} {}", HEAVY.repeat(rest))).style(dim()),
         area,
     );
 }
 
-fn draw_rule(frame: &mut Frame, area: Rect) {
+/// The rule over the prompt and the footer's baseline.
+const THIN: &str = "─";
+
+/// The rule under the prompt, over the footer.
+const HEAVY: &str = "━";
+
+fn draw_rule(frame: &mut Frame, area: Rect, line: &str) {
     frame.render_widget(
-        Paragraph::new("─".repeat(area.width as usize)).style(dim()),
+        Paragraph::new(line.repeat(area.width as usize)).style(dim()),
         area,
     );
 }
