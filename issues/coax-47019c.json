@@ -1,0 +1,28 @@
+{
+  "id": "coax-47019c",
+  "title": "coax shows how many subagents are still working, to the person and to decade",
+  "body": "coax draws a subagent as a folded `agent` block in the transcript, with its status mark. Nothing outside the transcript says whether any subagents are still running or how many. The working line and the progress row speak only of the main turn, and the report to decade (`report.rs`) carries no subagent count. After a turn ends with subagents still out, the screen reads as idle.\n\n## Proposal\n\n- The progress row shows the running subagents on its right, as in `2 agents running`, while any run, during a turn or after it. It names the one agent when only one runs.\n- The working line counts them too, as in `◐ working · 41s · 2 agents · esc to cancel`.\n- The report to decade carries the count of running subagents, and decade shows the agent as working while any run.\n\n## Open\n\n- coax learns a subagent is running from its tool call's status. Once coax-75e8e3 lets turns end while subagents run, those calls stay `in_progress` past the turn, which this count relies on.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T03:05:24.052066912Z",
+  "updated_at": "2026-11-11T03:05:24.052066912Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "aecbbd8",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
