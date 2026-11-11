@@ -3,20 +3,20 @@
   "title": "Esc cancels a turn only on a second press",
   "body": "Esc during a turn cancels it at once (`App::cancel`), and the turn's work, subagents included, stops on one keystroke. Quitting already asks for a second press: a first Ctrl+c or Ctrl+d arms a guard (`Guard`, `GUARD_WINDOW` of 1.5 s), the rule under the prompt reads `press ^c again to quit`, and only a second press inside the window quits.\n\n## Proposal\n\n- A first Esc during a turn arms a cancel guard. The heavy rule under the prompt reads `press esc again to cancel` in yellow, as the quit guard does.\n- A second Esc within `GUARD_WINDOW` cancels the turn, as one Esc does now. Any other key, or the window running out, disarms it.\n- Esc keeps its meaning wherever something takes it first: an open form, permission box, menu, command list or history box.\n- The working line's hint reads `esc esc to cancel`.\n\n## Cost\n\nThis changes a key, so it goes in the changelog and moves the version.\n\n## Open\n\n- Whether Ctrl+c, which also cancels a running turn on its first press, should ask for a second press too.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T05:05:31.969545262Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T04:43:32.950669538Z",
-  "updated_at": "2026-11-11T04:50:31.969545262Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T04:52:52.644324072Z",
+  "closed_at": "2026-11-11T04:52:52.644324072Z",
+  "close_reason": "Landed in 1d077c7 on dev. A first Esc during a turn arms a cancel guard, and the rule under the prompt reads `press esc again to cancel`. A second Esc within `GUARD_WINDOW` cancels the turn. `ExitKey` is now `GuardKey` with an `Esc` variant. Ctrl+c still cancels on one press, and the working line reads `esc esc to cancel`.",
+  "resolution": "done",
   "notes": [
     {
       "id": "3a6f94f3",
@@ -32,6 +32,9 @@
       "commit": "4d4ac77",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "1d077c7",
+      "branch": "dev"
+    }
   }
 }
