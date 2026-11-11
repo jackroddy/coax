@@ -3,20 +3,20 @@
   "title": "Each message shows its time in its border",
   "body": "coax draws your prompts and the agent's replies in rounded boxes (`bubble` and `framed` in `ui.rs`). `Entry::User` and `Entry::Agent` in `session.rs` hold only the message's text, so the transcript shows nothing about when a message was sent.\n\n## Proposal\n\n- `Entry::User` and `Entry::Agent` carry the local time the message began. For a prompt, that is when you sent it. For a reply, it is when its first chunk arrived.\n- The top border shows the time, dim, as `HH:MM`, at the corner nearest the screen edge. That puts it on the right for your prompts and on the left for replies. A message from an earlier day also shows the date.\n- The time is left out when the box is too narrow to hold it.\n\n## Open\n\n- Does the Claude adapter's history replay on `session/load` carry each message's time, in `_meta` or elsewhere? If it does not, a resumed session's messages have no times, and only messages from this run show one. This needs a trial against the adapter.\n- Should a reply also show how long the turn took, as in `14:32 · 41s`?",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T00:28:05.404535042Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:16:58.467967728Z",
-  "updated_at": "2026-11-11T00:13:05.404535042Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T00:17:54.967810834Z",
+  "closed_at": "2026-11-11T00:17:54.967810834Z",
+  "close_reason": "Landed in e619019. Prompts and replies carry the local time they began, and the box border shows it, with the turn's length on a turn's last reply. A loaded session's replayed messages have no time, because the adapter sends none (memory `claude-adapter-sends-no-message-times`).",
+  "resolution": "done",
   "notes": [
     {
       "id": "91796353",
@@ -32,6 +32,9 @@
       "commit": "69398c0",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e619019",
+      "branch": "dev"
+    }
   }
 }
