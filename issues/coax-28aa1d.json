@@ -3,7 +3,7 @@
   "title": "The status line names the decade connection",
   "body": "While coax is connected to decade, the status line shows `decade`, or `decade pane <name>` with the pane's name (`status` in `header.rs`). The item has rank 0, so it never drops, and Jack found it meaningless during a session.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T02:37:41.679780623Z",
-  "updated_at": "2026-11-11T02:37:41.679780623Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T02:37:41.689881407Z",
+  "closed_at": "2026-11-11T02:37:41.689881407Z",
+  "close_reason": "Removed in 6214230. coax still joins decade and reports to it, and only the status item went.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "6214230",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "6214230",
+      "branch": "dev"
+    }
   }
 }
