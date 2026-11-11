@@ -90,7 +90,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_guard_rule(frame, lower_rule, app);
     header::draw_context(frame, context_area, app);
     header::draw_status(frame, status_area, app);
-    draw_menu(frame, app);
+    draw_menu(frame, app, Time::now());
     draw_link_popup(frame, app);
 }
 
@@ -2569,7 +2569,7 @@ const HISTORY_WIDTH: u16 = 60;
 const HISTORY_ROWS: usize = 10;
 
 /// The picker box hanging under a header chip.
-fn draw_menu(frame: &mut Frame, app: &mut App) {
+pub fn draw_menu(frame: &mut Frame, app: &mut App, now: Time) {
     app.menu_area = None;
     let Some(menu) = &app.menu else {
         return;
@@ -2608,9 +2608,14 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
                 .history
                 .iter()
                 .rev()
-                .map(|text| {
+                .map(|(text, time)| {
                     let lines = text.lines().count();
                     let note = (lines > 1).then(|| format!("{lines} lines"));
+                    let age = time.map(|time| time.age(now));
+                    let note = match (note, age) {
+                        (Some(note), Some(age)) => Some(format!("{note}  {age}")),
+                        (note, age) => note.or(age),
+                    };
                     (first_line(text).to_string(), note, false)
                 })
                 .collect();
@@ -2681,16 +2686,22 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
         .skip(first)
         .take(visible)
         .map(|(index, (name, note, current))| {
-            let mark = if *current { "● " } else { "  " };
-            let name = cut(name, inner.saturating_sub(2));
-            let mut spans = vec![Span::raw(mark), Span::raw(name.clone())];
-            if let Some(note) = note {
-                let room = inner.saturating_sub(2 + name.width() + 2);
-                spans.push(Span::styled(format!("  {}", cut(note, room)), dim()));
-            }
-            let line = Line::from(spans);
+            let line = if history {
+                history_row(name, note.as_deref(), inner)
+            } else {
+                let mark = if *current { "● " } else { "  " };
+                let name = cut(name, inner.saturating_sub(2));
+                let mut spans = vec![Span::raw(mark), Span::raw(name.clone())];
+                if let Some(note) = note {
+                    let room = inner.saturating_sub(2 + name.width() + 2);
+                    spans.push(Span::styled(format!("  {}", cut(note, room)), dim()));
+                }
+                Line::from(spans)
+            };
             if index == menu.cursor {
                 line.style(Style::new().bg(palette::get().selection))
+            } else if history && index % 2 == 1 {
+                line.style(Style::new().bg(palette::get().tint))
             } else {
                 line
             }
@@ -2706,6 +2717,21 @@ fn draw_menu(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Paragraph::new(lines).block(pane(&title, true)), area);
     app.menu_area = Some(area);
     app.menu_first = first;
+}
+
+/// A history row: a dim `› `, the prompt's first line, and `note` dim
+/// against the right edge, padded to `inner` columns.
+fn history_row(name: &str, note: Option<&str>, inner: usize) -> Line<'static> {
+    let note = note.unwrap_or("");
+    let room = inner.saturating_sub(2 + note.width() + if note.is_empty() { 0 } else { 2 });
+    let name = cut(name, room);
+    let fill = inner.saturating_sub(2 + name.width() + note.width());
+    Line::from(vec![
+        Span::styled("› ", dim()),
+        Span::raw(name),
+        Span::raw(" ".repeat(fill)),
+        Span::styled(note.to_string(), dim()),
+    ])
 }
 
 pub fn dim() -> Style {

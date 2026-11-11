@@ -23,6 +23,7 @@ use tokio::sync::oneshot;
 
 use crate::acp::{Applied, Change, Event, Link};
 use crate::clipboard;
+use crate::clock::Time;
 use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
@@ -105,8 +106,8 @@ pub struct App {
     /// The cursor's byte index into `input`, always on a char boundary.
     pub cursor: usize,
 
-    /// The prompts sent in this run, oldest first.
-    pub history: Vec<String>,
+    /// The prompts sent in this run, oldest first, each with its send time.
+    pub history: Vec<(String, Option<Time>)>,
     pub scroll: usize,
     pub show_plan: bool,
 
@@ -1113,7 +1114,7 @@ impl App {
                     return Action::None;
                 }
                 let text = confirm.text();
-                self.remember(&text);
+                self.remember(&text, Some(Time::now()));
                 self.clear_input();
                 self.transcript.prompt(text.clone());
                 self.scroll = 0;
@@ -1139,24 +1140,24 @@ impl App {
 
     /// Keep the prompts of a loaded session for `/history`, oldest first.
     pub fn remember_loaded(&mut self) {
-        let loaded: Vec<String> = self
+        let loaded: Vec<(String, Option<Time>)> = self
             .transcript
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                Entry::User(prompt) => Some(prompt.text.clone()),
+                Entry::User(prompt) => Some((prompt.text.clone(), prompt.time)),
                 _ => None,
             })
             .collect();
-        for text in loaded {
-            self.remember(&text);
+        for (text, time) in loaded {
+            self.remember(&text, time);
         }
     }
 
     /// Keep a sent prompt for `/history`, unless it repeats the last one.
-    fn remember(&mut self, text: &str) {
-        if self.history.last().is_none_or(|last| last != text) {
-            self.history.push(text.to_string());
+    fn remember(&mut self, text: &str, time: Option<Time>) {
+        if self.history.last().is_none_or(|(last, _)| last != text) {
+            self.history.push((text.to_string(), time));
         }
     }
 
@@ -1289,7 +1290,7 @@ impl App {
             }
             MenuTarget::History => {
                 let cursor = menu.cursor;
-                let Some(text) = self.history.iter().rev().nth(cursor).cloned() else {
+                let Some((text, _)) = self.history.iter().rev().nth(cursor).cloned() else {
                     return Action::None;
                 };
                 self.menu = None;
@@ -1440,7 +1441,7 @@ impl App {
                 }
                 let text = std::mem::take(&mut self.input);
                 self.cursor = 0;
-                self.remember(&text);
+                self.remember(&text, Some(Time::now()));
                 self.scroll = 0;
                 if self.transcript.in_flight {
                     self.waiting.push_back(text.clone());
@@ -4201,6 +4202,10 @@ mod tests {
         assert_eq!(app.input, "second");
     }
 
+    fn history_texts(app: &App) -> Vec<&str> {
+        app.history.iter().map(|(text, _)| text.as_str()).collect()
+    }
+
     #[test]
     fn a_loaded_sessions_prompts_join_the_history_oldest_first() {
         let mut app = app();
@@ -4209,7 +4214,7 @@ mod tests {
         app.transcript.prompt("and after".to_string());
         app.transcript.in_flight = false;
         app.remember_loaded();
-        assert_eq!(app.history, ["from last time", "and after"]);
+        assert_eq!(history_texts(&app), ["from last time", "and after"]);
     }
 
     #[test]
@@ -4218,7 +4223,7 @@ mod tests {
         send(&mut app, "first");
         send(&mut app, "second");
         send(&mut app, "second");
-        assert_eq!(app.history, ["first", "second"]);
+        assert_eq!(history_texts(&app), ["first", "second"]);
     }
 
     #[test]
@@ -4304,7 +4309,114 @@ mod tests {
         }
         let screen_end = header_rows_all(&mut app, 100);
         assert!(!screen.contains("2 lines"));
-        assert!(screen_end.contains("two  2 lines"), "{screen_end}");
+        assert!(screen_end.contains("› two"), "{screen_end}");
+        assert!(screen_end.contains("2 lines  "), "{screen_end}");
+    }
+
+    const NOW: Time = Time {
+        year: 2026,
+        month: 11,
+        day: 10,
+        hour: 12,
+        minute: 0,
+    };
+
+    fn minutes_before_now(minutes: u8) -> Option<Time> {
+        Some(Time {
+            hour: NOW.hour - 1,
+            minute: 60 - minutes,
+            ..NOW
+        })
+    }
+
+    /// The history box drawn at `NOW`, and its rows inside the border
+    /// and padding, top first.
+    fn history_box(app: &mut App) -> (ratatui::buffer::Buffer, Vec<Rect>) {
+        open_history(app);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| ui::draw_menu(frame, app, NOW))
+            .unwrap();
+        let area = app.menu_area.expect("the box is drawn");
+        let rows = (area.y + 1..area.y + area.height - 1)
+            .map(|y| Rect::new(area.x + 2, y, area.width - 4, 1))
+            .collect();
+        (terminal.backend().buffer().clone(), rows)
+    }
+
+    fn text_of(buffer: &ratatui::buffer::Buffer, row: Rect) -> String {
+        (row.x..row.right())
+            .map(|x| buffer[(x, row.y)].symbol().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_history_row_starts_with_a_dim_marker_and_ends_with_its_age() {
+        let mut app = app();
+        app.history = vec![
+            ("older".to_string(), minutes_before_now(50)),
+            ("newer".to_string(), minutes_before_now(5)),
+        ];
+        let (buffer, rows) = history_box(&mut app);
+        let first = text_of(&buffer, rows[0]);
+        assert!(first.starts_with("› newer "), "{first}");
+        assert!(first.ends_with(" 5m"), "{first}");
+        assert!(text_of(&buffer, rows[1]).ends_with(" 50m"));
+        let marker = &buffer[(rows[0].x, rows[0].y)];
+        assert_eq!(marker.fg, crate::palette::get().muted);
+    }
+
+    #[test]
+    fn a_prompt_from_a_loaded_session_shows_no_age() {
+        let mut app = app();
+        app.transcript.entries.push(Entry::User(Message::new(
+            "from last time".to_string(),
+            None,
+        )));
+        app.remember_loaded();
+        let (buffer, rows) = history_box(&mut app);
+        assert_eq!(text_of(&buffer, rows[0]).trim_end(), "› from last time");
+    }
+
+    #[test]
+    fn every_other_history_row_is_shaded_and_the_selected_row_keeps_the_selection() {
+        let mut app = app();
+        app.history = (0..4)
+            .map(|n| (format!("prompt {n}"), minutes_before_now(5)))
+            .collect();
+        let (buffer, rows) = history_box(&mut app);
+        let fills: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                let edges = [
+                    buffer[(row.x, row.y)].bg,
+                    buffer[(row.right() - 1, row.y)].bg,
+                ];
+                assert_eq!(edges[0], edges[1]);
+                edges[0]
+            })
+            .collect();
+        let palette = crate::palette::get();
+        assert_eq!(fills[0], palette.selection);
+        assert_eq!(fills[1], palette.tint);
+        assert_ne!(fills[2], palette.tint);
+        assert_eq!(fills[3], palette.tint);
+    }
+
+    #[test]
+    fn the_line_count_of_a_long_prompt_sits_in_the_right_column_before_its_age() {
+        let mut app = app();
+        app.history = vec![
+            ("two\nlines".to_string(), minutes_before_now(5)),
+            (
+                "a single line wide enough to widen the box".to_string(),
+                None,
+            ),
+        ];
+        let (buffer, rows) = history_box(&mut app);
+        let row = text_of(&buffer, rows[1]);
+        assert!(row.starts_with("› two     "), "{row}");
+        assert!(row.ends_with(" 2 lines  5m"), "{row}");
     }
 
     #[test]

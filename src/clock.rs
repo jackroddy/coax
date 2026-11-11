@@ -39,4 +39,66 @@ impl Time {
             format!("{}-{:02}-{:02} {clock}", self.year, self.month, self.day)
         }
     }
+
+    /// How long before `now` this was, as `now`, `5m`, `2h` or `3d`.
+    pub fn age(self, now: Time) -> String {
+        let minutes = now.minutes() - self.minutes();
+        if minutes < 1 {
+            "now".to_string()
+        } else if minutes < 60 {
+            format!("{minutes}m")
+        } else if minutes < 24 * 60 {
+            format!("{}h", minutes / 60)
+        } else {
+            format!("{}d", minutes / (24 * 60))
+        }
+    }
+
+    /// The minutes since 1970-01-01 00:00.
+    fn minutes(self) -> i64 {
+        // the days-from-civil count, with the year starting
+        // on 1 March so the leap day falls at its end
+        // see: https://howardhinnant.github.io/date_algorithms.html#days_from_civil
+        let year = i64::from(self.year) - i64::from(self.month <= 2);
+        let era = year.div_euclid(400);
+        let year_of_era = year - era * 400;
+        let month = (i64::from(self.month) + 9) % 12;
+        let day_of_year = (153 * month + 2) / 5 + i64::from(self.day) - 1;
+        let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+        let days = era * 146_097 + day_of_era - 719_468;
+        days * 24 * 60 + i64::from(self.hour) * 60 + i64::from(self.minute)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(year: i32, month: u8, day: u8, hour: u8, minute: u8) -> Time {
+        Time {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+        }
+    }
+
+    #[test]
+    fn an_age_reads_now_then_minutes_then_hours_then_days() {
+        let now = at(2026, 11, 10, 12, 30);
+        assert_eq!(at(2026, 11, 10, 12, 30).age(now), "now");
+        assert_eq!(at(2026, 11, 10, 12, 25).age(now), "5m");
+        assert_eq!(at(2026, 11, 10, 10, 29).age(now), "2h");
+        assert_eq!(at(2026, 11, 7, 12, 30).age(now), "3d");
+    }
+
+    #[test]
+    fn an_age_counts_across_midnight_month_ends_and_a_leap_day() {
+        assert_eq!(at(2026, 11, 9, 23, 50).age(at(2026, 11, 10, 0, 10)), "20m");
+        assert_eq!(at(2026, 10, 31, 23, 0).age(at(2026, 11, 1, 1, 0)), "2h");
+        assert_eq!(at(2025, 12, 31, 12, 0).age(at(2026, 1, 1, 12, 0)), "1d");
+        assert_eq!(at(2028, 2, 28, 12, 0).age(at(2028, 3, 1, 12, 0)), "2d");
+        assert_eq!(at(1970, 1, 1, 0, 1).minutes(), 1);
+    }
 }
