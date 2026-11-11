@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T22:07:17.452607078Z",
-  "updated_at": "2026-11-10T23:38:34.198826291Z",
+  "updated_at": "2026-11-11T00:32:20.281334573Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -32,6 +32,14 @@
       "author": "Jack Roddy/bd10c4a0",
       "text": "Tried each case through `markdown` in `src/ui.rs`, on `dev` at 4dcd056.\n\n- `[**failed**](color:red)` draws `**failed**` in red. The asterisks show and nothing is bold.\n- ``[`code`](color:red)`` draws `` `code` `` in red. The backticks show and there is no code style.\n- `**[failed](color:red)**` draws `[failed](color:red)` in bold. The link markup shows and there is no colour.\n- A colour span that wraps at width 14 stays red on every row. The spaces between its words carry no style, which makes no visible difference for a colour.\n\nThe first three come from cmr. `Inline::Link` keeps its text as a plain string, and so does `Inline::Bold` with its body. `inlines` in `../cmr/src/lib.rs` therefore never parses markup inside either one. coax cannot nest them without a change in cmr.\n\nBoth options on this issue still fit. cmr could parse inlines inside link text and inside bold. Or the output style could allow only plain words inside a colour link.",
       "commit": "4dcd056",
+      "branch": "dev"
+    },
+    {
+      "id": "83c4eef2",
+      "at": "2026-11-11T00:32:20.281333893Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Two ways forward. One is to teach cmr to parse inline markdown inside link text and bold, which today hold plain strings (`Inline::Link`, `Inline::Bold`). The other is to have the coax output style allow only plain words inside a colour link. The style rule is cheap, and coloured status words rarely need bold or code, so I lean to it.",
+      "commit": "e619019",
       "branch": "dev"
     }
   ],
