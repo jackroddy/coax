@@ -1,0 +1,10 @@
+{
+  "slug": "claude-adapter-sends-no-message-times",
+  "text": "The Claude adapter v0.101.0 sends no time with any message chunk, live or replayed on `session/load`. `replaySessionHistory` passes each history message to `toAcpNotifications`, which sets only `content`, `messageId` and `_meta.claudeCode.parentToolUseId`. The `timestamp` in its transcript files stays inside the adapter. So a loaded session's older messages show no time in coax. Source: `replaySessionHistory` and `toAcpNotifications` in the adapter's `src/acp-agent.ts`.",
+  "created_at": "2026-11-11T00:17:54.957527528Z",
+  "updated_at": "2026-11-11T00:17:54.957527528Z",
+  "stamp": {
+    "commit": "e619019",
+    "branch": "dev"
+  }
+}
