@@ -383,15 +383,6 @@ fn progress_line(plan: &[PlanEntry], note: Option<&str>, width: usize) -> Line<'
     Line::from(spans)
 }
 
-/// A row of `▀` in the tint, closing the tinted rows above it.
-pub fn draw_slab_edge(frame: &mut Frame, area: Rect) {
-    let edge = Style::new().fg(palette::get().tint);
-    frame.render_widget(
-        Paragraph::new("▀".repeat(area.width as usize)).style(edge),
-        area,
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

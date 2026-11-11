@@ -123,8 +123,7 @@ command line, the keys, and the scenario format the fake agent reads.
   During a turn it holds the title of the latest tool call still running.
   Once idle it reads `last turn 41s`. A part with nothing to show is
   left out. A part too long for the row is cut with `…`.
-- The context row, the status line and the progress row sit on the
-  palette's `tint`, edge to edge. A row of `▀` in the tint closes them.
+- A blank row under the progress row lifts the prompt one row higher.
 - The scenario format gains an optional top-level `config_options` array (the
   settings the agent offers, as ACP config options) and `modes`, and an
   optional `usage` on an act, which the prompt response reports. The fake

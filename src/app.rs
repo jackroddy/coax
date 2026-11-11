@@ -3175,7 +3175,7 @@ mod tests {
         );
         assert!(status.ends_with("↑28k ↓4 · $0.14 · idle "), "{status}");
         assert_eq!(progress_row(&mut app, 120).trim(), "");
-        assert_eq!(screen_row(&mut app, 120, EDGE_ROW), "▀".repeat(120));
+        assert_eq!(screen_row(&mut app, 120, EDGE_ROW).trim(), "");
         assert_eq!(app.chips.len(), 4);
     }
 
@@ -3212,26 +3212,14 @@ mod tests {
     }
 
     #[test]
-    fn the_footer_rows_sit_on_the_tint_and_a_row_of_half_blocks_closes_them() {
-        let tint = crate::palette::get().tint;
+    fn the_footer_rows_have_no_background_and_the_last_row_is_blank() {
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 100);
         for x in 0..100 {
-            for y in CONTEXT_ROW..EDGE_ROW {
-                let cell = &buffer[(x, y)];
-                assert!(
-                    !cell
-                        .symbol()
-                        .chars()
-                        .any(|ch| ('\u{e0b0}'..='\u{e0bf}').contains(&ch)),
-                    "{x}"
-                );
-                assert_eq!(cell.bg, tint, "{x}, {y}");
+            for y in CONTEXT_ROW..=EDGE_ROW {
+                assert_eq!(buffer[(x, y)].bg, ratatui::style::Color::Reset, "{x}, {y}");
             }
-            let edge = &buffer[(x, EDGE_ROW)];
-            assert_eq!(edge.symbol(), "▀");
-            assert_eq!(edge.fg, tint);
-            assert_eq!(edge.bg, ratatui::style::Color::Reset);
+            assert_eq!(buffer[(x, EDGE_ROW)].symbol(), " ");
         }
     }
 

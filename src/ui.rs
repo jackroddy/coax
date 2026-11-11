@@ -64,7 +64,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         context_area,
         status_area,
         progress_area,
-        edge_area,
+        _blank,
     ] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
@@ -104,13 +104,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     draw_confirm(frame, transcript_area, app);
     draw_guard_rule(frame, lower_rule, app);
-    let slab = context_area.union(progress_area);
-    let tint = Style::new().bg(palette::get().tint);
-    frame.buffer_mut().set_style(slab, tint);
     header::draw_context(frame, context_area, app);
     header::draw_status(frame, status_area, app);
     header::draw_progress(frame, progress_area, app);
-    header::draw_slab_edge(frame, edge_area);
     draw_menu(frame, app, status_area.y, Time::now());
     draw_link_popup(frame, app);
 }
