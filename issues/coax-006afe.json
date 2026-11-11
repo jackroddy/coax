@@ -15,7 +15,7 @@
   "lease_expires": "2026-11-11T04:49:41.174701232Z",
   "defer_until": null,
   "created_at": "2026-11-11T04:30:29.666724618Z",
-  "updated_at": "2026-11-11T04:34:41.174701232Z",
+  "updated_at": "2026-11-11T04:34:41.188941088Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -26,6 +26,14 @@
       "author": "Jack Roddy/bd10c4a0",
       "text": "The held-turn line belongs on the working line too, which by then carries the subagent count from coax-47019c. It reads as waiting on the agents, with no spinner for the main agent.",
       "commit": "79f7f6d",
+      "branch": "dev"
+    },
+    {
+      "id": "9658b13e",
+      "at": "2026-11-11T04:34:41.188940178Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Gaps from coax-47019c (f4e9b89) to fix here as well. The status line's state item still reads `idle` while subagents run. A `Task` call replayed from a loaded session and left `in_progress` would count as running forever, so only subagents seen live in this run should count.",
+      "commit": "f4e9b89",
       "branch": "dev"
     }
   ],
