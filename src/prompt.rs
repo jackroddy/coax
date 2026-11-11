@@ -96,9 +96,10 @@ fn at_column(line: &str, wanted: usize) -> usize {
 }
 
 /// Break `text` into rows of at most `width` characters at word breaks, as
-/// byte ranges of `text`. Each line, ended by a newline, starts a new row. A
-/// word longer than a row is split, and the last row is never full, so the
-/// cursor always has a column after the last character.
+/// byte ranges of `text`. The space a row breaks at stays at its end, one
+/// column past `width` if need be. Each line, ended by a newline, starts a new
+/// row. A word longer than a row is split, and the last row is never full, so
+/// the cursor always has a column after the last character.
 pub fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
     let width = width.max(1);
     let mut rows = Vec::new();
@@ -109,7 +110,7 @@ pub fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
     }
     if rows
         .last()
-        .is_some_and(|row| text[row.clone()].width() == width)
+        .is_some_and(|row| text[row.clone()].width() >= width)
     {
         rows.push(text.len()..text.len());
     }
@@ -132,8 +133,9 @@ fn wrap_line(line: &str, offset: usize, width: usize, rows: &mut Vec<Range<usize
             start = token[0].0;
             used = 0;
         }
+        let room = if is_space { width + 1 } else { width };
         for &(i, _, w) in token {
-            if used + w > width && used > 0 {
+            if used + w > room && used > 0 {
                 rows.push(offset + start..offset + i);
                 start = i;
                 used = 0;
@@ -205,6 +207,34 @@ mod tests {
             wrap_input("one two three four", 9),
             ["one two ", "three ", "four"]
         );
+    }
+
+    #[test]
+    fn a_wrapped_row_never_starts_with_the_space_it_broke_at() {
+        assert_eq!(wrap_input("one two three", 7), ["one two ", "three"]);
+        let text =
+            "one two three four five six seven eight nine ten eleven twelve thirteen fourteen";
+        for row in wrap_input(text, 40) {
+            assert!(!row.starts_with(' '), "{row:?}");
+        }
+    }
+
+    #[test]
+    fn a_break_space_past_the_width_on_the_last_row_puts_the_cursor_on_a_new_row() {
+        assert_eq!(wrap_input("abcd ", 4), ["abcd ", ""]);
+    }
+
+    #[test]
+    fn up_and_down_keep_a_cursor_on_the_break_space_on_its_row() {
+        // rows "one two " "three " "four", where the first
+        // break space is one column past the width
+        let text = "one two three four";
+        let rows = wrap_rows(text, 7);
+        assert_eq!(cursor_row(&rows, 7), 0);
+        assert_eq!(cursor_row(&rows, 8), 1);
+        assert_eq!(row_below(text, 7, 7), Some(13));
+        assert_eq!(row_above(text, 8 + 3, 7), Some(3));
+        assert_eq!(row_above(text, 13, 7), Some(5));
     }
 
     #[test]

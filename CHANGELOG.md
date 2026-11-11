@@ -423,8 +423,9 @@ command line, the keys, and the scenario format the fake agent reads.
   permission request is the choice in the accent colour on the right, and
   notices are centred and dim.
 - The prompt sits between two rules and shows one row. It wraps at word
-  breaks and grows with the text up to half the screen. There is no footer
-  row of key hints.
+  breaks and grows with the text up to half the screen. The space a row
+  breaks at stays at the end of that row, so the next row starts at its
+  word. There is no footer row of key hints.
 - Ctrl+c no longer quits at once in a session. While the agent is working it
   cancels the turn, as Esc does, and with text in the prompt it clears the
   prompt. Otherwise, including with the permission box open, it arms an exit

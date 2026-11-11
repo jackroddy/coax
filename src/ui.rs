@@ -2988,6 +2988,15 @@ mod tests {
     }
 
     #[test]
+    fn a_cursor_on_a_break_space_past_the_width_draws_at_the_end_of_its_row() {
+        let view = input_view("one two three", 7, 7, 10);
+        assert_eq!(view.rows, ["one two ", "three"]);
+        assert_eq!(view.cursor, (2 + 6, 0));
+        let view = input_view("one two three", 8, 7, 10);
+        assert_eq!(view.cursor, (2, 1));
+    }
+
+    #[test]
     fn the_window_follows_a_cursor_above_the_last_rows() {
         let text = "a ".repeat(30);
         let view = input_view(&text, 0, 4, 5);
