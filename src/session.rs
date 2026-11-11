@@ -50,9 +50,13 @@ impl Tool {
             .count()
     }
 
+    fn starts_agent(&self) -> bool {
+        self.agent || !self.children.is_empty()
+    }
+
     /// Whether the call is a subagent that is still working at `now`.
     pub fn agent_running(&self, now: Instant) -> bool {
-        if !(self.agent || !self.children.is_empty()) || self.cancelled {
+        if !self.starts_agent() || self.cancelled {
             return false;
         }
         match self.status {
@@ -144,6 +148,9 @@ pub struct Transcript {
 
     /// The id of the message the last chunk belonged to.
     last_message: Option<MessageId>,
+
+    /// How many of `entries` a loaded session replayed.
+    replayed: usize,
 }
 
 impl Transcript {
@@ -182,7 +189,7 @@ impl Transcript {
     }
 
     /// Stop the turn, and give its last reply the turn's length.
-    fn end_turn(&mut self) {
+    pub fn end_turn(&mut self) {
         self.in_flight = false;
         let Some(started) = self.turn_started else {
             return;
@@ -201,12 +208,35 @@ impl Transcript {
         }
     }
 
-    /// How many subagents are still working at `now`.
+    /// Mark every entry so far as replayed from a loaded session.
+    pub fn end_replay(&mut self) {
+        self.replayed = self.entries.len();
+    }
+
+    /// How many subagents started in this run are still working at `now`.
     pub fn running_agents(&self, now: Instant) -> usize {
-        self.entries
+        self.entries[self.replayed..]
             .iter()
             .filter(|entry| matches!(entry, Entry::Tool(tool) if tool.agent_running(now)))
             .count()
+    }
+
+    /// Whether the turn runs only because subagents still work at `now`:
+    /// the main agent's reply is written and none of its own calls run.
+    pub fn held(&self, now: Instant) -> bool {
+        let turn = self
+            .entries
+            .iter()
+            .rposition(|entry| matches!(entry, Entry::User(_)))
+            .map_or(0, |at| at + 1);
+        let calling = self.entries[turn..].iter().any(|entry| {
+            matches!(entry, Entry::Tool(tool)
+                if !tool.starts_agent() && !tool.cancelled && running(tool.status))
+        });
+        self.in_flight
+            && !calling
+            && matches!(self.entries.last(), Some(Entry::Agent(_)))
+            && self.running_agents(now) > 0
     }
 
     /// Mark every call that has not finished as cancelled.
@@ -757,5 +787,45 @@ mod tests {
         transcript.apply(child_call("c2", "t2", ToolCallStatus::InProgress));
         transcript.finished(StopReason::Cancelled);
         assert_eq!(transcript.running_agents(Instant::now()), 0);
+    }
+
+    #[test]
+    fn a_turn_is_held_once_the_reply_is_written_and_only_subagents_run() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("go".to_string());
+        transcript.apply(subagent("t1", ToolCallStatus::InProgress));
+        let now = Instant::now();
+        assert!(!transcript.held(now));
+        transcript.apply(SessionUpdate::AgentMessageChunk(chunk("started")));
+        assert!(transcript.held(now));
+        transcript.apply(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "t1",
+            ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+        )));
+        assert!(!transcript.held(now));
+    }
+
+    #[test]
+    fn a_turn_is_not_held_while_a_call_of_the_main_agent_runs() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("go".to_string());
+        transcript.apply(subagent("t1", ToolCallStatus::InProgress));
+        transcript.apply(SessionUpdate::ToolCall(
+            ToolCall::new("c1", "Read").status(ToolCallStatus::InProgress),
+        ));
+        transcript.apply(SessionUpdate::AgentMessageChunk(chunk("reading")));
+        assert!(!transcript.held(Instant::now()));
+    }
+
+    #[test]
+    fn a_subagent_replayed_from_a_loaded_session_does_not_count_even_left_in_progress() {
+        let mut transcript = Transcript::default();
+        transcript.apply(subagent("t1", ToolCallStatus::InProgress));
+        transcript.apply(child_call("c1", "t1", ToolCallStatus::InProgress));
+        transcript.end_replay();
+        assert_eq!(transcript.running_agents(Instant::now()), 0);
+        transcript.prompt("go".to_string());
+        transcript.apply(subagent("t2", ToolCallStatus::InProgress));
+        assert_eq!(transcript.running_agents(Instant::now()), 1);
     }
 }

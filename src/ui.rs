@@ -51,7 +51,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Some((lines, _)) => lines.len().clamp(1, (area.height / 2) as usize),
         None => input.height(),
     };
-    let agents = app.transcript.running_agents(Instant::now());
+    let now = Instant::now();
+    let agents = app.transcript.running_agents(now);
     let working_rows = u16::from(app.transcript.in_flight || agents > 0);
     let waiting_rows = app.waiting.len().min(MAX_WAITING_ROWS) as u16;
     let [
@@ -91,7 +92,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .transcript
             .turn_started
             .map_or(Duration::ZERO, |start| start.elapsed());
-        (elapsed, app.permission.is_some() || app.form.is_some())
+        if app.permission.is_some() || app.form.is_some() {
+            Turn::Asking(elapsed)
+        } else if app.transcript.held(now) {
+            Turn::Held
+        } else {
+            Turn::Working(elapsed)
+        }
     });
     if turn.is_some() || agents > 0 {
         let line = working_line(app.spinner, turn, agents);
@@ -150,35 +157,60 @@ fn waiting_lines(waiting: &VecDeque<String>, width: usize) -> Vec<Line<'static>>
     lines
 }
 
+/// What the turn shows on the working line.
+#[derive(Clone, Copy)]
+enum Turn {
+    /// The main agent works, for the time since the prompt was sent.
+    Working(Duration),
+
+    /// A permission or form waits for the person.
+    Asking(Duration),
+
+    /// Only subagents keep the turn open.
+    Held,
+}
+
 /// The row above the prompt while a turn runs or a subagent works: the
-/// turn's spinner, the time since the prompt was sent, or that a permission
-/// waits, then the subagent spinner and count, then the cancel key. `turn`
-/// is the turn's elapsed time and whether a permission or form waits.
-fn working_line(spinner: usize, turn: Option<(Duration, bool)>, agents: usize) -> Line<'static> {
+/// turn's spinner and the time since the prompt was sent, or that a
+/// permission waits, then the subagent spinner and count, then the cancel
+/// key.
+fn working_line(spinner: usize, turn: Option<Turn>, agents: usize) -> Line<'static> {
     let palette = palette::get();
     let yellow = Style::new().fg(palette.yellow);
+    let cyan = Style::new().fg(palette.cyan);
+    let agent_frame = header::AGENT_SPINNER[spinner % header::AGENT_SPINNER.len()];
+    let noun = if agents == 1 { "agent" } else { "agents" };
     let mut spans = vec![Span::raw(" ")];
-    if let Some((elapsed, waiting)) = turn {
-        if waiting {
+    match turn {
+        Some(Turn::Held) => {
+            spans.push(Span::styled(
+                format!("{agent_frame} waiting on {agents} {noun}"),
+                cyan,
+            ));
+            spans.push(Span::styled(" · esc to cancel", dim()));
+            return Line::from(spans);
+        }
+        Some(Turn::Asking(elapsed)) => {
             spans.push(Span::styled("waiting for you", yellow));
-        } else {
+            spans.push(Span::styled(format!(" · {}", elapsed_text(elapsed)), dim()));
+        }
+        Some(Turn::Working(elapsed)) => {
             let frame = header::SPINNER[spinner % header::SPINNER.len()];
             spans.push(Span::styled(format!("{frame} working"), yellow));
+            spans.push(Span::styled(format!(" · {}", elapsed_text(elapsed)), dim()));
         }
-        spans.push(Span::styled(format!(" · {}", elapsed_text(elapsed)), dim()));
+        None => {}
     }
     if agents > 0 {
         if turn.is_some() {
             spans.push(Span::raw("  "));
         }
-        let frame = header::AGENT_SPINNER[spinner % header::AGENT_SPINNER.len()];
-        let noun = if agents == 1 { "agent" } else { "agents" };
         spans.push(Span::styled(
-            format!("{frame} {agents} {noun} running"),
-            Style::new().fg(palette.cyan),
+            format!("{agent_frame} {agents} {noun} running"),
+            cyan,
         ));
     }
-    if turn.is_some_and(|(_, waiting)| !waiting) {
+    if matches!(turn, Some(Turn::Working(_))) {
         spans.push(Span::styled(" · esc to cancel", dim()));
     }
     Line::from(spans)

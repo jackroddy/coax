@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::v1::schema::{PlanEntry, PlanEntryStatus, StopReason, ToolCallStatus};
 use ratatui::Frame;
@@ -155,13 +155,21 @@ fn status(app: &App) -> Vec<Item> {
     items
 }
 
-/// The idle state, or `None` while a turn runs and the working line above
-/// the prompt shows it.
+/// The idle state, `agents` while subagents work after the turn, or `None`
+/// while a turn runs and the working line above the prompt shows it.
 fn state(app: &App) -> Option<Item> {
     if app.transcript.in_flight {
         return None;
     }
-    let yellow = Style::new().fg(palette::get().yellow);
+    let palette = palette::get();
+    if app.transcript.running_agents(Instant::now()) > 0 {
+        return Some(Item::new(
+            "agents".to_string(),
+            Style::new().fg(palette.cyan),
+            0,
+        ));
+    }
+    let yellow = Style::new().fg(palette.yellow);
     Some(match &app.transcript.last_stop {
         Some(stop) if *stop != StopReason::EndTurn => {
             Item::new(format!("idle, {stop:?}"), yellow, 0)

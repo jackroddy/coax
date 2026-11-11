@@ -262,7 +262,10 @@ command line, the keys, and the scenario format the fake agent reads.
   the accent colour and the prompt's text in the foreground colour. Esc or Ctrl+c cancels the
   running turn and every queued prompt, and puts the queued text back in the
   prompt box. The fake agent declares `promptQueueing` and plays the prompts
-  it is sent one after another.
+  it is sent one after another. For an agent that queues, a prompt sent
+  while subagents alone keep the turn open goes straight into the
+  conversation, not into the `queued` row. The reply that then ends the
+  held turn leaves the conversation as it is.
 - Pasting into the prompt inserts the text at the cursor with its newlines
   kept, and never sends it. coax turns on bracketed paste for this and turns
   it off again on exit, so a terminal without bracketed paste behaves as
@@ -353,9 +356,15 @@ command line, the keys, and the scenario format the fake agent reads.
   stays while any subagent runs. A subagent counts while its call is open.
   The Claude adapter marks a background subagent's call completed when it
   starts, so a background subagent also counts while any of its calls runs
-  and for 10 seconds after its last update. coax reports the agent to decade
-  as working while the count is above zero. `scenarios/background.json`
-  plays a background subagent.
+  and for 10 seconds after its last update. Only subagents started in this
+  run count, so a call replayed from a loaded session never does. coax
+  reports the agent to decade as working while the count is above zero.
+  A turn is held when the main agent has written its reply and no call of
+  its own runs, so subagents alone keep it open. The row then drops the
+  turn's spinner and reads `◴ waiting on 1 agent · esc to cancel` in cyan.
+  After the turn ends, the status line reads `agents` in cyan in place of
+  `idle` while the count is above zero. `scenarios/background.json` plays a
+  background subagent.
 
 ### Changed
 

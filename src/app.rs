@@ -253,6 +253,10 @@ pub struct App {
 
     /// Replies still to come for waiting prompts a cancel dropped.
     stale_replies: usize,
+
+    /// Replies still to come for held turns that a prompt sent while they
+    /// were held has already ended in the transcript.
+    held_replies: usize,
     pub rendered: ui::Rendered,
     pub cwd: PathBuf,
 
@@ -467,6 +471,12 @@ impl App {
                 }
             }
             Event::Done(_) if self.stale_replies > 0 => self.stale_replies -= 1,
+            Event::Done(done) if self.held_replies > 0 => {
+                self.held_replies -= 1;
+                if let Err(error) = done {
+                    self.transcript.notice(format!("prompt failed: {error}"));
+                }
+            }
             Event::Done(Ok(stop)) => {
                 self.close_permissions();
                 self.transcript.finished(stop);
@@ -486,6 +496,7 @@ impl App {
                 self.menu = None;
                 self.confirm = None;
                 self.stale_replies = 0;
+                self.held_replies = 0;
                 self.close_permissions();
                 self.return_waiting();
                 self.transcript.agent_exited(&reason);
@@ -1449,7 +1460,11 @@ impl App {
                 self.cursor = 0;
                 self.remember(&text, Some(Time::now()));
                 self.scroll = 0;
-                if self.transcript.in_flight {
+                let held = self.queueing && self.waiting.is_empty() && self.transcript.held(now);
+                if held {
+                    self.held_replies += 1;
+                    self.transcript.end_turn();
+                } else if self.transcript.in_flight {
                     self.waiting.push_back(text.clone());
                     return if self.queueing {
                         Action::Prompt(text)
@@ -1733,6 +1748,7 @@ async fn session(
         waiting: VecDeque::new(),
         outbox: None,
         stale_replies: 0,
+        held_replies: 0,
         rendered: ui::Rendered::default(),
         cwd,
         auto_allow,
@@ -1745,6 +1761,7 @@ async fn session(
     while let Ok(event) = link.events.try_recv() {
         app.event(event);
     }
+    app.transcript.end_replay();
     app.remember_loaded();
     if let Some(text) = first_prompt {
         app.transcript.prompt(text.clone());
@@ -2077,6 +2094,7 @@ mod tests {
             waiting: VecDeque::new(),
             outbox: None,
             stale_replies: 0,
+            held_replies: 0,
             rendered: ui::Rendered::default(),
             cwd: PathBuf::new(),
             auto_allow: false,
@@ -3509,6 +3527,50 @@ mod tests {
         assert_eq!(buffer[(x, WORKING_ROW)].fg, crate::palette::get().cyan);
     }
 
+    fn agent_says(app: &mut App, text: &str) {
+        use agent_client_protocol::v1::schema::{ContentChunk, SessionUpdate};
+
+        app.event(Event::Update(Box::new(SessionUpdate::AgentMessageChunk(
+            ContentChunk::new(text.into()),
+        ))));
+    }
+
+    #[test]
+    fn a_held_turn_shows_waiting_on_its_agents_in_cyan_without_the_turn_spinner() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        app.transcript.apply(running_task("t1"));
+        agent_says(&mut app, "started a survey");
+        assert_eq!(
+            working_row(&mut app, 100).trim_end(),
+            " ◴ waiting on 1 agent · esc to cancel"
+        );
+        let x = column(&mut app, 100, WORKING_ROW, "waiting");
+        let buffer = header_buffer(&mut app, 100);
+        assert_eq!(buffer[(x, WORKING_ROW)].fg, crate::palette::get().cyan);
+        app.transcript.apply(running_task("t2"));
+        agent_says(&mut app, "and another");
+        assert!(working_row(&mut app, 100).starts_with(" ◴ waiting on 2 agents · "));
+        assert!(matches!(press(&mut app, KeyCode::Esc), Action::Cancel));
+    }
+
+    #[test]
+    fn the_status_line_says_agents_in_cyan_while_subagents_run_after_the_turn() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        app.transcript.apply(running_task("t1"));
+        done(
+            &mut app,
+            agent_client_protocol::v1::schema::StopReason::EndTurn,
+        );
+        let status = status_row(&mut app, 100);
+        assert!(status.ends_with(" agents "), "{status}");
+        assert!(!status.contains("idle"), "{status}");
+        let x = column(&mut app, 100, STATUS_ROW, "agents");
+        let buffer = header_buffer(&mut app, 100);
+        assert_eq!(buffer[(x, STATUS_ROW)].fg, crate::palette::get().cyan);
+    }
+
     #[test]
     fn a_narrow_status_line_keeps_the_first_setting_and_ends_the_settings_in_the_overflow_mark() {
         let mut app = with_settings();
@@ -3624,6 +3686,55 @@ mod tests {
         done(&mut app, StopReason::EndTurn);
         assert_eq!(app.take_outbox().as_deref(), Some("two"));
         assert_eq!(users(&app), ["one", "two"]);
+    }
+
+    fn texts(app: &App) -> Vec<&str> {
+        app.transcript
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::User(message) | Entry::Agent(message) => Some(message.text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_prompt_sent_while_the_turn_is_held_goes_straight_into_the_transcript() {
+        use agent_client_protocol::v1::schema::StopReason;
+
+        let mut app = with_settings();
+        app.queueing = true;
+        app.transcript.prompt("one".to_string());
+        app.transcript.apply(running_task("t1"));
+        agent_says(&mut app, "started");
+        type_text(&mut app, "two");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::Prompt(text) if text == "two"));
+        assert!(app.waiting.is_empty());
+        assert_eq!(texts(&app), ["one", "started", "two"]);
+        assert!(working_row(&mut app, 100).starts_with(" ◐ working · "));
+        done(&mut app, StopReason::EndTurn);
+        assert!(app.transcript.in_flight);
+        agent_says(&mut app, "answer");
+        done(&mut app, StopReason::EndTurn);
+        assert!(!app.transcript.in_flight);
+        assert_eq!(texts(&app), ["one", "started", "two", "answer"]);
+    }
+
+    #[test]
+    fn a_prompt_sent_while_the_turn_is_held_waits_for_an_agent_that_does_not_queue() {
+        use agent_client_protocol::v1::schema::StopReason;
+
+        let mut app = with_settings();
+        app.transcript.prompt("one".to_string());
+        app.transcript.apply(running_task("t1"));
+        agent_says(&mut app, "started");
+        type_text(&mut app, "two");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert_eq!(app.waiting, ["two"]);
+        done(&mut app, StopReason::EndTurn);
+        assert_eq!(app.take_outbox().as_deref(), Some("two"));
+        assert_eq!(texts(&app), ["one", "started", "two"]);
     }
 
     #[test]
