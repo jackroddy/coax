@@ -106,14 +106,25 @@ fn waiting_lines(waiting: &VecDeque<String>, width: usize) -> Vec<Line<'static>>
     } else {
         waiting.len()
     };
+    let accent = Style::new().fg(palette::get().accent);
+    let foreground = Style::new().fg(palette::get().foreground);
     let mut lines: Vec<Line> = waiting
         .iter()
         .take(shown)
-        .map(|text| Line::styled(format!("{lead}{}", cut(first_line(text), room)), dim()))
+        .map(|text| {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled("queued", accent),
+                Span::raw("  "),
+                Span::styled(cut(first_line(text), room), foreground),
+            ])
+        })
         .collect();
     if waiting.len() > shown {
-        let more = format!(" + {} more queued", waiting.len() - shown);
-        lines.push(Line::styled(more, dim()));
+        lines.push(Line::from(vec![
+            Span::styled(format!(" + {} more", waiting.len() - shown), foreground),
+            Span::styled(" queued", accent),
+        ]));
     }
     lines
 }
@@ -2967,6 +2978,34 @@ mod tests {
         assert_eq!(view.rows.len(), 5);
         assert!(!view.starts_here);
         assert_eq!(view.cursor.1, 4);
+    }
+
+    #[test]
+    fn a_queued_row_draws_its_label_in_the_accent_and_its_text_in_the_foreground() {
+        let palette = palette::get();
+        let waiting: VecDeque<String> = ["one", "two", "three", "four"].map(str::to_string).into();
+        let lines = waiting_lines(&waiting, 40);
+        let colours = |line: &Line| -> Vec<(String, Option<Color>)> {
+            line.spans
+                .iter()
+                .filter(|span| !span.content.trim().is_empty())
+                .map(|span| (span.content.trim().to_string(), span.style.fg))
+                .collect()
+        };
+        assert_eq!(
+            colours(&lines[0]),
+            [
+                ("queued".to_string(), Some(palette.accent)),
+                ("one".to_string(), Some(palette.foreground)),
+            ]
+        );
+        assert_eq!(
+            colours(&lines[2]),
+            [
+                ("+ 2 more".to_string(), Some(palette.foreground)),
+                ("queued".to_string(), Some(palette.accent)),
+            ]
+        );
     }
 
     const TODAY: Time = Time {

@@ -242,8 +242,9 @@ command line, the keys, and the scenario format the fake agent reads.
   `promptQueueing` under `claudeCode` in its capabilities, as the Claude
   adapter does, and the agent runs it once the running turn ends. For any
   other agent, coax holds the prompt and sends it when the turn ends. Until
-  its turn starts, the prompt waits in a dim `queued` row above the working
-  line, up to three rows with a count of the rest. Esc or Ctrl+c cancels the
+  its turn starts, the prompt waits in a `queued` row above the working
+  line, up to three rows with a count of the rest. The word `queued` is in
+  the accent colour and the prompt's text in the foreground colour. Esc or Ctrl+c cancels the
   running turn and every queued prompt, and puts the queued text back in the
   prompt box. The fake agent declares `promptQueueing` and plays the prompts
   it is sent one after another.
