@@ -1,0 +1,28 @@
+{
+  "id": "coax-75e8e3",
+  "title": "A message sent while a background subagent runs waits until the subagent ends",
+  "body": "When the main agent starts a background subagent and then waits on it, the Claude adapter leaves the turn's `session/prompt` unanswered until the subagent ends (memory `claude-adapter-holds-turns-for-subagents`). A prompt Jack sends meanwhile goes out at once (coax-765bf0) and sits in the queued row. Claude Code hands a queued prompt to the model only with the next tool result (memory `claude-adapter-queues-prompts`), and an agent waiting on a subagent produces none. So the message waits until the subagent finishes, which can take minutes.\n\n## Proposal\n\ncoax advertises `backgroundSubagents` among its `jetbrains.air` meta capabilities in `Link::initialize`. The adapter then ends a turn while its subagents still run, so the next prompt starts a new turn at once.\n\n## Cost\n\n- The adapter starts turns of its own, for example when a subagent finishes and the main agent reacts, with no `session/prompt` behind them. coax must show updates that arrive outside a turn, and the working line and the decade report must treat such a turn as working.\n- The `jetbrains.air` namespace is JetBrains' extension. Advertising one capability from it may make the adapter expect more of that protocol, which needs reading in the adapter's bundled JavaScript before the change.\n- The fake agent needs a scenario step that starts an update stream with no prompt, to test it.",
+  "type": "bug",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T03:05:24.038668351Z",
+  "updated_at": "2026-11-11T03:05:24.038668351Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "aecbbd8",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
