@@ -3,20 +3,20 @@
   "title": "Does a colour link nest with bold and code, and can it cross a line break?",
   "body": "Agents colour text with a `color:` link, as in `[failed](color:red)` (7a387c5). Nobody has tried it around bold or inline code, as in `[**failed**](color:red)`, or on a span that cmr wraps onto a second row.\n\n## Options\n\n- Try each case against the renderer and record what it does. If the result reads well, the output style can allow it.\n- Have the output style allow only plain words inside a colour link.\n\nLean: try it, since it takes one scenario and a look at the screen.",
   "type": "decision",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T02:54:12.103735919Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T22:07:17.452607078Z",
-  "updated_at": "2026-11-11T02:39:12.103735919Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T02:42:09.060016067Z",
+  "closed_at": "2026-11-11T02:42:09.060016067Z",
+  "close_reason": "cmr f6f4486 parses link text and bold into inlines. Bold and inline code now draw inside a colour link, and a colour link draws inside bold. coax 27fe6ee adds tests for each case and the changelog line. The coax output style now allows both forms. A colour span that wraps stays coloured on every row, as the trial note found.",
+  "resolution": "done",
   "notes": [
     {
       "id": "7525b33e",
@@ -56,6 +56,9 @@
       "commit": "e70e227",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "27fe6ee",
+      "branch": "dev"
+    }
   }
 }
