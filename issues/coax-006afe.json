@@ -3,7 +3,7 @@
   "title": "While only background subagents hold the turn, coax shows the agent as working and new prompts as queued",
   "body": "When the main agent finishes its reply but started a background subagent, the Claude adapter keeps the turn's `session/prompt` unanswered until the subagent ends (memory `claude-adapter-holds-turns-for-subagents`). coax treats the turn as in flight. So the working line keeps its spinner as if the main agent were busy, and a prompt sent then shows in the `queued` row. Claude Code takes such a prompt at once, the adapter closes the held turn, and the reply follows straight away. Jack saw this live on 2026-11-11: the spinner, then `test` marked queued, then an instant answer.\n\n## Proposal\n\ncoax tells a held turn from a working one. A turn is held when it is in flight, at least one background subagent runs (the count from coax-47019c), no top-level tool call of the main agent is pending or in progress, and the main agent's last update was message text. While held:\n\n- the working line drops the spinner and reads `waiting on 1 agent · esc to cancel`, with the count\n- a prompt sent goes straight into the transcript as the person's message, not into the `queued` row, and the held turn's reply that follows ends the held turn as it does now\n- Esc still cancels, which the adapter applies to the held turn and its subagents",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -12,13 +12,13 @@
   ],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T04:49:41.174701232Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T04:30:29.666724618Z",
-  "updated_at": "2026-11-11T04:34:41.188941088Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T04:39:25.609584742Z",
+  "closed_at": "2026-11-11T04:39:25.609584742Z",
+  "close_reason": "Landed in 4d4ac77 on dev. `Transcript::held` marks a turn that only subagents keep open, and the working line then reads `◴ waiting on 1 agent · esc to cancel` in cyan. For an agent that queues, a prompt sent during a held turn goes straight into the transcript, and `App::held_replies` absorbs the reply that ends the held turn. The status line reads `agents` in cyan in place of `idle` while subagents run after a turn. `Transcript::end_replay` keeps replayed calls out of `running_agents`.",
+  "resolution": "done",
   "notes": [
     {
       "id": "0b15e560",
@@ -42,6 +42,9 @@
       "commit": "79f7f6d",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "4d4ac77",
+      "branch": "dev"
+    }
   }
 }
