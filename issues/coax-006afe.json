@@ -1,0 +1,28 @@
+{
+  "id": "coax-006afe",
+  "title": "While only background subagents hold the turn, coax shows the agent as working and new prompts as queued",
+  "body": "When the main agent finishes its reply but started a background subagent, the Claude adapter keeps the turn's `session/prompt` unanswered until the subagent ends (memory `claude-adapter-holds-turns-for-subagents`). coax treats the turn as in flight. So the working line keeps its spinner as if the main agent were busy, and a prompt sent then shows in the `queued` row. Claude Code takes such a prompt at once, the adapter closes the held turn, and the reply follows straight away. Jack saw this live on 2026-11-11: the spinner, then `test` marked queued, then an instant answer.\n\n## Proposal\n\ncoax tells a held turn from a working one. A turn is held when it is in flight, at least one background subagent runs (the count from coax-47019c), no top-level tool call of the main agent is pending or in progress, and the main agent's last update was message text. While held:\n\n- the working line drops the spinner and reads `waiting on 1 agent · esc to cancel`, with the count\n- a prompt sent goes straight into the transcript as the person's message, not into the `queued` row, and the held turn's reply that follows ends the held turn as it does now\n- Esc still cancels, which the adapter applies to the held turn and its subagents",
+  "type": "bug",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T04:30:29.666724618Z",
+  "updated_at": "2026-11-11T04:30:29.666724618Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "79f7f6d",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
