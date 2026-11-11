@@ -49,7 +49,7 @@ struct SessionRow {
     /// The agent's index in `Picker::names`.
     agent: usize,
     id: SessionId,
-    title: String,
+    title: Option<String>,
     updated: Option<Updated>,
 }
 
@@ -70,7 +70,11 @@ enum Selected {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Choice<'a> {
     Agent(&'a str),
-    Session { agent: &'a str, id: SessionId },
+    Session {
+        agent: &'a str,
+        id: SessionId,
+        title: Option<String>,
+    },
     Quit,
 }
 
@@ -81,7 +85,9 @@ impl<'a> Picker<'a> {
             .agents
             .values()
             .map(|agent| {
-                let mut words = vec![home_as_tilde(&agent.command().display().to_string())];
+                let mut words = vec![header::home_as_tilde(
+                    &agent.command().display().to_string(),
+                )];
                 words.extend(agent.arguments().iter().cloned());
                 words.join(" ")
             })
@@ -112,7 +118,7 @@ impl<'a> Picker<'a> {
         self.sessions
             .extend(listing.sessions.into_iter().map(|info| SessionRow {
                 agent,
-                title: info.title.unwrap_or_else(|| "untitled".to_string()),
+                title: info.title,
                 updated: info.updated_at.and_then(|date| {
                     Some(Updated {
                         seconds: unix_seconds(&date)?,
@@ -185,6 +191,11 @@ impl<'a> Picker<'a> {
                 Selected::Session(agent, id) => Some(Choice::Session {
                     agent: self.names[*agent],
                     id: id.clone(),
+                    title: self
+                        .sessions
+                        .iter()
+                        .find(|row| row.id == *id)
+                        .and_then(|row| row.title.clone()),
                 }),
                 Selected::Agent(index)
                     if matches!(self.failures.get(*index), Some(Some(Failure::Start(_)))) =>
@@ -269,7 +280,7 @@ impl<'a> Picker<'a> {
             .collect();
         let age_width = ages.iter().map(|age| age.width()).max().unwrap_or(0);
         let title_width = width.saturating_sub(2 + 2 + agent_width + 2 + age_width);
-        let title = ui::cut(&row.title, title_width);
+        let title = ui::cut(row.title.as_deref().unwrap_or("untitled"), title_width);
         let line = Line::from(vec![
             Span::raw(gutter),
             Span::styled(
@@ -299,7 +310,7 @@ impl<'a> Picker<'a> {
                 Line::styled(
                     format!(
                         "add one to {}",
-                        home_as_tilde(&self.path.display().to_string())
+                        header::home_as_tilde(&self.path.display().to_string())
                     ),
                     ui::dim(),
                 ),
@@ -354,15 +365,6 @@ impl<'a> Picker<'a> {
 
 fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or_default()
-}
-
-fn home_as_tilde(path: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
-            format!("~{}", &path[home.len()..])
-        }
-        _ => path.to_string(),
-    }
 }
 
 fn now() -> i64 {
@@ -576,7 +578,11 @@ mod tests {
                 ("g2", "middle", "2026-11-05T10:00:00Z"),
             ],
         ));
-        let titles: Vec<&str> = picker.sessions.iter().map(|r| r.title.as_str()).collect();
+        let titles: Vec<&str> = picker
+            .sessions
+            .iter()
+            .map(|r| r.title.as_deref().unwrap())
+            .collect();
         assert_eq!(titles, ["newest", "middle", "old"]);
     }
 
@@ -595,7 +601,8 @@ mod tests {
             picker.key(press(KeyCode::Enter)),
             Some(Choice::Session {
                 agent: "alpha",
-                id: SessionId::new("a2".to_string())
+                id: SessionId::new("a2".to_string()),
+                title: Some("newer".to_string()),
             })
         );
     }
@@ -616,7 +623,8 @@ mod tests {
             picker.key(press(KeyCode::Enter)),
             Some(Choice::Session {
                 agent: "beta",
-                id: SessionId::new("b2".to_string())
+                id: SessionId::new("b2".to_string()),
+                title: Some("older".to_string()),
             })
         );
         picker.key(press(KeyCode::Char('j')));
@@ -639,7 +647,8 @@ mod tests {
             picker.key(press(KeyCode::Enter)),
             Some(Choice::Session {
                 agent: "beta",
-                id: SessionId::new("b1".to_string())
+                id: SessionId::new("b1".to_string()),
+                title: Some("two".to_string()),
             })
         );
         picker.key(press(KeyCode::Char('j')));
@@ -651,7 +660,8 @@ mod tests {
             picker.key(press(KeyCode::Enter)),
             Some(Choice::Session {
                 agent: "alpha",
-                id: SessionId::new("a1".to_string())
+                id: SessionId::new("a1".to_string()),
+                title: Some("one".to_string()),
             })
         );
     }

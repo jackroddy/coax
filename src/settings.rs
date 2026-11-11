@@ -1,3 +1,4 @@
+use agent_client_protocol::schema::MaybeUndefined;
 use agent_client_protocol::v1::schema::{
     AvailableCommand, Cost, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
     SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState, SessionUpdate, Usage,
@@ -15,6 +16,7 @@ pub struct Settings {
     pub context: Option<Context>,
     pub cost: Option<Cost>,
     pub tokens: Option<Tokens>,
+    pub title: Option<String>,
 
     /// The slash commands the agent offers.
     pub commands: Vec<AvailableCommand>,
@@ -71,11 +73,6 @@ impl Category {
             _ => Category::Other,
         }
     }
-
-    /// Whether the setting is model config or has no category.
-    pub fn rarely_changed(self) -> bool {
-        self > Category::ThoughtLevel
-    }
 }
 
 pub enum Control {
@@ -122,6 +119,11 @@ impl Settings {
             SessionUpdate::AvailableCommandsUpdate(update) => {
                 self.commands = update.available_commands.clone();
             }
+            SessionUpdate::SessionInfoUpdate(update) => match &update.title {
+                MaybeUndefined::Value(title) => self.title = Some(title.clone()),
+                MaybeUndefined::Null => self.title = None,
+                MaybeUndefined::Undefined => {}
+            },
             SessionUpdate::UsageUpdate(update) => {
                 self.context = Some(Context {
                     used: update.used,

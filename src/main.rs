@@ -184,7 +184,7 @@ async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), 
     match &choice {
         Choice::Quit => log::info("picker", json!({"choice": "quit"})),
         Choice::Agent(name) => log::info("picker", json!({"choice": "new", "agent": name})),
-        Choice::Session { agent, id } => log::info(
+        Choice::Session { agent, id, .. } => log::info(
             "picker",
             json!({"choice": "load", "agent": agent, "session": id.0}),
         ),
@@ -195,9 +195,9 @@ async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), 
             opening.registry = config.registries.get(name).cloned();
             agents.open(name, opening).await
         }
-        Choice::Session { agent, id } => {
+        Choice::Session { agent, id, title } => {
             opening.registry = config.registries.get(agent).cloned();
-            opening.start = Start::Load(id);
+            opening.start = Start::Load(id, title);
             agents.open(agent, opening).await
         }
     }

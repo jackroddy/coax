@@ -202,6 +202,12 @@
           }
         },
         {
+          "update": {
+            "sessionUpdate": "session_info_update",
+            "title": "Say hello from the entry point"
+          }
+        },
+        {
           "stop": "end_turn"
         }
       ],

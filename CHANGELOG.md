@@ -23,8 +23,8 @@ command line, the keys, and the scenario format the fake agent reads.
   picker names the file to create. The picker has a header of its
   own, `coax` and a title over a dim rule, and marks the chosen row with `›`
   and a shaded background.
-- Started inside a decade pane, coax joins the decade socket. The status
-  line says when it is connected.
+- Started inside a decade pane, coax joins the decade socket. The session
+  row says when it is connected.
 - coax names its agent to decade in hello (the agent's name, its version and
   the session id) and reports on it. The state is `working` during a turn,
   `attention` with the tool call's title as the question while a permission
@@ -89,8 +89,9 @@ command line, the keys, and the scenario format the fake agent reads.
   `update` steps. With it, the fake agent advertises `session/list` and
   `session/load`, lists the sessions and replays a session's history when it
   is loaded. `scenarios/resume.json` is an example.
-- A status line under the prompt shows the session's settings on the
-  left, joined by a dim `·`, such as `auto · opus · effort default · fast off`. The
+- A settings row under the prompt shows the session's settings, such as
+  `auto`, `opus`, `effort default` and `fast off`. They spread evenly across
+  the width. A dim `·` sits in the middle of each gap between them. The
   mode and the model show their value alone and the rest show the name and
   the value, in the order mode, model, thought level, other model settings,
   then the rest. A click on a setting opens a box above it that lists the
@@ -104,18 +105,28 @@ command line, the keys, and the scenario format the fake agent reads.
   settings do not fit, they move from the right into a dim `⋯` that lists
   them. An agent with no config options but with modes gets a mode setting
   through `session/set_mode`.
-- A row above the status line shows the context in use as `context: 3%`
+- A place row at the foot of the screen shows the agent entry, the folder
+  and the git branch on the left. The entry is in the accent colour, the
+  folder blue and the branch green. The folder shows the home folder as `~`.
+  coax reads the branch from `.git/HEAD` at launch and again when a turn
+  ends. A detached head shows as a short commit id. The session's title sits
+  against the right edge and is cut with `…` when long. coax takes the title
+  from the agent's `session_info_update`, and for a loaded session from the
+  picker until then. A part with nothing to show is left out.
+- A row above the settings row shows the context in use as `context: 3%`
   and a bar of `▰` and `▱` across the rest of the row, in proportion. The
   percentage and the filled part are green up to 80%, yellow past 80% and
   red past 95%. Before the agent reports a context size, the row has no
   percentage and a muted, empty bar.
-- The status line also shows the session's tokens as `↑28k ↓4` with the cost
+- A session row under the settings row shows the plan summary and the
+  session's tokens on the left. The tokens read `↑28k ↓4`, with the cost
   after them, such as `$0.14`, when the agent sends one. The `↑` is cyan and
   the `↓` green, with the numbers in the foreground colour. The cost is
-  orange. On a narrow screen
-  the model config settings and settings with no category move into `⋯`
-  first. Then the tokens and cost go, then the plan summary, and then the
-  remaining settings from the right.
+  orange. decade, the update notice and the idle state sit on the right. On
+  a narrow screen the update notice goes first, then the tokens and cost,
+  then the plan summary. The model config settings and settings with no
+  category come last on the settings row. They are the first to move into
+  `⋯`.
 - The scenario format gains an optional top-level `config_options` array (the
   settings the agent offers, as ACP config options) and `modes`, and an
   optional `usage` on an act, which the prompt response reports. The fake
@@ -268,7 +279,7 @@ command line, the keys, and the scenario format the fake agent reads.
   replaces the prompt with the cursor at the end, and is not sent. When the
   editor exits with an error the prompt stays as it was and a dim line says
   so. Ctrl+g opens the whole prompt in the same editor, as it stands.
-- `/history` opens a box over the status line that lists the prompts sent in
+- `/history` opens a box above the settings row that lists the prompts sent in
   this run and the prompts of a resumed session, newest first. Each row is a
   dim `›` and the prompt's first line cut to fit. A dim column against the
   right edge holds `N lines` when the prompt has more, then the prompt's age
@@ -305,7 +316,7 @@ command line, the keys, and the scenario format the fake agent reads.
   the ACP registry. After the agent initializes, coax fetches that id's
   `agent.json` from the registry's repository with `curl` in the background.
   When the registry's `version` is later than the agent's reported version,
-  the status line shows `<version> available` in the accent colour, at the
+  the session row shows `<version> available` in the accent colour, at the
   right. Only the
   numbers before any `-` or `+` are compared, so a preview suffix is ignored.
   The fetched version is cached for a day in `registry-<id>.json` under
@@ -362,7 +373,7 @@ command line, the keys, and the scenario format the fake agent reads.
 - The agent's answer to a setting change closes or marks only the menu that
   asked for it. A late answer used to close an unrelated menu or write its
   error into it.
-- Picker boxes under the status line widen to fit their longest row, up to the
+- Picker boxes above the settings row widen to fit their longest row, up to the
   screen width less four columns. They stopped at 60 columns and cut a model's
   description.
 - Text from the agent, your earlier messages and thoughts now start a new
@@ -374,7 +385,7 @@ command line, the keys, and the scenario format the fake agent reads.
   transcript and replays it only to clients that speak the subagent sessions
   protocol, so a loaded session shows the call with no children, folded and
   with no marker.
-- The token counts on the status line are session totals. Each turn's input,
+- The token counts on the session row are session totals. Each turn's input,
   cached reads and writes add to the up count and its output to the down
   count. They used to show the last turn only.
 - The `+N −M` size of an edit counts the lines that changed, taken from the
@@ -395,10 +406,10 @@ command line, the keys, and the scenario format the fake agent reads.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The
-  conversation starts on the first row, and a status line under the
-  prompt carries the settings, the plan summary, context, tokens, cost and
-  decade when connected, and `idle` between turns. `decade` is cyan and
-  `idle` dim. While a turn runs, a row
+  conversation starts on the first row. Under the prompt sit the context
+  row, the settings row, the session row and the place row. The session row
+  carries the plan summary, tokens, cost, decade when connected, and `idle`
+  between turns. `decade` is cyan and `idle` dim. While a turn runs, a row
   above the prompt shows a spinner stepping through `◐◓◑◒`, `working`, the
   time since the prompt was sent and `esc to cancel`. While a permission
   request waits, the row reads `waiting for you` in yellow, with the time.
@@ -414,8 +425,8 @@ command line, the keys, and the scenario format the fake agent reads.
   notices are centred and dim.
 - The prompt sits between two rules and shows one row. It wraps at word
   breaks and grows with the text up to half the screen. There is no footer
-  row of key hints. When the agent has sent a plan, the status line shows how
-  many steps are done, before the idle state. It is yellow while steps
+  row of key hints. When the agent has sent a plan, the session row shows how
+  many steps are done, at its left. It is yellow while steps
   remain and green when all are done.
 - Ctrl+c no longer quits at once in a session. While the agent is working it
   cancels the turn, as Esc does, and with text in the prompt it clears the

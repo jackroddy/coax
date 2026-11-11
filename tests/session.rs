@@ -477,7 +477,7 @@ async fn changing_a_setting_returns_the_updated_set_and_a_bad_value_is_an_error(
 }
 
 #[tokio::test]
-async fn a_turn_reports_the_context_the_cost_and_the_session_tokens() {
+async fn a_turn_reports_the_context_the_cost_the_session_tokens_and_the_title() {
     let scenario = Scenario::parse(RESUME).unwrap();
     acp::run(fake::agent(scenario), "fake", async |mut link| {
         link.initialize().await?;
@@ -504,6 +504,10 @@ async fn a_turn_reports_the_context_the_cost_and_the_session_tokens() {
         assert_eq!(settings.cost.unwrap().amount, 0.136);
         let tokens = settings.tokens.unwrap();
         assert_eq!((tokens.up, tokens.down), (28481, 4));
+        assert_eq!(
+            settings.title.as_deref(),
+            Some("Say hello from the entry point")
+        );
         Ok(())
     })
     .await

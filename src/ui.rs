@@ -62,7 +62,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         prompt_area,
         lower_rule,
         context_area,
-        status_area,
+        settings_area,
+        session_area,
+        place_area,
     ] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
@@ -70,6 +72,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(working_rows),
         Constraint::Length(1),
         Constraint::Length(bottom_rows as u16),
+        Constraint::Length(1),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -101,8 +105,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_confirm(frame, transcript_area, app);
     draw_guard_rule(frame, lower_rule, app);
     header::draw_context(frame, context_area, app);
-    header::draw_status(frame, status_area, app);
-    draw_menu(frame, app, Time::now());
+    header::draw_settings(frame, settings_area, app);
+    header::draw_session(frame, session_area, app);
+    header::draw_place(frame, place_area, app);
+    draw_menu(frame, app, settings_area.y, Time::now());
     draw_link_popup(frame, app);
 }
 
@@ -2633,8 +2639,8 @@ fn first_line(text: &str) -> &str {
 const HISTORY_WIDTH: u16 = 60;
 const HISTORY_ROWS: usize = 10;
 
-/// The picker box hanging under a header chip.
-pub fn draw_menu(frame: &mut Frame, app: &mut App, now: Time) {
+/// The picker box hanging under a header chip, its last row above `floor`.
+pub fn draw_menu(frame: &mut Frame, app: &mut App, floor: u16, now: Time) {
     app.menu_area = None;
     let Some(menu) = &app.menu else {
         return;
@@ -2733,15 +2739,14 @@ pub fn draw_menu(frame: &mut Frame, app: &mut App, now: Time) {
     let error = usize::from(menu.error.is_some()) + warning_rows.len();
     let visible = rows
         .len()
-        .min((screen.height as usize).saturating_sub(4 + error))
+        .min((floor as usize).saturating_sub(3 + error))
         .min(if history { HISTORY_ROWS } else { usize::MAX })
         .max(1);
     let first = (menu.cursor + 1).saturating_sub(visible);
-    // the box sits on the status line, which has the chips it hangs from
-    let height = ((visible + error) as u16 + 2).min(screen.height);
+    let height = ((visible + error) as u16 + 2).min(floor);
     let area = Rect {
         x: menu.anchor.min(screen.width - width),
-        y: screen.height.saturating_sub(1 + height),
+        y: floor.saturating_sub(height),
         width,
         height,
     };

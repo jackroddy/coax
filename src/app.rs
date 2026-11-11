@@ -28,6 +28,7 @@ use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
 use crate::form::Form;
+use crate::header;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
 use crate::prompt;
@@ -255,6 +256,9 @@ pub struct App {
     stale_replies: usize,
     pub rendered: ui::Rendered,
     pub cwd: PathBuf,
+
+    /// The git branch `cwd` is on, read at launch and when a turn ends.
+    pub branch: Option<String>,
     auto_allow: bool,
 
     /// Whether the agent's connection has ended.
@@ -468,11 +472,13 @@ impl App {
             }
             Event::Done(_) if self.stale_replies > 0 => self.stale_replies -= 1,
             Event::Done(Ok(stop)) => {
+                self.branch = header::branch(&self.cwd);
                 self.close_permissions();
                 self.transcript.finished(stop);
                 self.start_waiting();
             }
             Event::Done(Err(error)) => {
+                self.branch = header::branch(&self.cwd);
                 self.close_permissions();
                 self.transcript.in_flight = false;
                 self.transcript.cancel_running();
@@ -1547,7 +1553,9 @@ pub type Keys = UnboundedReceiver<io::Result<TermEvent>>;
 /// Which session a run opens on.
 pub enum Start {
     New,
-    Load(SessionId),
+
+    /// The session, and its title as the picker listed it.
+    Load(SessionId, Option<String>),
 }
 
 /// What the user asked for at launch.
@@ -1621,12 +1629,15 @@ async fn session(
     let mut settings = Settings::default();
     let waiting = match &start {
         Start::New => format!("starting {agent}…"),
-        Start::Load(_) => "loading session…".to_string(),
+        Start::Load(..) => "loading session…".to_string(),
     };
     let kind = match &start {
         Start::New => "new",
-        Start::Load(_) => "load",
+        Start::Load(..) => "load",
     };
+    if let Start::Load(_, title) = &start {
+        settings.title = title.clone();
+    }
     let opening_began = Instant::now();
     let session = {
         let opened = open_session(&link, start, &cwd, &mut settings);
@@ -1729,6 +1740,7 @@ async fn session(
         outbox: None,
         stale_replies: 0,
         rendered: ui::Rendered::default(),
+        branch: header::branch(&cwd),
         cwd,
         auto_allow,
         exited: false,
@@ -1916,7 +1928,7 @@ async fn open_session(
             settings.open(response.config_options, response.modes);
             Ok(response.session_id)
         }
-        Start::Load(id) => {
+        Start::Load(id, _) => {
             let response = link.load_session(id.clone(), cwd.to_path_buf()).await?;
             settings.open(response.config_options, response.modes);
             Ok(id)
@@ -2074,6 +2086,7 @@ mod tests {
             stale_replies: 0,
             rendered: ui::Rendered::default(),
             cwd: PathBuf::new(),
+            branch: None,
             auto_allow: false,
             exited: false,
         }
@@ -2767,7 +2780,7 @@ mod tests {
         typed(&mut app, "/nope");
         app.key(enter(), Instant::now());
         let rows = header_rows_all(&mut app, 60);
-        let last = rows.lines().nth_back(2).unwrap();
+        let last = rows.lines().nth_back(4).unwrap();
         assert!(last.starts_with("── no command /nope ─"), "{last}");
         typed(&mut app, "x");
         assert!(app.unknown.is_none());
@@ -3113,12 +3126,24 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    /// The status line, the last row of the screen.
-    fn status_row(app: &mut App, width: u16) -> String {
+    const CONTEXT_ROW: u16 = 26;
+    const SETTINGS_ROW: u16 = 27;
+    const SESSION_ROW: u16 = 28;
+    const PLACE_ROW: u16 = 29;
+
+    fn screen_row(app: &mut App, width: u16, y: u16) -> String {
         let buffer = header_buffer(app, width);
         (0..width)
-            .map(|x| buffer[(x, 29)].symbol().to_string())
+            .map(|x| buffer[(x, y)].symbol().to_string())
             .collect()
+    }
+
+    fn settings_row(app: &mut App, width: u16) -> String {
+        screen_row(app, width, SETTINGS_ROW)
+    }
+
+    fn session_row(app: &mut App, width: u16) -> String {
+        screen_row(app, width, SESSION_ROW)
     }
 
     fn header_rows_all(app: &mut App, width: u16) -> String {
@@ -3134,34 +3159,66 @@ mod tests {
     }
 
     fn header(app: &mut App, width: u16) -> String {
-        status_row(app, width)
+        settings_row(app, width)
     }
 
     #[test]
-    fn the_status_line_shows_the_settings_on_the_left_and_the_session_on_the_right() {
+    fn the_footer_shows_the_context_then_the_settings_then_the_session_then_the_place() {
         use agent_client_protocol::v1::schema::{Cost, SessionUpdate, Usage, UsageUpdate};
 
         let mut app = with_settings();
+        app.agent = "claude".to_string();
         let update = UsageUpdate::new(28_481, 1_000_000).cost(Cost::new(0.136, "USD"));
         app.settings.apply(&SessionUpdate::UsageUpdate(update));
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
-        let line = status_row(&mut app, 120);
-        assert!(
-            line.starts_with(" auto · opus · effort default · fast off  "),
-            "{line}"
-        );
-        assert!(line.ends_with("↑28k ↓4 · $0.14 · idle "), "{line}");
-        assert!(!line.contains("ctx"), "{line}");
-        let buffer = header_buffer(&mut app, 120);
-        let context: String = (0..120)
-            .map(|x| buffer[(x, 28)].symbol().to_string())
-            .collect();
+        let context = screen_row(&mut app, 120, CONTEXT_ROW);
         assert!(context.starts_with(" context: 3%  ▰▰▰▱▱"), "{context}");
         assert_eq!(context.chars().filter(|ch| *ch == '▰').count(), 3);
         assert_eq!(context.chars().count(), 120);
-        assert!(!line.contains("coax"), "{line}");
+        let settings = settings_row(&mut app, 120);
+        assert!(settings.starts_with(" auto "), "{settings}");
+        assert!(settings.ends_with(" fast off "), "{settings}");
+        assert!(!settings.contains("idle"), "{settings}");
+        let session = session_row(&mut app, 120);
+        assert!(session.starts_with(" ↑28k ↓4 · $0.14   "), "{session}");
+        assert!(session.ends_with("   idle "), "{session}");
+        let place = screen_row(&mut app, 120, PLACE_ROW);
+        assert_eq!(place.trim_end(), " claude");
         assert_eq!(app.chips.len(), 4);
+    }
+
+    #[test]
+    fn the_settings_spread_across_the_row_and_each_chip_area_covers_its_label() {
+        let mut app = with_settings();
+        let row: Vec<char> = settings_row(&mut app, 120).chars().collect();
+        let labels: Vec<String> = app
+            .chips
+            .iter()
+            .map(|chip| {
+                let x = chip.area.x as usize;
+                row[x..x + chip.area.width as usize].iter().collect()
+            })
+            .collect();
+        assert_eq!(labels, ["auto", "opus", "effort default", "fast off"]);
+        assert_eq!(app.chips[0].area.x, 1);
+        let last = app.chips.last().unwrap().area;
+        assert_eq!(last.x + last.width, 119);
+        let gaps: Vec<u16> = app
+            .chips
+            .windows(2)
+            .map(|pair| pair[1].area.x - (pair[0].area.x + pair[0].area.width))
+            .collect();
+        assert!(
+            gaps.iter().max().unwrap() - gaps.iter().min().unwrap() <= 1,
+            "{gaps:?}"
+        );
+        assert!(gaps.iter().all(|gap| *gap > 3), "{gaps:?}");
+        for (pair, gap) in app.chips.windows(2).zip(&gaps) {
+            let start = (pair[0].area.x + pair[0].area.width) as usize;
+            let between: String = row[start..start + *gap as usize].iter().collect();
+            assert_eq!(between.trim(), "·");
+        }
     }
 
     #[test]
@@ -3177,8 +3234,8 @@ mod tests {
     fn the_status_line_has_no_powerline_glyph_and_no_background() {
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 100);
-        for x in 0..100 {
-            let cell = &buffer[(x, 29)];
+        for (x, y) in (0..100).flat_map(|x| (CONTEXT_ROW..=PLACE_ROW).map(move |y| (x, y))) {
+            let cell = &buffer[(x, y)];
             assert!(
                 !cell
                     .symbol()
@@ -3197,9 +3254,9 @@ mod tests {
         }
     }
 
-    /// The column at which `text` starts on the status line.
-    fn status_column(app: &mut App, width: u16, text: &str) -> u16 {
-        let line = status_row(app, width);
+    /// The column at which `text` starts on the session row.
+    fn session_column(app: &mut App, width: u16, text: &str) -> u16 {
+        let line = session_row(app, width);
         let index = line
             .find(text)
             .unwrap_or_else(|| panic!("{text} in {line}"));
@@ -3211,13 +3268,15 @@ mod tests {
         let palette = crate::palette::get();
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 120);
-        let at = |n: usize| &buffer[(app.chips[n].area.x, 29)];
+        let at = |n: usize| &buffer[(app.chips[n].area.x, SETTINGS_ROW)];
         assert_eq!(at(0).fg, palette.yellow);
         assert!(!is_dim(at(0)));
         assert_eq!(at(1).fg, palette.blue);
         assert_eq!(at(2).fg, palette.magenta);
         assert!(is_dim(at(3)));
-        assert!(is_dim(&buffer[(app.chips[0].area.x + 5, 29)]));
+        let row = settings_row(&mut app, 120);
+        let dot = row[..row.find('·').unwrap()].chars().count() as u16;
+        assert!(is_dim(&buffer[(dot, SETTINGS_ROW)]));
     }
 
     #[test]
@@ -3229,7 +3288,7 @@ mod tests {
         app.settings.open(None, Some(modes));
         let buffer = header_buffer(&mut app, 120);
         assert_eq!(
-            buffer[(app.chips[0].area.x, 29)].fg,
+            buffer[(app.chips[0].area.x, SETTINGS_ROW)].fg,
             crate::palette::get().cyan
         );
     }
@@ -3239,9 +3298,9 @@ mod tests {
         let mut app = with_settings();
         app.transcript.prompt("hi".to_string());
         let buffer = header_buffer(&mut app, 120);
-        assert!(is_dim(&buffer[(app.chips[1].area.x, 29)]));
+        assert!(is_dim(&buffer[(app.chips[1].area.x, SETTINGS_ROW)]));
         assert_eq!(
-            buffer[(app.chips[2].area.x, 29)].fg,
+            buffer[(app.chips[2].area.x, SETTINGS_ROW)].fg,
             crate::palette::get().magenta
         );
     }
@@ -3269,8 +3328,8 @@ mod tests {
         let width = 140;
         let buffer = header_buffer(&mut app, width);
         let mut cell = |text: &str, offset: u16| {
-            let x = status_column(&mut app, width, text) + offset;
-            buffer[(x, 29)].clone()
+            let x = session_column(&mut app, width, text) + offset;
+            buffer[(x, SESSION_ROW)].clone()
         };
         assert_eq!(cell("plan 1/2", 0).fg, palette.yellow);
         assert_eq!(cell("↑28k", 0).fg, palette.cyan);
@@ -3286,24 +3345,24 @@ mod tests {
 
         app.transcript.plan[1].status = PlanEntryStatus::Completed;
         let buffer = header_buffer(&mut app, width);
-        let x = status_column(&mut app, width, "plan 2/2");
-        assert_eq!(buffer[(x, 29)].fg, palette.green);
+        let x = session_column(&mut app, width, "plan 2/2");
+        assert_eq!(buffer[(x, SESSION_ROW)].fg, palette.green);
     }
 
     #[test]
     fn a_narrow_status_line_keeps_the_first_setting_and_ends_the_settings_in_the_overflow_mark() {
         let mut app = with_settings();
-        let line = status_row(&mut app, 30);
+        let line = settings_row(&mut app, 30);
         assert!(line.starts_with(" auto"), "{line}");
-        assert!(line.contains('⋯'), "{line}");
-        assert!(line.trim_end().ends_with("idle"), "{line}");
-        assert!(!line.contains("ctx"), "{line}");
+        assert!(line.trim_end().ends_with('⋯'), "{line}");
+        let session = session_row(&mut app, 30);
+        assert!(session.trim_end().ends_with("idle"), "{session}");
     }
 
     #[test]
     fn the_overflow_mark_replaces_the_settings_that_do_not_fit() {
         let mut app = with_settings();
-        let line = status_row(&mut app, 36);
+        let line = settings_row(&mut app, 36);
         assert!(line.contains('⋯'), "{line}");
         assert!(!line.contains("fast off"), "{line}");
         assert_eq!(
@@ -3318,7 +3377,10 @@ mod tests {
         header_buffer(&mut app, 120);
         let area = app.chips[2].area;
         let before = header_buffer(&mut app, 120);
-        assert_ne!(before[(area.x, 29)].fg, crate::palette::get().accent);
+        assert_ne!(
+            before[(area.x, SETTINGS_ROW)].fg,
+            crate::palette::get().accent
+        );
         app.mouse(wheel(
             MouseEventKind::Moved,
             KeyModifiers::NONE,
@@ -3327,11 +3389,11 @@ mod tests {
         ));
         let buffer = header_buffer(&mut app, 120);
         for x in area.x..area.x + area.width {
-            assert_eq!(buffer[(x, 29)].fg, crate::palette::get().accent);
+            assert_eq!(buffer[(x, SETTINGS_ROW)].fg, crate::palette::get().accent);
         }
         assert_eq!(
-            buffer[(app.chips[3].area.x, 29)],
-            before[(app.chips[3].area.x, 29)]
+            buffer[(app.chips[3].area.x, SETTINGS_ROW)],
+            before[(app.chips[3].area.x, SETTINGS_ROW)]
         );
     }
 
@@ -3340,7 +3402,7 @@ mod tests {
     fn working_row(app: &mut App, width: u16) -> String {
         let buffer = header_buffer(app, width);
         (0..width)
-            .map(|x| buffer[(x, 24)].symbol().to_string())
+            .map(|x| buffer[(x, 22)].symbol().to_string())
             .collect()
     }
 
@@ -3353,7 +3415,7 @@ mod tests {
         assert!(working_row(&mut app, 100).starts_with(" ◓ working "));
         app.spinner = 5;
         assert!(working_row(&mut app, 100).starts_with(" ◓ working "));
-        let status = status_row(&mut app, 100);
+        let status = session_row(&mut app, 100);
         assert!(!status.contains("working") && !status.contains("idle"));
     }
 
@@ -3436,10 +3498,10 @@ mod tests {
             .into();
         let rows = header_rows_all(&mut app, 60);
         let rows: Vec<&str> = rows.lines().collect();
-        assert!(rows[21].starts_with(" queued  two "), "{}", rows[21]);
-        assert!(rows[22].starts_with(" queued  three "), "{}", rows[22]);
-        assert!(rows[23].starts_with(" + 2 more queued"), "{}", rows[23]);
-        assert!(rows[24].starts_with(" ◐ working"), "{}", rows[24]);
+        assert!(rows[19].starts_with(" queued  two "), "{}", rows[19]);
+        assert!(rows[20].starts_with(" queued  three "), "{}", rows[20]);
+        assert!(rows[21].starts_with(" + 2 more queued"), "{}", rows[21]);
+        assert!(rows[22].starts_with(" ◐ working"), "{}", rows[22]);
     }
 
     fn ask_form(app: &mut App) -> oneshot::Receiver<ElicitationAction> {
@@ -3482,18 +3544,18 @@ mod tests {
         ask_form(&mut app);
         let screen = header_rows_all(&mut app, 100);
         let rows: Vec<&str> = screen.lines().collect();
-        assert!(rows[10].starts_with(" waiting for you"), "{screen}");
+        assert!(rows[8].starts_with(" waiting for you"), "{screen}");
         assert!(
-            rows[11].starts_with("── Please answer the following questions. ─"),
+            rows[9].starts_with("── Please answer the following questions. ─"),
             "{screen}"
         );
         assert!(
-            rows[11].ends_with(" 1 more   enter pick   esc dismiss ──"),
+            rows[9].ends_with(" 1 more   enter pick   esc dismiss ──"),
             "{screen}"
         );
-        assert_eq!(rows[12], format!("{:<100}", "  Storage"));
-        assert!(rows[27].starts_with("────"), "{screen}");
-        assert!(rows[..10].iter().all(|row| !row.contains("Storage")));
+        assert_eq!(rows[10], format!("{:<100}", "  Storage"));
+        assert!(rows[25].starts_with("────"), "{screen}");
+        assert!(rows[..8].iter().all(|row| !row.contains("Storage")));
     }
 
     #[test]
@@ -3543,7 +3605,7 @@ mod tests {
         app.transcript
             .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
         assert!(!header_rows_all(&mut app, 100).contains("working"));
-        assert!(status_row(&mut app, 100).ends_with("idle "));
+        assert!(session_row(&mut app, 100).ends_with("idle "));
     }
 
     #[test]
@@ -3554,7 +3616,7 @@ mod tests {
         click(&mut app, model.x, model.y);
         header(&mut app, 120);
         let menu = app.menu_area.expect("the box is drawn");
-        assert_eq!(menu.bottom(), 29);
+        assert_eq!(menu.bottom(), SETTINGS_ROW);
         assert_eq!(menu.x, model.x);
     }
 
@@ -4458,7 +4520,7 @@ mod tests {
         open_history(app);
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal
-            .draw(|frame| ui::draw_menu(frame, app, NOW))
+            .draw(|frame| ui::draw_menu(frame, app, 29, NOW))
             .unwrap();
         let area = app.menu_area.expect("the box is drawn");
         let rows = (area.y + 1..area.y + area.height - 1)
