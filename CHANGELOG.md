@@ -291,7 +291,8 @@ command line, the keys, and the scenario format the fake agent reads.
   The scheme of the target decides what the link does.
   - `color:<name>` draws the text in the palette slot of that name, any of
     the terminal's or coax's own, without an underline. An unknown name is
-    plain text.
+    plain text. The link text may hold bold and inline code, and a colour
+    link may sit inside bold. Both are drawn bold in the colour.
     The link has no hover and no click.
   - `file:<path>` or `file:<path>#<line>` draws the text underlined in blue.
     Hovering opens a popup with the path relative to the folder coax runs in,

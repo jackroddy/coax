@@ -3486,6 +3486,40 @@ mod tests {
         assert!(runs_of(&markdown("[failed](color:red) ok", 60)).is_empty());
     }
 
+    fn shown(text: &str) -> String {
+        let parts = markdown(text, 60);
+        let Part::Flow { rows, .. } = &parts[0] else {
+            panic!("no flow");
+        };
+        rows.lines[0].to_string()
+    }
+
+    #[test]
+    fn bold_in_a_color_link_draws_in_the_colour_and_bold_with_no_stars() {
+        let text = "[**failed**](color:red) ok";
+        assert_eq!(shown(text).trim_end(), "failed ok");
+        let style = style_of(text, "failed");
+        assert_eq!(style.fg, Some(palette::get().red));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+        assert!(!style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn inline_code_in_a_color_link_draws_in_the_colour_with_no_backticks() {
+        let text = "[`x`](color:red) ok";
+        assert_eq!(shown(text).trim_end(), "x ok");
+        assert_eq!(style_of(text, "x").fg, Some(palette::get().red));
+    }
+
+    #[test]
+    fn a_color_link_in_bold_draws_in_the_colour_and_bold() {
+        let text = "**[ok](color:green)** done";
+        assert_eq!(shown(text).trim_end(), "ok done");
+        let style = style_of(text, "ok");
+        assert_eq!(style.fg, Some(palette::get().green));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
     #[test]
     fn a_color_link_with_an_unknown_name_is_plain_text() {
         let style = style_of("[odd](color:mauve) ok", "odd");

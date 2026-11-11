@@ -2358,6 +2358,33 @@ mod tests {
         assert!(app.link_areas.is_empty());
     }
 
+    #[test]
+    fn a_file_link_with_bold_and_code_in_its_text_hovers_and_clicks_on_every_column() {
+        let mut app = app();
+        app.wide.clear();
+        app.transcript
+            .entries
+            .push(reply("see [**ui**`.rs`](file:src/ui.rs#4) now"));
+        let screen = header_rows_all(&mut app, 40);
+        assert_eq!(app.link_areas.len(), 1, "{screen}");
+        let area = app.link_areas[0].area;
+        let row = screen.lines().nth(area.y as usize).unwrap();
+        let text: String = row
+            .chars()
+            .skip(area.x as usize)
+            .take(area.width as usize)
+            .collect();
+        assert_eq!(text, "ui.rs");
+        for x in area.x..area.x + area.width {
+            app.hover_link = None;
+            app.mouse(wheel(MouseEventKind::Moved, KeyModifiers::NONE, x, area.y));
+            assert_eq!(app.hover_link.as_ref().unwrap().target, "file:src/ui.rs#4");
+            app.unknown = None;
+            click(&mut app, x, area.y);
+            assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
+        }
+    }
+
     /// An app whose first entry is agent text with one code block, drawn
     /// once so the copy glyph has a place on screen.
     fn with_a_code_block() -> App {
