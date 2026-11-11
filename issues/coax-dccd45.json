@@ -3,26 +3,29 @@
   "title": "The footer is a solid slab of context, status and progress rows",
   "body": "0112b78 split the footer into context, settings, session and place rows, with the settings spread across the width. On screen the spread rows read as scattered text, and Jack found the place row (agent, folder, branch, title) mostly noise.\n\n## Proposal\n\n```text\n context 42%  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱\n auto · opus 5.5 · effort default · ⋯            ↑128k ↓4.2k · $1.84 · idle\n ▶ plan 2/5 · running the tests and fixing what fails           last turn 41s\n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n```\n\n- The context row, the status line and the progress row sit on the palette's `tint` as a background, edge to edge. A row of `▀` in `tint` under them closes the slab.\n- The status line is the one from before 0112b78: settings packed on the left with ` · `, overflow into `⋯`, and tokens, cost, decade, the update notice and the state on the right.\n- The progress row shows `▶ plan n/m` and the step in progress on the left, and on the right the running tool's title during a turn, or how long the last turn took once idle. A part with nothing to show is left out.\n- The place row goes.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T02:41:47.337696186Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T02:26:30.961734933Z",
-  "updated_at": "2026-11-11T02:26:47.337696186Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T02:32:10.688883604Z",
+  "closed_at": "2026-11-11T02:32:10.688883604Z",
+  "close_reason": "Landed in c2b37b4 on dev. The status line from before 0112b78 is back, with the plan summary moved to a new progress row. The context row, the status line and the progress row sit on `tint`, with a row of `▀` under them. The place row and `header::branch` are gone. `Settings::title` is still tracked.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "0112b78",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "c2b37b4",
+      "branch": "dev"
+    }
   }
 }
