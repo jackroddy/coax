@@ -53,7 +53,14 @@ pub struct Choice {
     pub value: String,
     pub title: String,
     pub description: Option<String>,
+
+    /// Fixed-width text to show while the option has the cursor.
+    pub preview: Option<String>,
 }
+
+/// The key under an option's `_meta` where the Claude adapter puts
+/// `{ "preview": <text> }`.
+const PREVIEW_KEY: &str = "_claude/askUserQuestionOption";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Number {
@@ -100,6 +107,19 @@ impl Form {
         }
         rows.push(Row::Submit);
         rows
+    }
+
+    /// The preview of the option the cursor is on, with its field's index.
+    pub fn focused_preview(&self) -> Option<(usize, &str)> {
+        let Row::Option(field, option) = *self.rows().get(self.cursor)? else {
+            return None;
+        };
+        match &self.fields[field].kind {
+            Kind::Choice { options, .. } | Kind::Many { options, .. } => {
+                Some((field, options[option].preview.as_deref()?))
+            }
+            _ => None,
+        }
     }
 
     /// Handle a key, and return the answer once the form is submitted or
@@ -267,8 +287,14 @@ fn choices(options: &[EnumOption]) -> Vec<Choice> {
             value: option.value.clone(),
             title: option.title.clone(),
             description: option.description.clone(),
+            preview: preview(option),
         })
         .collect()
+}
+
+fn preview(option: &EnumOption) -> Option<String> {
+    let preview = option.meta.as_ref()?.get(PREVIEW_KEY)?.get("preview")?;
+    preview.as_str().map(str::to_string)
 }
 
 fn plain_choices(values: &[String]) -> Vec<Choice> {
@@ -278,6 +304,7 @@ fn plain_choices(values: &[String]) -> Vec<Choice> {
             value: value.clone(),
             title: value.clone(),
             description: None,
+            preview: None,
         })
         .collect()
 }
@@ -320,7 +347,7 @@ fn value(field: &Field) -> Result<Option<ElicitationContentValue>, String> {
     }))
 }
 
-fn row_field(row: Row) -> Option<usize> {
+pub fn row_field(row: Row) -> Option<usize> {
     match row {
         Row::Option(field, _) | Row::Text(field) | Row::Toggle(field) => Some(field),
         Row::Submit => None,
@@ -435,6 +462,21 @@ mod tests {
             Some(&ElicitationContentValue::String("on SSD".to_string()))
         );
         assert!(!content.contains_key("question_1"));
+    }
+
+    #[test]
+    fn an_options_preview_is_read_from_its_meta_and_shows_only_while_it_has_the_cursor() {
+        let mut form = questions();
+        let Kind::Choice { options, .. } = &form.fields[0].kind else {
+            panic!("the first field is a choice");
+        };
+        assert_eq!(options[0].preview, None);
+        assert!(options[1].preview.as_deref().unwrap().starts_with("state/"));
+        assert_eq!(form.focused_preview(), None);
+        press(&mut form, KeyCode::Down);
+        assert!(matches!(form.focused_preview(), Some((0, text)) if text.starts_with("state/")));
+        press(&mut form, KeyCode::Down);
+        assert_eq!(form.focused_preview(), None);
     }
 
     #[test]

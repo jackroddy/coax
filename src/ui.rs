@@ -17,7 +17,7 @@ use crate::app::{App, ExitKey, MenuTarget};
 use crate::clock::Time;
 use crate::command;
 use crate::diff::line_diff;
-use crate::form::{Form, Kind as FormKind, Row};
+use crate::form::{self, Form, Kind as FormKind, Row};
 use crate::header;
 use crate::links::{self, Kind};
 use crate::palette;
@@ -91,7 +91,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(line), working_area);
     }
     match form {
-        Some((lines, cursor)) => draw_form(frame, upper_rule, prompt_area, app, lines, cursor),
+        Some((lines, focus)) => draw_form(frame, upper_rule, prompt_area, app, lines, focus),
         None => {
             draw_rule(frame, upper_rule);
             draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
@@ -2299,15 +2299,15 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// The open form in the prompt's place, scrolled to keep the cursor's line
-/// in view, under a rule carrying its message and keys.
+/// The open form in the prompt's place, scrolled to keep the `focus` lines in
+/// view, under a rule carrying its message and keys.
 fn draw_form(
     frame: &mut Frame,
     rule: Rect,
     area: Rect,
     app: &App,
     lines: Vec<Line<'static>>,
-    cursor: usize,
+    focus: Range<usize>,
 ) {
     let Some(asked) = &app.form else {
         return;
@@ -2332,7 +2332,10 @@ fn draw_form(
         ])),
         rule,
     );
-    let skip = (cursor + 1).saturating_sub(area.height as usize);
+    let skip = focus
+        .end
+        .saturating_sub(area.height as usize)
+        .min(focus.start);
     let lines: Vec<Line> = lines.into_iter().skip(skip).collect();
     let lead = PROMPT_LEAD.len() as u16;
     let body = Rect {
@@ -2343,17 +2346,16 @@ fn draw_form(
     frame.render_widget(Paragraph::new(lines), body);
 }
 
-/// The form's lines at `width`, and the line the cursor's row is on.
-fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, usize) {
+/// The form's lines at `width`, and the lines to keep in view: the cursor's
+/// row through the end of the preview it shows.
+fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, Range<usize>) {
     let rows = form.rows();
+    let preview = form.focused_preview();
     let mut lines: Vec<Line> = Vec::new();
-    let mut cursor_line = 0;
+    let mut focus = 0..0;
     let mut shown_field = None;
     for (index, row) in rows.iter().enumerate() {
-        let field = match row {
-            Row::Option(field, _) | Row::Text(field) | Row::Toggle(field) => Some(*field),
-            Row::Submit => None,
-        };
+        let field = form::row_field(*row);
         if field != shown_field {
             if !lines.is_empty() {
                 lines.push(Line::default());
@@ -2371,7 +2373,7 @@ fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, usize) {
             shown_field = field;
         }
         if index == form.cursor {
-            cursor_line = lines.len();
+            focus = lines.len()..lines.len() + 1;
         }
         let line = form_row(form, *row, width);
         lines.push(if index == form.cursor {
@@ -2379,6 +2381,14 @@ fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, usize) {
         } else {
             line
         });
+        let last_of_field = rows.get(index + 1).and_then(|next| form::row_field(*next)) != field;
+        if let Some((previewed, text)) = preview
+            && field == Some(previewed)
+            && last_of_field
+        {
+            lines.extend(preview_lines(text, width));
+            focus.end = lines.len();
+        }
     }
     if let Some(error) = &form.error {
         lines.push(Line::styled(
@@ -2386,7 +2396,27 @@ fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, usize) {
             Style::new().fg(palette::get().yellow),
         ));
     }
-    (lines, cursor_line)
+    (lines, focus)
+}
+
+/// An option's preview in a dim box at most `width` wide, each line cut to
+/// fit.
+fn preview_lines(preview: &str, width: usize) -> Vec<Line<'static>> {
+    let room = width.saturating_sub(4);
+    let text: Vec<String> = preview
+        .lines()
+        .map(|line| cut(&line.replace('\t', "    "), room))
+        .collect();
+    let inner = text.iter().map(|line| line.width()).max().unwrap_or(0);
+    let mut lines = vec![Line::styled(format!("╭{}╮", "─".repeat(inner + 2)), dim())];
+    for line in &text {
+        lines.push(Line::styled(
+            format!("│ {} │", pad_right(line, inner)),
+            dim(),
+        ));
+    }
+    lines.push(Line::styled(format!("╰{}╯", "─".repeat(inner + 2)), dim()));
+    lines
 }
 
 fn form_row(form: &Form, row: Row, width: usize) -> Line<'static> {

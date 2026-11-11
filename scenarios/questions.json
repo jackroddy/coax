@@ -14,7 +14,8 @@
                 "description": "Where should the cache live?",
                 "oneOf": [
                   {"const": "Memory", "title": "Memory", "description": "lost on restart"},
-                  {"const": "Disk", "title": "Disk", "description": "kept under the state directory"}
+                  {"const": "Disk", "title": "Disk", "description": "kept under the state directory",
+                   "_meta": {"_claude/askUserQuestionOption": {"preview": "state/\n  cache/\n    index.db\n    blobs/"}}}
                 ]
               },
               "question_0_custom": {

@@ -3497,6 +3497,23 @@ mod tests {
     }
 
     #[test]
+    fn the_focused_options_preview_shows_in_a_box_under_its_question() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        ask_form(&mut app);
+        assert!(!header_rows_all(&mut app, 100).contains("index.db"));
+        press(&mut app, KeyCode::Down);
+        let screen = header_rows_all(&mut app, 100);
+        let rows: Vec<&str> = screen.lines().collect();
+        let disk = rows.iter().position(|row| row.contains("○ Disk")).unwrap();
+        assert!(rows[disk + 1].starts_with("  ╭──"), "{screen}");
+        assert!(rows[disk + 2].starts_with("  │ state/ "), "{screen}");
+        assert!(rows[disk + 4].starts_with("  │     index.db │"), "{screen}");
+        press(&mut app, KeyCode::Down);
+        assert!(!header_rows_all(&mut app, 100).contains("index.db"));
+    }
+
+    #[test]
     fn the_end_of_the_turn_cancels_an_open_form() {
         use agent_client_protocol::v1::schema::StopReason;
 
