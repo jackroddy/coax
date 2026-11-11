@@ -3,26 +3,29 @@
   "title": "A tab box at a narrow width can show no tab name",
   "body": "A box of tabbed fences (`Part::Tabs` in `ui.rs`) draws its tab names on the header row after the language, and `fitting_tabs` keeps the names that fit, with a `+N` word for the rest. The `render raw` and `wrap pan` words keep their room first. At about 34 columns a `rust` box with two tabs drew `┌ rust   +2   wrap pan   ⧉`, with no tab name, so nothing says which tab is shown.\n\n## Proposal\n\nThe shown tab's name always appears, cut with `…` when it has to be. The other toggle words give up room before it does.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T03:14:03.737270367Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T00:32:20.228605947Z",
-  "updated_at": "2026-11-11T02:59:03.737270367Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T03:00:44.899944203Z",
+  "closed_at": "2026-11-11T03:00:44.899944203Z",
+  "close_reason": "Fixed in 3eebf87. The tab header drops `render raw` and `wrap pan` until `fitting_tabs` finds room for the shown tab. Past that, the shown name is cut with `…`. The `+N` is dropped as well when the name would otherwise be a bare `…`, so at that width the tabs cannot be switched. Below about 22 columns a `rust` box still shows only `…`.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e619019",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "3eebf87",
+      "branch": "dev"
+    }
   }
 }
