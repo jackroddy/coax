@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-11T04:43:34.855599106Z",
   "defer_until": null,
   "created_at": "2026-11-11T03:05:24.052066912Z",
-  "updated_at": "2026-11-11T04:31:57.302675842Z",
+  "updated_at": "2026-11-11T04:32:40.256053888Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-11T04:31:57.302674602Z",
       "author": "Jack Roddy/bd10c4a0",
       "text": "Jack, 2026-11-11: the running-subagent count goes on the working line, the row above the prompt, with its own spinner, as in `◐ 1 agent running`. It shows while any subagent runs, turn or no turn. The progress row stays as it was. decade must hear working, not done, while any subagent runs. Jack saw it say done during a background subagent.",
+      "commit": "79f7f6d",
+      "branch": "dev"
+    },
+    {
+      "id": "b9203dcb",
+      "at": "2026-11-11T04:32:40.256053008Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Jack, 2026-11-11: the subagent indicator looks subtly different from the main spinner and has its own colour, and both can show at once. The main turn keeps `◐◓◑◒` in yellow. Subagents get `◴◷◶◵` in cyan. Together they read `◐ working · 41s  ◴ 2 agents running · esc to cancel`.",
       "commit": "79f7f6d",
       "branch": "dev"
     }
