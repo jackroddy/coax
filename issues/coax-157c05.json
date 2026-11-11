@@ -1,6 +1,6 @@
 {
   "id": "coax-157c05",
-  "title": "A file link can name a function instead of a line",
+  "title": "A file link can name a function, which the previewing pane looks up",
   "body": "A `file:` link points at a place in the code by line, as in `[src/acp.rs:117](file:src/acp.rs#117)`. `file` in `links.rs` reads the part after `#` as a line number. A click sends decade a `show` whose `at` is that number, as JSON, and the pane that previews code opens the file there. A line number goes stale as soon as the file changes above it, and agents most often mean a function.\n\n## Proposal\n\n- The part after `#` may name a function, as in `[Link::prompt](file:src/acp.rs#Link::prompt)`.\n- coax does not look the name up. A click passes it through in the `show` it sends decade, in `at` beside where a line goes today, as in `{\"symbol\": \"Link::prompt\"}`. The pane that previews code finds the function and decides what to do when it cannot.\n- Hovering shows the path and the function's name, with no lookup.\n- The coax output style tells agents to prefer a function link over a line link when they mean a function.\n\n## Open\n\n- The shape of a symbol in decade's `show` request, and which preview programs handle it. That is decade's and the previewers' work, and wants an issue in decade's tracker once the shape is agreed.\n- Whether a function link draws differently from a line link.",
   "type": "feature",
   "status": "open",
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T02:50:17.919234261Z",
-  "updated_at": "2026-11-11T02:51:49.772713602Z",
+  "updated_at": "2026-11-11T02:51:49.782306341Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
