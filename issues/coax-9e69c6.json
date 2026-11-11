@@ -3,26 +3,29 @@
   "title": "A selection across a wide block copies only the columns on screen",
   "body": "Drag selection (c813ecf) copies the text the last draw recorded for each row. A code block or table wider than the transcript pans, so only its visible columns are drawn, and a selection that crosses it copies those columns and drops the rest of each line. A drag that starts inside such a block selects nothing.\n\n## Proposal\n\nWhen a selection covers a whole row of a wide block, the copy takes the block's full line, not the visible window. A selection that starts and ends inside one row of the block keeps the visible columns.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T03:17:20.834240712Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T00:32:20.248997848Z",
-  "updated_at": "2026-11-11T03:02:20.834240712Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T03:03:54.14819611Z",
+  "closed_at": "2026-11-11T03:03:54.14819611Z",
+  "close_reason": "Fixed in aecbbd8. `LineText` has a `whole` field, which `windowed` sets when a panned row is cut. `Selection::copy` takes that line when the selection spans more than one row and picks every shown cell of the row. A row panned out of view entirely counts as covered. A drag that starts inside a panned block still selects nothing, as before.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e619019",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "aecbbd8",
+      "branch": "dev"
+    }
   }
 }
