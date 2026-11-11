@@ -89,8 +89,8 @@ command line, the keys, and the scenario format the fake agent reads.
   `update` steps. With it, the fake agent advertises `session/list` and
   `session/load`, lists the sessions and replays a session's history when it
   is loaded. `scenarios/resume.json` is an example.
-- A dim status line under the prompt shows the session's settings on the
-  left, joined by `·`, such as `auto · opus · effort default · fast off`. The
+- A status line under the prompt shows the session's settings on the
+  left, joined by a dim `·`, such as `auto · opus · effort default · fast off`. The
   mode and the model show their value alone and the rest show the name and
   the value, in the order mode, model, thought level, other model settings,
   then the rest. A click on a setting opens a box above it that lists the
@@ -98,8 +98,9 @@ command line, the keys, and the scenario format the fake agent reads.
   arrow keys with Enter applies the choice through
   `session/set_config_option`, Esc or a click elsewhere closes the box, and an
   error from the agent shows in the box. A yes or no setting flips on a click.
-  The mode value is yellow in `auto` and `bypassPermissions`, where the agent
-  does not ask. A value turns the accent colour under the pointer. When the
+  The mode value is cyan, or yellow in `auto` and `bypassPermissions`, where
+  the agent does not ask. The model is blue and the thought level magenta.
+  The other settings are dim. A value turns the accent colour under the pointer. When the
   settings do not fit, they move from the right into a dim `⋯` that lists
   them. An agent with no config options but with modes gets a mode setting
   through `session/set_mode`.
@@ -109,7 +110,9 @@ command line, the keys, and the scenario format the fake agent reads.
   Before the agent reports a context size, the row has no percentage and an
   empty bar.
 - The status line also shows the session's tokens as `↑28k ↓4` with the cost
-  after them, such as `$0.14`, when the agent sends one. On a narrow screen
+  after them, such as `$0.14`, when the agent sends one. The `↑` is cyan and
+  the `↓` green, with the numbers in the foreground colour. The cost is
+  orange. On a narrow screen
   the model config settings and settings with no category move into `⋯`
   first. Then the tokens and cost go, then the plan summary, and then the
   remaining settings from the right.
@@ -297,7 +300,8 @@ command line, the keys, and the scenario format the fake agent reads.
   the ACP registry. After the agent initializes, coax fetches that id's
   `agent.json` from the registry's repository with `curl` in the background.
   When the registry's `version` is later than the agent's reported version,
-  the status line shows `<version> available`, dim, at the right. Only the
+  the status line shows `<version> available` in the accent colour, at the
+  right. Only the
   numbers before any `-` or `+` are compared, so a preview suffix is ignored.
   The fetched version is cached for a day in `registry-<id>.json` under
   `$XDG_CACHE_HOME/coax` (`~/.cache/coax` without it). A failed fetch shows
@@ -385,9 +389,10 @@ command line, the keys, and the scenario format the fake agent reads.
 - An idle session no longer spins a core. A closed decade connection used to wake
   the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The
-  conversation starts on the first row, and a dim status line under the
+  conversation starts on the first row, and a status line under the
   prompt carries the settings, the plan summary, context, tokens, cost and
-  decade when connected, and `idle` between turns. While a turn runs, a row
+  decade when connected, and `idle` between turns. `decade` is cyan and
+  `idle` dim. While a turn runs, a row
   above the prompt shows a spinner stepping through `◐◓◑◒`, `working`, the
   time since the prompt was sent and `esc to cancel`. While a permission
   request waits, the row reads `waiting for you` in yellow, with the time.
@@ -404,7 +409,8 @@ command line, the keys, and the scenario format the fake agent reads.
 - The prompt sits between two rules and shows one row. It wraps at word
   breaks and grows with the text up to half the screen. There is no footer
   row of key hints. When the agent has sent a plan, the status line shows how
-  many steps are done, before the idle state.
+  many steps are done, before the idle state. It is yellow while steps
+  remain and green when all are done.
 - Ctrl+c no longer quits at once in a session. While the agent is working it
   cancels the turn, as Esc does, and with text in the prompt it clears the
   prompt. Otherwise, including with the permission box open, it arms an exit

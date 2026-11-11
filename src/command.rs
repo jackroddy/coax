@@ -157,7 +157,7 @@ mod tests {
     use agent_client_protocol::v1::schema::{AvailableCommandInput, UnstructuredCommandInput};
 
     use super::*;
-    use crate::settings::Control;
+    use crate::settings::{Category, Control};
 
     fn setting(name: &str) -> Setting {
         Setting {
@@ -168,8 +168,7 @@ mod tests {
             control: Control::Flip(false),
             unguarded: false,
             from_modes: false,
-            model: false,
-            rarely_changed: false,
+            category: Category::Other,
         }
     }
 

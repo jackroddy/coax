@@ -35,7 +35,7 @@ use crate::registry;
 use crate::report::{self, Reporter, Snapshot};
 use crate::select::{self, Point, Selection};
 use crate::session::{Entry, Transcript};
-use crate::settings::{Control, Setting, Settings};
+use crate::settings::{Category, Control, Setting, Settings};
 use crate::ui::{self, Word};
 
 const WHEEL_LINES: usize = 3;
@@ -991,7 +991,11 @@ impl App {
         };
         match &setting.control {
             Control::Flip(on) => Action::Change(flip(&setting.id, *on)),
-            Control::Choose(_) if setting.model && self.transcript.in_flight => Action::None,
+            Control::Choose(_)
+                if setting.category == Category::Model && self.transcript.in_flight =>
+            {
+                Action::None
+            }
             Control::Choose(choices) => {
                 self.menu = Some(Menu {
                     target: MenuTarget::Setting(setting.id.clone()),
@@ -1274,7 +1278,7 @@ impl App {
                         value: SessionConfigOptionValue::value_id(choice.value.clone()),
                     }
                 };
-                if !(setting.model && self.has_conversation()) {
+                if !(setting.category == Category::Model && self.has_conversation()) {
                     return Action::Change(change);
                 }
                 // a model change in a conversation waits for a second choice
@@ -1304,7 +1308,9 @@ impl App {
                 };
                 match &setting.control {
                     Control::Flip(on) => Action::Change(flip(&setting.id, *on)),
-                    Control::Choose(_) if setting.model && self.transcript.in_flight => {
+                    Control::Choose(_)
+                        if setting.category == Category::Model && self.transcript.in_flight =>
+                    {
                         Action::None
                     }
                     Control::Choose(choices) => {
@@ -3184,20 +3190,104 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_status_line_is_dim_but_for_the_mode_value_when_the_agent_does_not_ask() {
-        use ratatui::style::Modifier;
+    fn is_dim(cell: &ratatui::buffer::Cell) -> bool {
+        match crate::palette::get().muted {
+            Some(muted) => cell.fg == muted,
+            None => cell.modifier.contains(ratatui::style::Modifier::DIM),
+        }
+    }
 
+    /// The column at which `text` starts on the status line.
+    fn status_column(app: &mut App, width: u16, text: &str) -> u16 {
+        let line = status_row(app, width);
+        let index = line
+            .find(text)
+            .unwrap_or_else(|| panic!("{text} in {line}"));
+        line[..index].chars().count() as u16
+    }
+
+    #[test]
+    fn the_settings_on_the_status_line_are_coloured_by_what_they_set() {
+        let palette = crate::palette::get();
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 120);
-        let (mode, model) = (app.chips[0].area, app.chips[1].area);
-        assert_eq!((mode.x, mode.y), (1, 29));
-        assert_eq!(model.x, 1 + "auto".len() as u16 + 3);
-        let auto = &buffer[(mode.x, 29)];
-        assert_eq!(auto.fg, crate::palette::get().yellow);
-        assert!(!auto.modifier.contains(Modifier::DIM));
-        assert!(buffer[(model.x, 29)].modifier.contains(Modifier::DIM));
-        assert!(buffer[(mode.x + 5, 29)].modifier.contains(Modifier::DIM));
+        let at = |n: usize| &buffer[(app.chips[n].area.x, 29)];
+        assert_eq!(at(0).fg, palette.yellow);
+        assert!(!is_dim(at(0)));
+        assert_eq!(at(1).fg, palette.blue);
+        assert_eq!(at(2).fg, palette.magenta);
+        assert!(is_dim(at(3)));
+        assert!(is_dim(&buffer[(app.chips[0].area.x + 5, 29)]));
+    }
+
+    #[test]
+    fn a_mode_in_which_the_agent_asks_is_cyan_on_the_status_line() {
+        use agent_client_protocol::v1::schema::{SessionMode, SessionModeState};
+
+        let mut app = app();
+        let modes = SessionModeState::new("plan", vec![SessionMode::new("plan", "Plan")]);
+        app.settings.open(None, Some(modes));
+        let buffer = header_buffer(&mut app, 120);
+        assert_eq!(
+            buffer[(app.chips[0].area.x, 29)].fg,
+            crate::palette::get().cyan
+        );
+    }
+
+    #[test]
+    fn the_model_on_the_status_line_is_dim_during_a_turn() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        let buffer = header_buffer(&mut app, 120);
+        assert!(is_dim(&buffer[(app.chips[1].area.x, 29)]));
+        assert_eq!(
+            buffer[(app.chips[2].area.x, 29)].fg,
+            crate::palette::get().magenta
+        );
+    }
+
+    #[test]
+    fn the_session_items_on_the_status_line_are_coloured_by_what_they_show() {
+        use agent_client_protocol::v1::schema::{
+            Cost, PlanEntry, PlanEntryPriority, PlanEntryStatus, SessionUpdate, Usage, UsageUpdate,
+        };
+
+        let palette = crate::palette::get();
+        let mut app = with_settings();
+        let update = UsageUpdate::new(28_481, 1_000_000).cost(Cost::new(0.136, "USD"));
+        app.settings.apply(&SessionUpdate::UsageUpdate(update));
+        app.settings
+            .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
+        let entry = |status| PlanEntry::new("step", PlanEntryPriority::Medium, status);
+        app.transcript.plan = vec![
+            entry(PlanEntryStatus::Completed),
+            entry(PlanEntryStatus::Pending),
+        ];
+        app.decade_pane = Some(String::new());
+        app.update = Some("0.9.0".to_string());
+
+        let width = 140;
+        let buffer = header_buffer(&mut app, width);
+        let mut cell = |text: &str, offset: u16| {
+            let x = status_column(&mut app, width, text) + offset;
+            buffer[(x, 29)].clone()
+        };
+        assert_eq!(cell("plan 1/2", 0).fg, palette.yellow);
+        assert_eq!(cell("↑28k", 0).fg, palette.cyan);
+        assert_eq!(cell("↑28k", 1).fg, palette.foreground);
+        assert!(!is_dim(&cell("↑28k", 1)));
+        assert_eq!(cell("↓4", 0).fg, palette.green);
+        assert_eq!(cell("↓4", 1).fg, palette.foreground);
+        assert_eq!(cell("$0.14", 0).fg, palette.orange);
+        assert_eq!(cell("decade", 0).fg, palette.cyan);
+        assert_eq!(cell("0.9.0 available", 0).fg, palette.accent);
+        assert!(is_dim(&cell("idle", 0)));
+        assert!(is_dim(&cell(" · idle", 1)));
+
+        app.transcript.plan[1].status = PlanEntryStatus::Completed;
+        let buffer = header_buffer(&mut app, width);
+        let x = status_column(&mut app, width, "plan 2/2");
+        assert_eq!(buffer[(x, 29)].fg, palette.green);
     }
 
     #[test]

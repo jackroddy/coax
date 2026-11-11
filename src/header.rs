@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, ChipArea, ChipTarget};
 use crate::palette;
-use crate::settings;
+use crate::settings::{self, Category};
 use crate::ui::dim;
 
 const OVERFLOW_CHIP: &str = "⋯";
@@ -49,8 +49,7 @@ fn identity(title: &str) -> Vec<Span<'static>> {
 
 /// One item of the status side of line 1.
 struct Item {
-    text: String,
-    style: Style,
+    spans: Vec<Span<'static>>,
 
     /// 0 stays when short of room. Otherwise the highest rank goes first.
     rank: u8,
@@ -58,11 +57,14 @@ struct Item {
 
 impl Item {
     fn new(text: String, style: Style, rank: u8) -> Item {
-        Item { text, style, rank }
+        Item {
+            spans: vec![Span::styled(text, style)],
+            rank,
+        }
     }
 
     fn width(&self) -> usize {
-        self.text.width()
+        self.spans.iter().map(Span::width).sum()
     }
 }
 
@@ -122,6 +124,7 @@ fn fit_line(
 }
 
 fn status(app: &App) -> Vec<Item> {
+    let palette = palette::get();
     let mut items = Vec::new();
 
     let plan = &app.transcript.plan;
@@ -130,26 +133,37 @@ fn status(app: &App) -> Vec<Item> {
             .iter()
             .filter(|entry| entry.status == PlanEntryStatus::Completed)
             .count();
-        items.push(Item::new(format!("plan {done}/{}", plan.len()), dim(), 1));
+        let colour = if done == plan.len() {
+            palette.green
+        } else {
+            palette.yellow
+        };
+        let text = format!("plan {done}/{}", plan.len());
+        items.push(Item::new(text, Style::new().fg(colour), 1));
     }
     if let Some(tokens) = &app.settings.tokens {
-        let text = format!(
-            "↑{} ↓{}",
-            settings::count(tokens.up),
-            settings::count(tokens.down)
-        );
-        items.push(Item::new(text, dim(), 3));
+        let number = Style::new().fg(palette.foreground);
+        let spans = vec![
+            Span::styled("↑", Style::new().fg(palette.cyan)),
+            Span::styled(settings::count(tokens.up), number),
+            Span::styled(" ↓", Style::new().fg(palette.green)),
+            Span::styled(settings::count(tokens.down), number),
+        ];
+        items.push(Item { spans, rank: 3 });
         if let Some(cost) = &app.settings.cost {
-            items.push(Item::new(settings::money(cost), dim(), 3));
+            let orange = Style::new().fg(palette.orange);
+            items.push(Item::new(settings::money(cost), orange, 3));
         }
     }
+    let cyan = Style::new().fg(palette.cyan);
     match &app.decade_pane {
-        Some(pane) if pane.is_empty() => items.push(Item::new("decade".to_string(), dim(), 0)),
-        Some(pane) => items.push(Item::new(format!("decade pane {pane}"), dim(), 0)),
+        Some(pane) if pane.is_empty() => items.push(Item::new("decade".to_string(), cyan, 0)),
+        Some(pane) => items.push(Item::new(format!("decade pane {pane}"), cyan, 0)),
         None => {}
     }
     if let Some(version) = &app.update {
-        items.push(Item::new(format!("{version} available"), dim(), 4));
+        let accent = Style::new().fg(palette.accent);
+        items.push(Item::new(format!("{version} available"), accent, 4));
     }
     items.extend(state(app));
     items
@@ -205,8 +219,7 @@ fn context_line(context: Option<&settings::Context>, width: usize) -> Line<'stat
 }
 
 /// The status line: the settings on the left and the session status on the
-/// right, all dim but the mode value when the agent does not ask and a turn
-/// that stopped for a reason other than its end.
+/// right.
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
     let palette = palette::get();
     let settings = app.settings.settings();
@@ -217,7 +230,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
     let widths: Vec<usize> = texts.iter().map(|text| text.width()).collect();
     let steady = settings
         .iter()
-        .filter(|setting| !setting.rarely_changed)
+        .filter(|setting| !setting.category.rarely_changed())
         .count();
     let (shown, hidden, items) = fit_line(&widths, steady, status(app), area.width as usize);
 
@@ -237,15 +250,20 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
     };
     for (index, setting) in settings.iter().enumerate().take(shown) {
         let target = ChipTarget::Setting(index);
-        let mut style = dim();
-        if setting.unguarded {
-            style = Style::new().fg(palette.yellow);
-        }
-        if setting.model && app.transcript.in_flight {
-            style = dim();
+        let busy_model = setting.category == Category::Model && app.transcript.in_flight;
+        let style = if busy_model {
+            dim()
         } else if app.hover == Some(target) {
-            style = Style::new().fg(palette.accent);
-        }
+            Style::new().fg(palette.accent)
+        } else {
+            match setting.category {
+                Category::Mode if setting.unguarded => Style::new().fg(palette.yellow),
+                Category::Mode => Style::new().fg(palette.cyan),
+                Category::Model => Style::new().fg(palette.blue),
+                Category::ThoughtLevel => Style::new().fg(palette.magenta),
+                Category::ModelConfig | Category::Other => dim(),
+            }
+        };
         place(&mut spans, widths[index], target);
         spans.push(Span::styled(texts[index].clone(), style));
     }
@@ -269,7 +287,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
         if n > 0 {
             spans.push(Span::styled(SEPARATOR, dim()));
         }
-        spans.push(Span::styled(item.text, item.style));
+        spans.extend(item.spans);
     }
     spans.push(Span::raw(" "));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -289,7 +307,10 @@ mod tests {
     }
 
     fn names(items: &[Item]) -> Vec<&str> {
-        items.iter().map(|item| item.text.as_str()).collect()
+        items
+            .iter()
+            .map(|item| item.spans[0].content.as_ref())
+            .collect()
     }
 
     const WIDTHS: [usize; 4] = [4, 4, 14, 8];

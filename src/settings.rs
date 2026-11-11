@@ -48,12 +48,34 @@ pub struct Setting {
 
     /// Whether a change goes through `session/set_mode`.
     pub from_modes: bool,
+    pub category: Category,
+}
 
-    /// Whether the setting picks the model.
-    pub model: bool,
+/// What a setting sets, from the config option's category, in header order.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Category {
+    Mode,
+    Model,
+    ThoughtLevel,
+    ModelConfig,
+    Other,
+}
+
+impl Category {
+    fn of(category: Option<&SessionConfigOptionCategory>) -> Category {
+        match category {
+            Some(SessionConfigOptionCategory::Mode) => Category::Mode,
+            Some(SessionConfigOptionCategory::Model) => Category::Model,
+            Some(SessionConfigOptionCategory::ThoughtLevel) => Category::ThoughtLevel,
+            Some(SessionConfigOptionCategory::ModelConfig) => Category::ModelConfig,
+            _ => Category::Other,
+        }
+    }
 
     /// Whether the setting is model config or has no category.
-    pub rarely_changed: bool,
+    pub fn rarely_changed(self) -> bool {
+        self > Category::ThoughtLevel
+    }
 }
 
 pub enum Control {
@@ -133,35 +155,21 @@ impl Settings {
     pub fn model(&self) -> Option<String> {
         self.settings()
             .into_iter()
-            .find(|setting| setting.model)
+            .find(|setting| setting.category == Category::Model)
             .map(|setting| setting.label)
     }
 
     /// The settings in header order: mode, model, thought level, model
     /// config, then the rest in the order the agent sent them.
     pub fn settings(&self) -> Vec<Setting> {
-        let mut settings: Vec<(usize, Setting)> = self
-            .options
-            .iter()
-            .filter_map(|option| Some((rank(option.category.as_ref()), setting(option)?)))
-            .collect();
+        let mut settings: Vec<Setting> = self.options.iter().filter_map(setting).collect();
         if self.options.is_empty()
             && let Some(modes) = &self.modes
         {
-            settings.push((0, mode_setting(modes)));
+            settings.push(mode_setting(modes));
         }
-        settings.sort_by_key(|(rank, _)| *rank);
-        settings.into_iter().map(|(_, setting)| setting).collect()
-    }
-}
-
-fn rank(category: Option<&SessionConfigOptionCategory>) -> usize {
-    match category {
-        Some(SessionConfigOptionCategory::Mode) => 0,
-        Some(SessionConfigOptionCategory::Model) => 1,
-        Some(SessionConfigOptionCategory::ThoughtLevel) => 2,
-        Some(SessionConfigOptionCategory::ModelConfig) => 3,
-        _ => 4,
+        settings.sort_by_key(|setting| setting.category);
+        settings
     }
 }
 
@@ -171,8 +179,8 @@ fn is_unguarded(mode: &str) -> bool {
 }
 
 fn setting(option: &SessionConfigOption) -> Option<Setting> {
-    let is_mode = matches!(option.category, Some(SessionConfigOptionCategory::Mode));
-    let value_only = is_mode || matches!(option.category, Some(SessionConfigOptionCategory::Model));
+    let category = Category::of(option.category.as_ref());
+    let value_only = matches!(category, Category::Mode | Category::Model);
     let (value, control, current) = match &option.kind {
         SessionConfigKind::Select(select) => {
             let current = select.current_value.0.to_string();
@@ -211,10 +219,9 @@ fn setting(option: &SessionConfigOption) -> Option<Setting> {
         label,
         description: option.description.clone(),
         control,
-        unguarded: is_mode && is_unguarded(&current),
+        unguarded: category == Category::Mode && is_unguarded(&current),
         from_modes: false,
-        model: matches!(option.category, Some(SessionConfigOptionCategory::Model)),
-        rarely_changed: rank(option.category.as_ref()) > 2,
+        category,
     })
 }
 
@@ -242,8 +249,7 @@ fn mode_setting(modes: &SessionModeState) -> Setting {
         control: Control::Choose(choices),
         unguarded: is_unguarded(&current),
         from_modes: true,
-        model: false,
-        rarely_changed: false,
+        category: Category::Mode,
     }
 }
 
