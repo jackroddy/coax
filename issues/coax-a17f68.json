@@ -3,7 +3,7 @@
   "title": "The footer reads as solid without a tinted background",
   "body": "The slab footer (c2b37b4) put the context, status and progress rows on the palette's `tint`, closed by a row of `▀`. On Jack's screen the tint looked bad. He wanted glyphs that make the footer feel solid, with no frame and no rounded corners, and the context bar left exactly as it is.\n\n## Proposal\n\n- The tint background and the `▀` edge go.\n- The rule under the prompt becomes a heavy `━`, and a thin `─` takes the footer's last row.\n- The mode, the model and the thought level start with `◆`, `●` and `◐`, and the last turn's length with `◷`.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T02:36:31.638215851Z",
-  "updated_at": "2026-11-11T02:36:31.638215851Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T02:36:31.648038557Z",
+  "closed_at": "2026-11-11T02:36:31.648038557Z",
+  "close_reason": "Done in 2f6fc71, which dropped the tint, and 24d420e, which added the rules and marks. The context bar is unchanged.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "24d420e",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "24d420e",
+      "branch": "dev"
+    }
   }
 }
