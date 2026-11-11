@@ -70,8 +70,8 @@ on the wire>}`, `{"permission": {...}}`, `{"delay_ms": N}` or `{"stop":
 ## checks
 
 ```console
-$ cargo fmt --all
-$ cargo fmt --all --check
+$ cargo fmt
+$ cargo fmt --check
 $ cargo clippy --all-targets --all-features
 $ cargo test --all-features
 ```
