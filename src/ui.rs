@@ -1281,6 +1281,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                         &runs[..]
                     };
                     let more;
+                    let short_name;
                     let tab_words: Vec<(Word, &str)>;
                     let mut toggles = Vec::new();
                     if rendered.is_some() {
@@ -1301,7 +1302,9 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                         // the language before the tab names, and the
                         // other toggles and the copy glyph after them
                         let head = block_rows.lines[0].width();
-                        let rest = toggles_width(&toggles) + TOGGLE_GAP - 1 + COPY_ROOM;
+                        let rest = |toggles: &[Toggle]| {
+                            toggles_width(toggles) + TOGGLE_GAP - 1 + COPY_ROOM
+                        };
                         let all: usize = names.iter().map(|name| name.width() + 1).sum();
                         boxed = tabs
                             .iter()
@@ -1310,15 +1313,42 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                                 let raw = app.raw.contains(&key);
                                 block_view(tab, raw, app.wraps.get(&key).copied()).1
                             })
-                            .fold(head + TOGGLE_GAP + all - 1 + rest, usize::max);
-                        let room = boxed.min(visible_width).saturating_sub(head + rest);
-                        let fit = fitting_tabs(names, tab, room);
+                            .fold(head + TOGGLE_GAP + all - 1 + rest(&toggles), usize::max);
+                        let room = |toggles: &[Toggle]| {
+                            boxed
+                                .min(visible_width)
+                                .saturating_sub(head + rest(toggles))
+                        };
+
+                        // the other toggles give up their room before
+                        // the shown tab's name does
+                        let mut fit = fitting_tabs(names, tab, room(&toggles));
+                        while fit.is_empty() && toggles.pop().is_some() {
+                            fit = fitting_tabs(names, tab, room(&toggles));
+                        }
                         let mut words: Vec<(Word, &str)> = fit
                             .iter()
                             .map(|&n| (Word::Tab(n), names[n].as_str()))
                             .collect();
+                        let mut counted = true;
+                        if fit.is_empty() {
+                            fit.push(tab);
+                            let count = format!("+{}", names.len() - 1);
+                            let more_room = if names.len() > 1 { count.len() + 1 } else { 0 };
+                            let mut name_room =
+                                room(&toggles).saturating_sub(TOGGLE_GAP + more_room);
+
+                            // a lone `…` names no tab, so the count
+                            // gives up its room before the name does
+                            if name_room < 2 && names[tab].width() > name_room {
+                                counted = false;
+                                name_room = room(&toggles).saturating_sub(TOGGLE_GAP);
+                            }
+                            short_name = cut(&names[tab], name_room.max(1));
+                            words.push((Word::Tab(tab), short_name.trim_end()));
+                        }
                         let hidden = names.len() - fit.len();
-                        if hidden > 0 {
+                        if hidden > 0 && counted {
                             let next = (tab + 1..names.len())
                                 .chain(0..tab)
                                 .find(|n| !fit.contains(n))

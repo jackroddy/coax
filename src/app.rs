@@ -2551,6 +2551,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn at_a_narrow_width_the_shown_tab_keeps_its_name_and_wrap_pan_gives_way() {
+        let line = "x".repeat(60);
+        let text = format!(
+            "```rust tab=\"owned\"\n{line}\n```\n\n```rust tab=\"borrowed\"\nlet b = 2;\n```"
+        );
+        let mut app = app();
+        app.wide.clear();
+        app.transcript.entries.push(reply(text));
+        header(&mut app, 40);
+        let screen = header_rows_all(&mut app, 40);
+        assert!(screen.contains("┌ rust   owned +1   wrap pan"), "{screen}");
+        header(&mut app, 34);
+        let screen = header_rows_all(&mut app, 34);
+        assert!(screen.contains("┌ rust   owned +1  "), "{screen}");
+        assert!(!screen.contains("wrap"), "{screen}");
+        header(&mut app, 24);
+        let screen = header_rows_all(&mut app, 24);
+        assert!(screen.contains("┌ rust   own…   ⧉"), "{screen}");
+        assert!(app.toggles.iter().any(|toggle| toggle.word == Word::Tab(0)));
+    }
+
     /// An app whose first entry is one block fenced with `lang` and a line
     /// too long for a 40 column screen, drawn once.
     fn with_a_long_line(lang: &str) -> App {

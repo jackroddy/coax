@@ -187,7 +187,9 @@ command line, the keys, and the scenario format the fake agent reads.
   lists the tab names after the language, dim, with the shown tab in the
   accent colour. The first tab shows until a click on another name. When the
   names do not fit, the row shows the ones that fit and a `+N` for the rest.
-  A click on `+N` shows the next hidden tab. The copy glyph copies the shown
+  A click on `+N` shows the next hidden tab. At a narrow width the
+  `render raw` and `wrap pan` words leave the row first, then the `+N`, and
+  then the shown tab's name is cut with `…`. The copy glyph copies the shown
   tab. Each tab keeps its own `render raw` and `wrap pan` choice.
 - A click on an edit call shows its diff under it: removed lines in red after
   a `-`, added lines in green after a `+`, and the unchanged lines around
