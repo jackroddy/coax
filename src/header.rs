@@ -1,7 +1,6 @@
-use std::fs;
-use std::path::Path;
+use std::time::Duration;
 
-use agent_client_protocol::v1::schema::{PlanEntryStatus, StopReason};
+use agent_client_protocol::v1::schema::{PlanEntry, PlanEntryStatus, StopReason, ToolCallStatus};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -11,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, ChipArea, ChipTarget};
 use crate::palette;
+use crate::session::{Entry, Transcript};
 use crate::settings::{self, Category};
 use crate::ui::{self, dim};
 
@@ -50,7 +50,7 @@ fn identity(title: &str) -> Vec<Span<'static>> {
     ]
 }
 
-/// One item of the session row.
+/// One item of the right side of the status line.
 struct Item {
     spans: Vec<Span<'static>>,
 
@@ -88,73 +88,48 @@ fn settings_width(widths: &[usize], hidden: bool) -> usize {
     widths.iter().sum::<usize>() + gap * widths.len().saturating_sub(1) + overflow
 }
 
-/// How many settings fit on a row `width` columns wide, and whether a `⋯`
-/// stands for the rest. Settings leave from the right, and the first stays.
-fn fit_settings(widths: &[usize], width: usize) -> (usize, bool) {
+/// What fits on a line `width` columns wide: how many settings, whether a `⋯`
+/// stands for the rest, and the status items kept. The settings past the
+/// first `steady` go first, then the items, the highest rank first, then the
+/// rest of the settings from the right. The first setting and the rank 0
+/// items stay.
+fn fit_line(
+    widths: &[usize],
+    steady: usize,
+    mut items: Vec<Item>,
+    width: usize,
+) -> (usize, bool, Vec<Item>) {
     let mut shown = widths.len();
-    while shown > 1 && 2 + settings_width(&widths[..shown], shown < widths.len()) > width {
-        shown -= 1;
-    }
-    (shown, shown < widths.len())
-}
+    loop {
+        let hidden = shown < widths.len();
 
-/// The gaps between chips `widths` wide that spread them across a row
-/// `width` columns wide with a space at each end. The first gaps take the
-/// columns that do not divide evenly.
-fn gaps(widths: &[usize], width: usize) -> Vec<usize> {
-    let count = widths.len().saturating_sub(1);
-    if count == 0 {
-        return Vec::new();
-    }
-    let free = width.saturating_sub(2 + widths.iter().sum::<usize>());
-    let (each, extra) = (free / count, free % count);
-    (0..count)
-        .map(|n| (each + usize::from(n < extra)).max(SEPARATOR.width()))
-        .collect()
-}
-
-/// The status items left of the gap, then those right of it, with the
-/// highest rank dropped first until both fit on a row `width` columns wide.
-fn fit_session(mut left: Vec<Item>, mut right: Vec<Item>, width: usize) -> (Vec<Item>, Vec<Item>) {
-    // a space at each end and two between the sides
-    while 1 + items_width(&left) + 2 + items_width(&right) + 1 > width {
-        let Some(rank) = left
+        // a space at each end and two between the sides
+        let total = 1 + settings_width(&widths[..shown], hidden) + 2 + items_width(&items) + 1;
+        if total <= width {
+            return (shown, hidden, items);
+        }
+        let droppable = items
             .iter()
-            .chain(&right)
-            .map(|item| item.rank)
-            .filter(|rank| *rank > 0)
-            .max()
-        else {
-            break;
-        };
-        if let Some(index) = left.iter().position(|item| item.rank == rank) {
-            left.remove(index);
-        } else if let Some(index) = right.iter().position(|item| item.rank == rank) {
-            right.remove(index);
+            .enumerate()
+            .filter(|(_, item)| item.rank > 0)
+            .max_by_key(|(_, item)| item.rank)
+            .map(|(index, _)| index);
+        if shown > steady.max(1) {
+            shown -= 1;
+        } else if let Some(index) = droppable {
+            items.remove(index);
+        } else if shown > 1 {
+            shown -= 1;
+        } else {
+            return (shown, hidden, items);
         }
     }
-    (left, right)
 }
 
-/// The plan, the tokens and the cost.
-fn session_left(app: &App) -> Vec<Item> {
+fn status(app: &App) -> Vec<Item> {
     let palette = palette::get();
     let mut items = Vec::new();
 
-    let plan = &app.transcript.plan;
-    if !plan.is_empty() {
-        let done = plan
-            .iter()
-            .filter(|entry| entry.status == PlanEntryStatus::Completed)
-            .count();
-        let colour = if done == plan.len() {
-            palette.green
-        } else {
-            palette.yellow
-        };
-        let text = format!("plan {done}/{}", plan.len());
-        items.push(Item::new(text, Style::new().fg(colour), 1));
-    }
     if let Some(tokens) = &app.settings.tokens {
         let number = Style::new().fg(palette.foreground);
         let spans = vec![
@@ -169,13 +144,6 @@ fn session_left(app: &App) -> Vec<Item> {
             items.push(Item::new(settings::money(cost), orange, 3));
         }
     }
-    items
-}
-
-/// decade, the update notice and the idle state.
-fn session_right(app: &App) -> Vec<Item> {
-    let palette = palette::get();
-    let mut items = Vec::new();
     let cyan = Style::new().fg(palette.cyan);
     match &app.decade_pane {
         Some(pane) if pane.is_empty() => items.push(Item::new("decade".to_string(), cyan, 0)),
@@ -240,9 +208,9 @@ fn context_line(context: Option<&settings::Context>, width: usize) -> Line<'stat
     ])
 }
 
-/// The settings row: every setting chip spread across the row, with the
-/// ones that do not fit behind a `⋯`.
-pub fn draw_settings(frame: &mut Frame, area: Rect, app: &mut App) {
+/// The status line: the settings on the left and the session status on the
+/// right.
+pub fn draw_status(frame: &mut Frame, area: Rect, app: &mut App) {
     let palette = palette::get();
     let settings = app.settings.settings();
     let texts: Vec<String> = settings
@@ -250,174 +218,198 @@ pub fn draw_settings(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|setting| setting.label.to_lowercase())
         .collect();
     let widths: Vec<usize> = texts.iter().map(|text| text.width()).collect();
-    let (shown, hidden) = fit_settings(&widths, area.width as usize);
-    let mut chips: Vec<(ChipTarget, &str, usize)> = (0..shown)
-        .map(|index| {
-            (
-                ChipTarget::Setting(index),
-                texts[index].as_str(),
-                widths[index],
-            )
-        })
-        .collect();
-    if hidden {
-        chips.push((ChipTarget::Overflow(shown), OVERFLOW_CHIP, 1));
-    }
-    let chip_widths: Vec<usize> = chips.iter().map(|(_, _, width)| *width).collect();
-    let gaps = gaps(&chip_widths, area.width as usize);
+    let steady = settings
+        .iter()
+        .filter(|setting| !setting.category.rarely_changed())
+        .count();
+    let (shown, hidden, items) = fit_line(&widths, steady, status(app), area.width as usize);
 
     let mut spans = vec![Span::raw(" ")];
     let mut x = area.x + 1;
     app.chips.clear();
-    for (n, (target, text, width)) in chips.into_iter().enumerate() {
-        if n > 0 {
-            let gap = gaps[n - 1];
-            let before = (gap - 1) / 2;
-            spans.push(Span::raw(" ".repeat(before)));
-            spans.push(Span::styled("·", dim()));
-            spans.push(Span::raw(" ".repeat(gap - 1 - before)));
-            x += gap as u16;
+    let mut place = |spans: &mut Vec<Span<'static>>, width: usize, target: ChipTarget| {
+        if spans.len() > 1 {
+            spans.push(Span::styled(SEPARATOR, dim()));
+            x += SEPARATOR.width() as u16;
         }
-        let busy_model = matches!(target, ChipTarget::Setting(index)
-            if settings[index].category == Category::Model && app.transcript.in_flight);
-        let style = match target {
-            _ if busy_model => dim(),
-            _ if app.hover == Some(target) => Style::new().fg(palette.accent),
-            ChipTarget::Setting(index) => match settings[index].category {
-                Category::Mode if settings[index].unguarded => Style::new().fg(palette.yellow),
-                Category::Mode => Style::new().fg(palette.cyan),
-                Category::Model => Style::new().fg(palette.blue),
-                Category::ThoughtLevel => Style::new().fg(palette.magenta),
-                Category::ModelConfig | Category::Other => dim(),
-            },
-            ChipTarget::Overflow(_) => dim(),
-        };
         app.chips.push(ChipArea {
             area: Rect::new(x, area.y, width as u16, 1),
             target,
         });
-        spans.push(Span::styled(text.to_string(), style));
         x += width as u16;
+    };
+    for (index, setting) in settings.iter().enumerate().take(shown) {
+        let target = ChipTarget::Setting(index);
+        let busy_model = setting.category == Category::Model && app.transcript.in_flight;
+        let style = if busy_model {
+            dim()
+        } else if app.hover == Some(target) {
+            Style::new().fg(palette.accent)
+        } else {
+            match setting.category {
+                Category::Mode if setting.unguarded => Style::new().fg(palette.yellow),
+                Category::Mode => Style::new().fg(palette.cyan),
+                Category::Model => Style::new().fg(palette.blue),
+                Category::ThoughtLevel => Style::new().fg(palette.magenta),
+                Category::ModelConfig | Category::Other => dim(),
+            }
+        };
+        place(&mut spans, widths[index], target);
+        spans.push(Span::styled(texts[index].clone(), style));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-}
+    if hidden {
+        let target = ChipTarget::Overflow(shown);
+        let style = if app.hover == Some(target) {
+            Style::new().fg(palette.accent)
+        } else {
+            dim()
+        };
+        place(&mut spans, 1, target);
+        spans.push(Span::styled(OVERFLOW_CHIP, style));
+    }
 
-/// The session row: the plan, tokens and cost on the left, and decade, the
-/// update notice and the idle state on the right.
-pub fn draw_session(frame: &mut Frame, area: Rect, app: &App) {
-    let width = area.width as usize;
-    let (left, right) = fit_session(session_left(app), session_right(app), width);
-    let mut spans = vec![Span::raw(" ")];
-    let gap = width.saturating_sub(2 + items_width(&left) + items_width(&right));
-    push_items(&mut spans, left);
-    spans.push(Span::raw(" ".repeat(gap)));
-    push_items(&mut spans, right);
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-fn push_items(spans: &mut Vec<Span<'static>>, items: Vec<Item>) {
+    let left_width: usize = spans.iter().map(Span::width).sum();
+    let right_width = items_width(&items) + 1;
+    spans.push(Span::raw(" ".repeat(
+        (area.width as usize).saturating_sub(left_width + right_width),
+    )));
     for (n, item) in items.into_iter().enumerate() {
         if n > 0 {
             spans.push(Span::styled(SEPARATOR, dim()));
         }
         spans.extend(item.spans);
     }
+    spans.push(Span::raw(" "));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// The place row: the agent entry, the folder and the git branch on the
-/// left, and the session's title on the right.
-pub fn draw_place(frame: &mut Frame, area: Rect, app: &App) {
-    let folder = home_as_tilde(&app.cwd.display().to_string());
-    let line = place_line(
-        &app.agent,
-        &folder,
-        app.branch.as_deref(),
-        app.settings.title.as_deref(),
-        area.width as usize,
-    );
+/// The progress row: the plan's step in hand on the left, and on the right
+/// the running tool call during a turn or the last turn's length when idle.
+pub fn draw_progress(frame: &mut Frame, area: Rect, app: &App) {
+    let transcript = &app.transcript;
+    let note = if transcript.in_flight {
+        running_tool(transcript).map(str::to_string)
+    } else {
+        last_turn(transcript).map(|took| format!("last turn {}", ui::elapsed_text(took)))
+    };
+    let line = progress_line(&transcript.plan, note.as_deref(), area.width as usize);
     frame.render_widget(Paragraph::new(line), area);
 }
 
-fn place_line(
-    agent: &str,
-    folder: &str,
-    branch: Option<&str>,
-    title: Option<&str>,
-    width: usize,
-) -> Line<'static> {
-    let palette = palette::get();
-    let parts = [
-        (agent, palette.accent),
-        (folder, palette.blue),
-        (branch.unwrap_or_default(), palette.green),
-    ];
-    let mut spans = vec![Span::raw(" ")];
-    for (text, colour) in parts.into_iter().filter(|(text, _)| !text.is_empty()) {
-        if spans.len() > 1 {
-            spans.push(Span::styled(SEPARATOR, dim()));
-        }
-        spans.push(Span::styled(text.to_string(), Style::new().fg(colour)));
-    }
-    let left: usize = spans.iter().map(Span::width).sum();
+/// The title of the latest tool call that has not finished.
+fn running_tool(transcript: &Transcript) -> Option<&str> {
+    transcript
+        .entries
+        .iter()
+        .rev()
+        .find_map(|entry| match entry {
+            Entry::Tool(tool)
+                if !tool.cancelled
+                    && matches!(
+                        tool.status,
+                        ToolCallStatus::Pending | ToolCallStatus::InProgress
+                    ) =>
+            {
+                Some(tool.title.as_str())
+            }
+            _ => None,
+        })
+}
 
-    // two columns between the sides and a space at the right end
-    let room = width.saturating_sub(left + 2 + 1);
-    if let Some(title) = title.filter(|title| !title.is_empty() && room > 1) {
-        let title = ui::cut(title, room);
-        spans.push(Span::raw(" ".repeat(width - left - 1 - title.width())));
-        spans.push(Span::styled(title, Style::new().fg(palette.foreground)));
+fn last_turn(transcript: &Transcript) -> Option<Duration> {
+    transcript
+        .entries
+        .iter()
+        .rev()
+        .find_map(|entry| match entry {
+            Entry::Agent(message) => message.took,
+            _ => None,
+        })
+}
+
+/// The step in progress, or the first pending one.
+fn current_step(plan: &[PlanEntry]) -> Option<&str> {
+    plan.iter()
+        .find(|entry| entry.status == PlanEntryStatus::InProgress)
+        .or_else(|| {
+            plan.iter()
+                .find(|entry| entry.status == PlanEntryStatus::Pending)
+        })
+        .map(|entry| entry.content.as_str())
+}
+
+fn progress_line(plan: &[PlanEntry], note: Option<&str>, width: usize) -> Line<'static> {
+    let palette = palette::get();
+    let inner = width.saturating_sub(2);
+    let mut spans = vec![Span::raw(" ")];
+    if !plan.is_empty() {
+        let done = plan
+            .iter()
+            .filter(|entry| entry.status == PlanEntryStatus::Completed)
+            .count();
+        let colour = if done == plan.len() {
+            palette.green
+        } else {
+            palette.yellow
+        };
+        let head = format!("▶ plan {done}/{}", plan.len());
+        spans.push(Span::styled(head, Style::new().fg(colour)));
+    }
+    let head: usize = spans.iter().map(Span::width).sum::<usize>() - 1;
+    let step = current_step(plan);
+
+    // the note keeps half the row when a step shares it, and two columns
+    // stay between the sides
+    let note_room = match (head, step) {
+        (0, _) => inner,
+        (_, None) => inner.saturating_sub(head + 2),
+        (_, Some(_)) => inner.saturating_sub(head + 2).min(inner / 2),
+    };
+    let note = note.map_or(String::new(), |note| ui::cut(note, note_room));
+    let gap = if note.is_empty() { 0 } else { 2 };
+    let step_room = inner.saturating_sub(head + SEPARATOR.width() + gap + note.width());
+    if let Some(step) = step.filter(|_| step_room > 1) {
+        spans.push(Span::styled(SEPARATOR, dim()));
+        let step = ui::cut(step, step_room);
+        spans.push(Span::styled(step, Style::new().fg(palette.foreground)));
+    }
+    if !note.is_empty() {
+        let left: usize = spans.iter().map(Span::width).sum();
+        spans.push(Span::raw(
+            " ".repeat(width.saturating_sub(left + note.width() + 1)),
+        ));
+        spans.push(Span::styled(note, dim()));
     }
     Line::from(spans)
 }
 
-/// `path` with the home folder at its start written `~`.
-pub fn home_as_tilde(path: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
-            format!("~{}", &path[home.len()..])
-        }
-        _ => path.to_string(),
-    }
-}
-
-/// The git branch of the repository `folder` is in, or a short commit id for
-/// a detached head.
-pub fn branch(folder: &Path) -> Option<String> {
-    let dot_git = folder
-        .ancestors()
-        .map(|dir| dir.join(".git"))
-        .find(|path| path.exists())?;
-
-    // a worktree's `.git` is a file naming its git folder
-    let git_dir = if dot_git.is_file() {
-        let text = fs::read_to_string(&dot_git).ok()?;
-        dot_git
-            .parent()?
-            .join(text.trim().strip_prefix("gitdir: ")?)
-    } else {
-        dot_git
-    };
-    let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
-    let head = head.trim();
-    match head.strip_prefix("ref: ") {
-        Some(name) => Some(name.strip_prefix("refs/heads/").unwrap_or(name).to_string()),
-        None => Some(head.get(..7)?.to_string()),
-    }
+/// A row of `▀` in the tint, closing the tinted rows above it.
+pub fn draw_slab_edge(frame: &mut Frame, area: Rect) {
+    let edge = Style::new().fg(palette::get().tint);
+    frame.render_widget(
+        Paragraph::new("▀".repeat(area.width as usize)).style(edge),
+        area,
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn items() -> Vec<Item> {
+        vec![
+            Item::new("cost".to_string(), dim(), 1),
+            Item::new("version".to_string(), dim(), 2),
+            Item::new("tokens".to_string(), dim(), 3),
+            Item::new("idle".to_string(), dim(), 0),
+        ]
+    }
+
     fn names(items: &[Item]) -> Vec<&str> {
         items
             .iter()
             .map(|item| item.spans[0].content.as_ref())
             .collect()
-    }
-
-    fn text(line: &Line) -> String {
-        line.spans.iter().map(|span| span.content.clone()).collect()
     }
 
     const WIDTHS: [usize; 4] = [4, 4, 14, 8];
@@ -465,98 +457,48 @@ mod tests {
     }
 
     #[test]
-    fn every_setting_shows_when_they_fit_at_their_normal_spacing() {
-        // 30 columns of chips, 9 of separators and a space at each end
-        assert_eq!(fit_settings(&WIDTHS, 41), (4, false));
-        assert_eq!(fit_settings(&WIDTHS, 200), (4, false));
+    fn a_wide_line_shows_every_setting_and_every_item() {
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 4, items(), 200);
+        assert_eq!((shown, hidden), (4, false));
+        assert_eq!(names(&kept), ["cost", "version", "tokens", "idle"]);
     }
 
     #[test]
-    fn settings_leave_from_the_right_into_the_overflow_mark_and_the_first_stays() {
-        assert_eq!(fit_settings(&WIDTHS, 40), (3, true));
-        assert_eq!(fit_settings(&WIDTHS, 28), (2, true));
-        assert_eq!(fit_settings(&WIDTHS, 3), (1, true));
-    }
-
-    #[test]
-    fn the_gaps_between_settings_grow_equally_to_fill_the_row() {
-        // 28 free columns over three gaps
-        assert_eq!(gaps(&WIDTHS, 60), [10, 9, 9]);
-        assert_eq!(gaps(&WIDTHS, 41), [3, 3, 3]);
-        assert_eq!(gaps(&[4], 60), [] as [usize; 0]);
-    }
-
-    fn session_items() -> (Vec<Item>, Vec<Item>) {
-        let left = vec![
-            Item::new("plan".to_string(), dim(), 1),
-            Item::new("tokens".to_string(), dim(), 3),
-            Item::new("cost".to_string(), dim(), 3),
-        ];
-        let right = vec![
-            Item::new("decade".to_string(), dim(), 0),
-            Item::new("update".to_string(), dim(), 4),
-            Item::new("idle".to_string(), dim(), 0),
-        ];
-        (left, right)
-    }
-
-    #[test]
-    fn a_narrowing_session_row_drops_the_update_then_tokens_then_cost_then_plan() {
-        // the left takes 14 + 6 columns, the right 16 + 6, and 4 more for the spaces
+    fn a_narrowing_line_drops_items_by_rank_then_settings_from_the_right() {
+        // settings take 30 + 9 columns, items 21 + 9, and 4 more for the spaces
         let fit = |width| {
-            let (left, right) = session_items();
-            let (left, right) = fit_session(left, right, width);
-            (names(&left).join(" "), names(&right).join(" "))
+            let (shown, hidden, kept) = fit_line(&WIDTHS, 4, items(), width);
+            (shown, hidden, kept.len())
         };
-        let both = |left: &str, right: &str| (left.to_string(), right.to_string());
-        assert_eq!(fit(46), both("plan tokens cost", "decade update idle"));
-        assert_eq!(fit(45), both("plan tokens cost", "decade idle"));
-        assert_eq!(fit(36), both("plan cost", "decade idle"));
-        assert_eq!(fit(27), both("plan", "decade idle"));
-        assert_eq!(fit(20), both("", "decade idle"));
-        assert_eq!(fit(3), both("", "decade idle"));
+        assert_eq!(fit(73), (4, false, 4));
+        assert_eq!(fit(72), (4, false, 3));
+        assert_eq!(fit(58), (4, false, 2));
+        assert_eq!(fit(51), (4, false, 1));
     }
 
     #[test]
-    fn the_place_row_shortens_the_home_folder_and_shows_the_branch() {
-        let home = std::env::var("HOME").unwrap();
-        let folder = home_as_tilde(&format!("{home}/projects/coax"));
-        assert_eq!(folder, "~/projects/coax");
-        let line = place_line("claude", &folder, Some("dev"), None, 60);
-        assert_eq!(text(&line), " claude · ~/projects/coax · dev");
-        let palette = palette::get();
-        let colours: Vec<_> = line.spans.iter().map(|span| span.style.fg).collect();
-        assert_eq!(colours[1], Some(palette.accent));
-        assert_eq!(colours[3], Some(palette.blue));
-        assert_eq!(colours[5], Some(palette.green));
+    fn once_the_items_are_down_to_the_state_settings_leave_into_the_overflow_mark() {
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 4, items(), 44);
+        assert_eq!((shown, hidden), (3, true));
+        assert_eq!(names(&kept), ["idle"]);
+        let (shown, hidden, _) = fit_line(&WIDTHS, 4, items(), 30);
+        assert_eq!((shown, hidden), (2, true));
     }
 
     #[test]
-    fn the_place_row_sets_the_title_against_the_right_edge_and_cuts_a_long_one() {
-        let line = place_line("claude", "~/coax", None, Some("first drive"), 40);
-        let row = text(&line);
-        assert_eq!(
-            row,
-            format!(" claude · ~/coax{}first drive", " ".repeat(12))
-        );
-        let long = "a title far too long to fit beside the rest";
-        let row = text(&place_line("claude", "~/coax", None, Some(long), 40));
-        assert_eq!(row.width(), 39);
-        assert!(row.ends_with('…'), "{row}");
-        assert!(row.contains("  a title far"), "{row}");
+    fn rarely_changed_settings_leave_into_the_overflow_mark_before_any_item_drops() {
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 2, items(), 72);
+        assert_eq!((shown, hidden), (3, true));
+        assert_eq!(names(&kept), ["cost", "version", "tokens", "idle"]);
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 2, items(), 58);
+        assert_eq!((shown, hidden), (2, true));
+        assert_eq!(names(&kept), ["cost", "version", "tokens", "idle"]);
     }
 
     #[test]
-    fn the_branch_is_read_from_the_head_of_the_nearest_git_folder() {
-        let root = std::env::temp_dir().join(format!("coax-branch-{}", std::process::id()));
-        let inner = root.join("src").join("deep");
-        fs::create_dir_all(&inner).unwrap();
-        fs::create_dir_all(root.join(".git")).unwrap();
-        let head = root.join(".git").join("HEAD");
-        fs::write(&head, "ref: refs/heads/feature/place\n").unwrap();
-        assert_eq!(branch(&inner).as_deref(), Some("feature/place"));
-        fs::write(&head, "8fee24b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6\n").unwrap();
-        assert_eq!(branch(&root).as_deref(), Some("8fee24b"));
-        fs::remove_dir_all(&root).unwrap();
+    fn the_first_setting_and_the_state_stay_however_narrow_the_line_gets() {
+        let (shown, hidden, kept) = fit_line(&WIDTHS, 4, items(), 3);
+        assert_eq!((shown, hidden), (1, true));
+        assert_eq!(names(&kept), ["idle"]);
     }
 }

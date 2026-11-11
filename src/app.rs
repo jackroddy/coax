@@ -28,7 +28,6 @@ use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
 use crate::form::Form;
-use crate::header;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
 use crate::prompt;
@@ -257,8 +256,6 @@ pub struct App {
     pub rendered: ui::Rendered,
     pub cwd: PathBuf,
 
-    /// The git branch `cwd` is on, read at launch and when a turn ends.
-    pub branch: Option<String>,
     auto_allow: bool,
 
     /// Whether the agent's connection has ended.
@@ -472,13 +469,11 @@ impl App {
             }
             Event::Done(_) if self.stale_replies > 0 => self.stale_replies -= 1,
             Event::Done(Ok(stop)) => {
-                self.branch = header::branch(&self.cwd);
                 self.close_permissions();
                 self.transcript.finished(stop);
                 self.start_waiting();
             }
             Event::Done(Err(error)) => {
-                self.branch = header::branch(&self.cwd);
                 self.close_permissions();
                 self.transcript.in_flight = false;
                 self.transcript.cancel_running();
@@ -1740,7 +1735,6 @@ async fn session(
         outbox: None,
         stale_replies: 0,
         rendered: ui::Rendered::default(),
-        branch: header::branch(&cwd),
         cwd,
         auto_allow,
         exited: false,
@@ -2086,7 +2080,6 @@ mod tests {
             stale_replies: 0,
             rendered: ui::Rendered::default(),
             cwd: PathBuf::new(),
-            branch: None,
             auto_allow: false,
             exited: false,
         }
@@ -3127,9 +3120,9 @@ mod tests {
     }
 
     const CONTEXT_ROW: u16 = 26;
-    const SETTINGS_ROW: u16 = 27;
-    const SESSION_ROW: u16 = 28;
-    const PLACE_ROW: u16 = 29;
+    const STATUS_ROW: u16 = 27;
+    const PROGRESS_ROW: u16 = 28;
+    const EDGE_ROW: u16 = 29;
 
     fn screen_row(app: &mut App, width: u16, y: u16) -> String {
         let buffer = header_buffer(app, width);
@@ -3138,12 +3131,12 @@ mod tests {
             .collect()
     }
 
-    fn settings_row(app: &mut App, width: u16) -> String {
-        screen_row(app, width, SETTINGS_ROW)
+    fn status_row(app: &mut App, width: u16) -> String {
+        screen_row(app, width, STATUS_ROW)
     }
 
-    fn session_row(app: &mut App, width: u16) -> String {
-        screen_row(app, width, SESSION_ROW)
+    fn progress_row(app: &mut App, width: u16) -> String {
+        screen_row(app, width, PROGRESS_ROW)
     }
 
     fn header_rows_all(app: &mut App, width: u16) -> String {
@@ -3159,15 +3152,14 @@ mod tests {
     }
 
     fn header(app: &mut App, width: u16) -> String {
-        settings_row(app, width)
+        status_row(app, width)
     }
 
     #[test]
-    fn the_footer_shows_the_context_then_the_settings_then_the_session_then_the_place() {
+    fn the_footer_shows_the_context_then_the_status_line_then_the_progress_then_the_edge() {
         use agent_client_protocol::v1::schema::{Cost, SessionUpdate, Usage, UsageUpdate};
 
         let mut app = with_settings();
-        app.agent = "claude".to_string();
         let update = UsageUpdate::new(28_481, 1_000_000).cost(Cost::new(0.136, "USD"));
         app.settings.apply(&SessionUpdate::UsageUpdate(update));
         app.settings
@@ -3176,48 +3168,37 @@ mod tests {
         assert!(context.starts_with(" context: 3%  ▰▰▰▱▱"), "{context}");
         assert_eq!(context.chars().filter(|ch| *ch == '▰').count(), 3);
         assert_eq!(context.chars().count(), 120);
-        let settings = settings_row(&mut app, 120);
-        assert!(settings.starts_with(" auto "), "{settings}");
-        assert!(settings.ends_with(" fast off "), "{settings}");
-        assert!(!settings.contains("idle"), "{settings}");
-        let session = session_row(&mut app, 120);
-        assert!(session.starts_with(" ↑28k ↓4 · $0.14   "), "{session}");
-        assert!(session.ends_with("   idle "), "{session}");
-        let place = screen_row(&mut app, 120, PLACE_ROW);
-        assert_eq!(place.trim_end(), " claude");
+        let status = status_row(&mut app, 120);
+        assert!(
+            status.starts_with(" auto · opus · effort default · fast off  "),
+            "{status}"
+        );
+        assert!(status.ends_with("↑28k ↓4 · $0.14 · idle "), "{status}");
+        assert_eq!(progress_row(&mut app, 120).trim(), "");
+        assert_eq!(screen_row(&mut app, 120, EDGE_ROW), "▀".repeat(120));
         assert_eq!(app.chips.len(), 4);
     }
 
     #[test]
-    fn the_settings_spread_across_the_row_and_each_chip_area_covers_its_label() {
+    fn each_chip_area_covers_its_label_on_the_status_line() {
         let mut app = with_settings();
-        let row: Vec<char> = settings_row(&mut app, 120).chars().collect();
-        let labels: Vec<String> = app
-            .chips
-            .iter()
-            .map(|chip| {
-                let x = chip.area.x as usize;
-                row[x..x + chip.area.width as usize].iter().collect()
-            })
-            .collect();
-        assert_eq!(labels, ["auto", "opus", "effort default", "fast off"]);
-        assert_eq!(app.chips[0].area.x, 1);
-        let last = app.chips.last().unwrap().area;
-        assert_eq!(last.x + last.width, 119);
-        let gaps: Vec<u16> = app
-            .chips
-            .windows(2)
-            .map(|pair| pair[1].area.x - (pair[0].area.x + pair[0].area.width))
-            .collect();
-        assert!(
-            gaps.iter().max().unwrap() - gaps.iter().min().unwrap() <= 1,
-            "{gaps:?}"
-        );
-        assert!(gaps.iter().all(|gap| *gap > 3), "{gaps:?}");
-        for (pair, gap) in app.chips.windows(2).zip(&gaps) {
-            let start = (pair[0].area.x + pair[0].area.width) as usize;
-            let between: String = row[start..start + *gap as usize].iter().collect();
-            assert_eq!(between.trim(), "·");
+        for width in [120, 36] {
+            let row: Vec<char> = status_row(&mut app, width).chars().collect();
+            let labels: Vec<String> = app
+                .chips
+                .iter()
+                .map(|chip| {
+                    let x = chip.area.x as usize;
+                    assert_eq!(chip.area.y, STATUS_ROW);
+                    row[x..x + chip.area.width as usize].iter().collect()
+                })
+                .collect();
+            let expected: &[&str] = if width == 120 {
+                &["auto", "opus", "effort default", "fast off"]
+            } else {
+                &["auto", "opus", "⋯"]
+            };
+            assert_eq!(labels, expected);
         }
     }
 
@@ -3231,19 +3212,26 @@ mod tests {
     }
 
     #[test]
-    fn the_status_line_has_no_powerline_glyph_and_no_background() {
+    fn the_footer_rows_sit_on_the_tint_and_a_row_of_half_blocks_closes_them() {
+        let tint = crate::palette::get().tint;
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 100);
-        for (x, y) in (0..100).flat_map(|x| (CONTEXT_ROW..=PLACE_ROW).map(move |y| (x, y))) {
-            let cell = &buffer[(x, y)];
-            assert!(
-                !cell
-                    .symbol()
-                    .chars()
-                    .any(|ch| ('\u{e0b0}'..='\u{e0bf}').contains(&ch)),
-                "{x}"
-            );
-            assert_eq!(cell.bg, ratatui::style::Color::Reset);
+        for x in 0..100 {
+            for y in CONTEXT_ROW..EDGE_ROW {
+                let cell = &buffer[(x, y)];
+                assert!(
+                    !cell
+                        .symbol()
+                        .chars()
+                        .any(|ch| ('\u{e0b0}'..='\u{e0bf}').contains(&ch)),
+                    "{x}"
+                );
+                assert_eq!(cell.bg, tint, "{x}, {y}");
+            }
+            let edge = &buffer[(x, EDGE_ROW)];
+            assert_eq!(edge.symbol(), "▀");
+            assert_eq!(edge.fg, tint);
+            assert_eq!(edge.bg, ratatui::style::Color::Reset);
         }
     }
 
@@ -3254,9 +3242,9 @@ mod tests {
         }
     }
 
-    /// The column at which `text` starts on the session row.
-    fn session_column(app: &mut App, width: u16, text: &str) -> u16 {
-        let line = session_row(app, width);
+    /// The column at which `text` starts on screen row `y`.
+    fn column(app: &mut App, width: u16, y: u16, text: &str) -> u16 {
+        let line = screen_row(app, width, y);
         let index = line
             .find(text)
             .unwrap_or_else(|| panic!("{text} in {line}"));
@@ -3268,15 +3256,15 @@ mod tests {
         let palette = crate::palette::get();
         let mut app = with_settings();
         let buffer = header_buffer(&mut app, 120);
-        let at = |n: usize| &buffer[(app.chips[n].area.x, SETTINGS_ROW)];
+        let at = |n: usize| &buffer[(app.chips[n].area.x, STATUS_ROW)];
         assert_eq!(at(0).fg, palette.yellow);
         assert!(!is_dim(at(0)));
         assert_eq!(at(1).fg, palette.blue);
         assert_eq!(at(2).fg, palette.magenta);
         assert!(is_dim(at(3)));
-        let row = settings_row(&mut app, 120);
+        let row = status_row(&mut app, 120);
         let dot = row[..row.find('·').unwrap()].chars().count() as u16;
-        assert!(is_dim(&buffer[(dot, SETTINGS_ROW)]));
+        assert!(is_dim(&buffer[(dot, STATUS_ROW)]));
     }
 
     #[test]
@@ -3288,7 +3276,7 @@ mod tests {
         app.settings.open(None, Some(modes));
         let buffer = header_buffer(&mut app, 120);
         assert_eq!(
-            buffer[(app.chips[0].area.x, SETTINGS_ROW)].fg,
+            buffer[(app.chips[0].area.x, STATUS_ROW)].fg,
             crate::palette::get().cyan
         );
     }
@@ -3298,18 +3286,16 @@ mod tests {
         let mut app = with_settings();
         app.transcript.prompt("hi".to_string());
         let buffer = header_buffer(&mut app, 120);
-        assert!(is_dim(&buffer[(app.chips[1].area.x, SETTINGS_ROW)]));
+        assert!(is_dim(&buffer[(app.chips[1].area.x, STATUS_ROW)]));
         assert_eq!(
-            buffer[(app.chips[2].area.x, SETTINGS_ROW)].fg,
+            buffer[(app.chips[2].area.x, STATUS_ROW)].fg,
             crate::palette::get().magenta
         );
     }
 
     #[test]
     fn the_session_items_on_the_status_line_are_coloured_by_what_they_show() {
-        use agent_client_protocol::v1::schema::{
-            Cost, PlanEntry, PlanEntryPriority, PlanEntryStatus, SessionUpdate, Usage, UsageUpdate,
-        };
+        use agent_client_protocol::v1::schema::{Cost, SessionUpdate, Usage, UsageUpdate};
 
         let palette = crate::palette::get();
         let mut app = with_settings();
@@ -3317,21 +3303,15 @@ mod tests {
         app.settings.apply(&SessionUpdate::UsageUpdate(update));
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
-        let entry = |status| PlanEntry::new("step", PlanEntryPriority::Medium, status);
-        app.transcript.plan = vec![
-            entry(PlanEntryStatus::Completed),
-            entry(PlanEntryStatus::Pending),
-        ];
         app.decade_pane = Some(String::new());
         app.update = Some("0.9.0".to_string());
 
         let width = 140;
         let buffer = header_buffer(&mut app, width);
         let mut cell = |text: &str, offset: u16| {
-            let x = session_column(&mut app, width, text) + offset;
-            buffer[(x, SESSION_ROW)].clone()
+            let x = column(&mut app, width, STATUS_ROW, text) + offset;
+            buffer[(x, STATUS_ROW)].clone()
         };
-        assert_eq!(cell("plan 1/2", 0).fg, palette.yellow);
         assert_eq!(cell("↑28k", 0).fg, palette.cyan);
         assert_eq!(cell("↑28k", 1).fg, palette.foreground);
         assert!(!is_dim(&cell("↑28k", 1)));
@@ -3342,27 +3322,93 @@ mod tests {
         assert_eq!(cell("0.9.0 available", 0).fg, palette.accent);
         assert!(is_dim(&cell("idle", 0)));
         assert!(is_dim(&cell(" · idle", 1)));
+    }
+
+    fn plan_entry(
+        content: &str,
+        status: agent_client_protocol::v1::schema::PlanEntryStatus,
+    ) -> agent_client_protocol::v1::schema::PlanEntry {
+        use agent_client_protocol::v1::schema::{PlanEntry, PlanEntryPriority};
+
+        PlanEntry::new(content, PlanEntryPriority::Medium, status)
+    }
+
+    #[test]
+    fn the_progress_row_shows_the_plan_and_the_step_in_progress_coloured_by_what_remains() {
+        use agent_client_protocol::v1::schema::PlanEntryStatus;
+
+        let palette = crate::palette::get();
+        let mut app = with_settings();
+        app.transcript.plan = vec![
+            plan_entry("read the code", PlanEntryStatus::Completed),
+            plan_entry("run the tests", PlanEntryStatus::InProgress),
+            plan_entry("write it up", PlanEntryStatus::Pending),
+        ];
+        let row = progress_row(&mut app, 100);
+        assert_eq!(row.trim_end(), " ▶ plan 1/3 · run the tests");
+        let buffer = header_buffer(&mut app, 100);
+        assert_eq!(buffer[(1, PROGRESS_ROW)].fg, palette.yellow);
+        let step = column(&mut app, 100, PROGRESS_ROW, "run");
+        assert_eq!(buffer[(step, PROGRESS_ROW)].fg, palette.foreground);
 
         app.transcript.plan[1].status = PlanEntryStatus::Completed;
-        let buffer = header_buffer(&mut app, width);
-        let x = session_column(&mut app, width, "plan 2/2");
-        assert_eq!(buffer[(x, SESSION_ROW)].fg, palette.green);
+        let row = progress_row(&mut app, 100);
+        assert_eq!(row.trim_end(), " ▶ plan 2/3 · write it up");
+
+        app.transcript.plan[2].status = PlanEntryStatus::Completed;
+        let row = progress_row(&mut app, 100);
+        assert_eq!(row.trim_end(), " ▶ plan 3/3");
+        let buffer = header_buffer(&mut app, 100);
+        assert_eq!(buffer[(1, PROGRESS_ROW)].fg, palette.green);
+    }
+
+    #[test]
+    fn the_progress_row_shows_the_running_tool_during_a_turn_and_the_last_turn_when_idle() {
+        use agent_client_protocol::v1::schema::{PlanEntryStatus, SessionUpdate, ToolCall};
+
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        app.transcript.apply(SessionUpdate::ToolCall(ToolCall::new(
+            "t1",
+            "Read src/main.rs",
+        )));
+        let row = progress_row(&mut app, 80);
+        assert!(row.ends_with(" Read src/main.rs "), "{row}");
+        let buffer = header_buffer(&mut app, 80);
+        let x = column(&mut app, 80, PROGRESS_ROW, "Read");
+        assert!(is_dim(&buffer[(x, PROGRESS_ROW)]));
+
+        app.transcript.plan = vec![plan_entry(
+            "a step with a long description that runs on and on past the edge",
+            PlanEntryStatus::InProgress,
+        )];
+        let row = progress_row(&mut app, 60);
+        assert!(row.starts_with(" ▶ plan 0/1 · a step with"), "{row}");
+        assert!(row.contains("…  "), "{row}");
+        assert!(row.ends_with(" Read src/main.rs "), "{row}");
+
+        app.transcript
+            .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
+        let mut reply = Message::new("done".to_string(), None);
+        reply.took = Some(std::time::Duration::from_secs(41));
+        app.transcript.entries.push(Entry::Agent(reply));
+        let row = progress_row(&mut app, 80);
+        assert!(row.ends_with(" last turn 41s "), "{row}");
     }
 
     #[test]
     fn a_narrow_status_line_keeps_the_first_setting_and_ends_the_settings_in_the_overflow_mark() {
         let mut app = with_settings();
-        let line = settings_row(&mut app, 30);
+        let line = status_row(&mut app, 30);
         assert!(line.starts_with(" auto"), "{line}");
-        assert!(line.trim_end().ends_with('⋯'), "{line}");
-        let session = session_row(&mut app, 30);
-        assert!(session.trim_end().ends_with("idle"), "{session}");
+        assert!(line.contains('⋯'), "{line}");
+        assert!(line.trim_end().ends_with("idle"), "{line}");
     }
 
     #[test]
     fn the_overflow_mark_replaces_the_settings_that_do_not_fit() {
         let mut app = with_settings();
-        let line = settings_row(&mut app, 36);
+        let line = status_row(&mut app, 36);
         assert!(line.contains('⋯'), "{line}");
         assert!(!line.contains("fast off"), "{line}");
         assert_eq!(
@@ -3378,7 +3424,7 @@ mod tests {
         let area = app.chips[2].area;
         let before = header_buffer(&mut app, 120);
         assert_ne!(
-            before[(area.x, SETTINGS_ROW)].fg,
+            before[(area.x, STATUS_ROW)].fg,
             crate::palette::get().accent
         );
         app.mouse(wheel(
@@ -3389,11 +3435,11 @@ mod tests {
         ));
         let buffer = header_buffer(&mut app, 120);
         for x in area.x..area.x + area.width {
-            assert_eq!(buffer[(x, SETTINGS_ROW)].fg, crate::palette::get().accent);
+            assert_eq!(buffer[(x, STATUS_ROW)].fg, crate::palette::get().accent);
         }
         assert_eq!(
-            buffer[(app.chips[3].area.x, SETTINGS_ROW)],
-            before[(app.chips[3].area.x, SETTINGS_ROW)]
+            buffer[(app.chips[3].area.x, STATUS_ROW)],
+            before[(app.chips[3].area.x, STATUS_ROW)]
         );
     }
 
@@ -3415,7 +3461,7 @@ mod tests {
         assert!(working_row(&mut app, 100).starts_with(" ◓ working "));
         app.spinner = 5;
         assert!(working_row(&mut app, 100).starts_with(" ◓ working "));
-        let status = session_row(&mut app, 100);
+        let status = status_row(&mut app, 100);
         assert!(!status.contains("working") && !status.contains("idle"));
     }
 
@@ -3605,7 +3651,7 @@ mod tests {
         app.transcript
             .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
         assert!(!header_rows_all(&mut app, 100).contains("working"));
-        assert!(session_row(&mut app, 100).ends_with("idle "));
+        assert!(status_row(&mut app, 100).ends_with("idle "));
     }
 
     #[test]
@@ -3616,7 +3662,7 @@ mod tests {
         click(&mut app, model.x, model.y);
         header(&mut app, 120);
         let menu = app.menu_area.expect("the box is drawn");
-        assert_eq!(menu.bottom(), SETTINGS_ROW);
+        assert_eq!(menu.bottom(), STATUS_ROW);
         assert_eq!(menu.x, model.x);
     }
 

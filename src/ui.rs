@@ -62,9 +62,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         prompt_area,
         lower_rule,
         context_area,
-        settings_area,
-        session_area,
-        place_area,
+        status_area,
+        progress_area,
+        edge_area,
     ] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(plan_rows as u16),
@@ -104,11 +104,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     draw_confirm(frame, transcript_area, app);
     draw_guard_rule(frame, lower_rule, app);
+    let slab = context_area.union(progress_area);
+    let tint = Style::new().bg(palette::get().tint);
+    frame.buffer_mut().set_style(slab, tint);
     header::draw_context(frame, context_area, app);
-    header::draw_settings(frame, settings_area, app);
-    header::draw_session(frame, session_area, app);
-    header::draw_place(frame, place_area, app);
-    draw_menu(frame, app, settings_area.y, Time::now());
+    header::draw_status(frame, status_area, app);
+    header::draw_progress(frame, progress_area, app);
+    header::draw_slab_edge(frame, edge_area);
+    draw_menu(frame, app, status_area.y, Time::now());
     draw_link_popup(frame, app);
 }
 
@@ -168,7 +171,7 @@ fn working_line(spinner: usize, elapsed: Duration, waiting: bool) -> Line<'stati
     ])
 }
 
-fn elapsed_text(elapsed: Duration) -> String {
+pub fn elapsed_text(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
     if seconds < 60 {
         format!("{seconds}s")

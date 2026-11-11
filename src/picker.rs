@@ -85,9 +85,7 @@ impl<'a> Picker<'a> {
             .agents
             .values()
             .map(|agent| {
-                let mut words = vec![header::home_as_tilde(
-                    &agent.command().display().to_string(),
-                )];
+                let mut words = vec![home_as_tilde(&agent.command().display().to_string())];
                 words.extend(agent.arguments().iter().cloned());
                 words.join(" ")
             })
@@ -310,7 +308,7 @@ impl<'a> Picker<'a> {
                 Line::styled(
                     format!(
                         "add one to {}",
-                        header::home_as_tilde(&self.path.display().to_string())
+                        home_as_tilde(&self.path.display().to_string())
                     ),
                     ui::dim(),
                 ),
@@ -365,6 +363,15 @@ impl<'a> Picker<'a> {
 
 fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or_default()
+}
+
+fn home_as_tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
+            format!("~{}", &path[home.len()..])
+        }
+        _ => path.to_string(),
+    }
 }
 
 fn now() -> i64 {

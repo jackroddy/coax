@@ -73,6 +73,11 @@ impl Category {
             _ => Category::Other,
         }
     }
+
+    /// Whether the setting is model config or has no category.
+    pub fn rarely_changed(self) -> bool {
+        self > Category::ThoughtLevel
+    }
 }
 
 pub enum Control {
