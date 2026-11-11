@@ -1,7 +1,7 @@
 {
   "id": "coax-157c05",
   "title": "A file link can name a function instead of a line",
-  "body": "A `file:` link points at a place in the code by line, as in `[src/acp.rs:117](file:src/acp.rs#117)`. `file` in `links.rs` reads the part after `#` as a line number, and a click sends decade `show` at that line. A line number goes stale as soon as the file changes above it, and a reader has to open the file to learn what sits there. Agents most often point at a function.\n\n## Proposal\n\n- The part after `#` may name a function, as in `[Link::prompt](file:src/acp.rs#Link::prompt)`. A name with no `::` matches a free function. `Type::name` matches a method in an `impl` block for `Type`.\n- coax finds the function's line by reading the file when the link is hovered or clicked, so the line is always current. Hovering shows the path, the line and the function's signature line. A click shows the file at that line through decade, as a line link does.\n- A name coax cannot find makes the link show the file with no line, and the hover says the function was not found.\n- The coax output style tells agents to prefer a function link over a line link when they mean a function.\n\n## Open\n\n- Matching for languages other than Rust, where `fn` and `impl` do not apply. The first version could cover Rust and fall back to the file for anything else.\n- Whether a function link draws differently from a line link, such as with a mark before it.",
+  "body": "A `file:` link points at a place in the code by line, as in `[src/acp.rs:117](file:src/acp.rs#117)`. `file` in `links.rs` reads the part after `#` as a line number. A click sends decade a `show` whose `at` is that number, as JSON, and the pane that previews code opens the file there. A line number goes stale as soon as the file changes above it, and agents most often mean a function.\n\n## Proposal\n\n- The part after `#` may name a function, as in `[Link::prompt](file:src/acp.rs#Link::prompt)`.\n- coax does not look the name up. A click passes it through in the `show` it sends decade, in `at` beside where a line goes today, as in `{\"symbol\": \"Link::prompt\"}`. The pane that previews code finds the function and decides what to do when it cannot.\n- Hovering shows the path and the function's name, with no lookup.\n- The coax output style tells agents to prefer a function link over a line link when they mean a function.\n\n## Open\n\n- The shape of a symbol in decade's `show` request, and which preview programs handle it. That is decade's and the previewers' work, and wants an issue in decade's tracker once the shape is agreed.\n- Whether a function link draws differently from a line link.",
   "type": "feature",
   "status": "open",
   "priority": 2,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T02:50:17.919234261Z",
-  "updated_at": "2026-11-11T02:50:17.919234261Z",
+  "updated_at": "2026-11-11T02:51:49.772713602Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
