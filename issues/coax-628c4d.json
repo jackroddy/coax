@@ -1,0 +1,28 @@
+{
+  "id": "coax-628c4d",
+  "title": "The colour query stops at the terminal's identity reply before the colours arrive",
+  "body": "`palette::query_terminal` sends OSC 10, OSC 11 and a DA1 query, and stops reading once the DA1 reply, the terminal's identity, has arrived, on the assumption that the colour replies come first. Under tmux the first logged run read 9 bytes, only the DA1 reply, and stopped, so `tint` fell back to `selection`. Colour replies that come after coax stops reading land in the input stream as stray bytes. Jack's own terminal ended one run at the 100 ms limit and another at once, so the order there varies too.\n\n## Proposal\n\nThe reading stops when both colour replies are complete. When the DA1 reply arrives first, reading goes on for a short grace of 20 ms for the colours, within the 100 ms limit. The log's `ended` says which of the three ended it.",
+  "type": "bug",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T01:38:00.145830842Z",
+  "updated_at": "2026-11-11T01:38:00.145830842Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7dc5390",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
