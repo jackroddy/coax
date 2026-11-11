@@ -3,26 +3,29 @@
   "title": "The first run after a rebuild can hang in the terminal colour query",
   "body": "At startup coax asks the terminal for its colours (`palette::query_terminal`, 8c3b646). It puts the terminal in raw mode, writes OSC 10, OSC 11 and DA1 queries, and reads the replies from stdin with `poll` and a 100 ms limit. On Jack's first run after a rebuild, coax showed nothing for 27 seconds. The run's log has `config` at 01:32:10.079 and `agent.start` at 01:32:37.076, and the query is the only code between them. Pressing Ctrl+C, which reaches coax as a byte on stdin in raw mode, ended the wait and the picker appeared. Other runs spent 0 to 0.1 s there. The time must have gone into one blocking system call, either the `read` after `poll` or the write of the queries. Neither the log nor a retry shows which.\n\n## Proposal\n\n- Stdin is non-blocking for the length of the query, so a `read` returns at once, whatever `poll` reported. Its old mode comes back afterwards.\n- The log records the query's start before the write, and at the end the bytes read, the time taken and whether the reply or the time limit ended it.\n- A test drives the reading loop over a pipe.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T01:50:48.963648275Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T01:35:48.942947273Z",
-  "updated_at": "2026-11-11T01:35:48.963648275Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T01:37:04.0165073Z",
+  "closed_at": "2026-11-11T01:37:04.0165073Z",
+  "close_reason": "Guarded in 7dc5390. Stdin is non-blocking during the query, and the log records `terminal.query` and `terminal.replied`. The cause was not proven. If the hang comes back, a `terminal.query` entry with no `terminal.replied` after it points at the write of the queries.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "30c9781",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "7dc5390",
+      "branch": "dev"
+    }
   }
 }
