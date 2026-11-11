@@ -1,0 +1,28 @@
+{
+  "id": "coax-895ade",
+  "title": "A running subagent can be moved to the background, by hand or when a message waits behind it",
+  "body": "A foreground subagent is one long tool call. Claude Code hands a queued prompt to the model only with the next tool result, so a message sent during a foreground subagent waits until the subagent returns, which can be many minutes. ACP has no request that moves a running tool call to the background, and the Claude adapter v0.101.0 exposes none among its extension methods (`_session/steering`, `_session/async_task/stop`, `_session/rename` and others). The Claude Code SDK inside the adapter can do it: its query has `backgroundTasks(tool_use_id)`, which sends a `background_tasks` control request. The adapter never calls it.\n\n## Proposal\n\nOnce the adapter exposes it, as an extension method that takes a tool call id:\n\n- A key, or a click on a running subagent's row, moves that subagent to the background.\n- When a prompt is queued and the only thing holding the main agent is a foreground subagent, coax moves it to the background, so the prompt reaches Claude at once. The subagent keeps running and shows in the working line's agent count.\n\n## Open\n\n- Whether to ask the adapter's maintainers (`agentclientprotocol/claude-agent-acp`) for the method, or to run a patched build. A request is Jack's to send. A patched build is a fork to keep current.\n- Whether moving a subagent without asking each time surprises the person.",
+  "type": "feature",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T04:37:04.178393112Z",
+  "updated_at": "2026-11-11T04:37:04.178393112Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f4e9b89",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
