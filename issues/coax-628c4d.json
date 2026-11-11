@@ -3,26 +3,29 @@
   "title": "The colour query stops at the terminal's identity reply before the colours arrive",
   "body": "`palette::query_terminal` sends OSC 10, OSC 11 and a DA1 query, and stops reading once the DA1 reply, the terminal's identity, has arrived, on the assumption that the colour replies come first. Under tmux the first logged run read 9 bytes, only the DA1 reply, and stopped, so `tint` fell back to `selection`. Colour replies that come after coax stops reading land in the input stream as stray bytes. Jack's own terminal ended one run at the 100 ms limit and another at once, so the order there varies too.\n\n## Proposal\n\nThe reading stops when both colour replies are complete. When the DA1 reply arrives first, reading goes on for a short grace of 20 ms for the colours, within the 100 ms limit. The log's `ended` says which of the three ended it.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T01:53:00.155201831Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T01:38:00.145830842Z",
-  "updated_at": "2026-11-11T01:38:00.155201831Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T01:38:59.531126669Z",
+  "closed_at": "2026-11-11T01:38:59.531126669Z",
+  "close_reason": "Done in 8fee24b. `read_replies` ends on both colours, 20 ms after a DA1 reply, or at the 100 ms limit, and logs which. A detached tmux answers inconsistently, so the real check is the `terminal.replied` entry from a run in Jack's terminal.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "7dc5390",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8fee24b",
+      "branch": "dev"
+    }
   }
 }
