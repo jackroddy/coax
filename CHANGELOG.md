@@ -221,19 +221,21 @@ command line, the keys, and the scenario format the fake agent reads.
   column, whether the row above or below is part of the same line or not.
 - coax declares form elicitation, so the Claude adapter lets Claude ask
   questions with `AskUserQuestion`, and an MCP server can ask for input. A
-  form opens a box over the transcript with the request's message as its
-  title and one section per field. A single choice marks the picked option
-  with `●`, a multiple choice marks each with `[x]`, and a text, number or
-  integer field is a row to type into. A yes or no field is a toggle. Up and
-  Down move across the rows. Enter picks an option and moves to the next
-  field, or toggles in a multiple choice. Space also picks or toggles. Enter
-  on `submit` sends the answers, and a missing required field or a bad
-  number keeps the box open with the reason under it. Esc dismisses the
-  form, which tells the agent the questions went unanswered. While a form is
-  open, the working line reads `waiting for you` and decade sees the agent
-  as asking. When the turn ends, or Ctrl+c cancels it, the form is
-  cancelled. A request for a URL, such as an MCP server's login link, is
-  declined.
+  form takes the prompt's place at the bottom of the screen, with one
+  section per field. It grows to half the screen and scrolls past that to
+  keep the cursor in view. The rule above it shows the request's message,
+  the keys and the count of forms waiting behind it. A single choice marks
+  the picked option with `●`, a multiple choice marks each with `[x]`, and a
+  text, number or integer field is a row to type into. A yes or no field is
+  a toggle. Up and Down move across the rows. Enter picks an option and
+  moves to the next field, or toggles in a multiple choice. Space also picks
+  or toggles. Enter on `submit` sends the answers, and a missing required
+  field or a bad number keeps the form open with the reason under it. Esc
+  dismisses the form, which tells the agent the questions went unanswered.
+  While a form is open, the working line reads `waiting for you` and decade
+  sees the agent as asking. When the turn ends, or Ctrl+c cancels it, the
+  form is cancelled. A request for a URL, such as an MCP server's login
+  link, is declined.
 - The scenario format gains an `elicitation` step with a `message`, a
   `requestedSchema` and an optional `expect`, which asks for a form as the
   Claude adapter does. `scenarios/questions.json` asks two questions in the

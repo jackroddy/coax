@@ -10,7 +10,7 @@ use agent_client_protocol::v1::schema::{
 use crossterm::event::{KeyCode, KeyEvent};
 
 pub struct Form {
-    /// What the agent asks, the box's title.
+    /// What the agent asks, the title on the form's rule.
     pub message: String,
     pub fields: Vec<Field>,
 

@@ -3462,12 +3462,7 @@ mod tests {
         let mut app = with_settings();
         app.transcript.prompt("hi".to_string());
         let mut answer = ask_form(&mut app);
-        assert!(working_row(&mut app, 100).starts_with(" waiting for you"));
         let screen = header_rows_all(&mut app, 100);
-        assert!(
-            screen.contains("Please answer the following questions."),
-            "{screen}"
-        );
         assert!(
             screen.contains("○ Disk  kept under the state directory"),
             "{screen}"
@@ -3477,6 +3472,28 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         assert!(app.form.is_none());
         assert!(matches!(answer.try_recv(), Ok(ElicitationAction::Decline)));
+    }
+
+    #[test]
+    fn a_form_takes_the_prompts_place_up_to_half_the_screen_under_the_working_line() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        ask_form(&mut app);
+        ask_form(&mut app);
+        let screen = header_rows_all(&mut app, 100);
+        let rows: Vec<&str> = screen.lines().collect();
+        assert!(rows[10].starts_with(" waiting for you"), "{screen}");
+        assert!(
+            rows[11].starts_with("── Please answer the following questions. ─"),
+            "{screen}"
+        );
+        assert!(
+            rows[11].ends_with(" 1 more   enter pick   esc dismiss ──"),
+            "{screen}"
+        );
+        assert_eq!(rows[12], format!("{:<100}", "  Storage"));
+        assert!(rows[27].starts_with("────"), "{screen}");
+        assert!(rows[..10].iter().all(|row| !row.contains("Storage")));
     }
 
     #[test]

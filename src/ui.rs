@@ -43,6 +43,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         0
     };
+    let form = app
+        .form
+        .as_ref()
+        .map(|asked| form_lines(&asked.form, app.prompt_width));
+    let bottom_rows = match &form {
+        Some((lines, _)) => lines.len().clamp(1, (area.height / 2) as usize),
+        None => input.height(),
+    };
     let working_rows = u16::from(app.transcript.in_flight);
     let waiting_rows = app.waiting.len().min(MAX_WAITING_ROWS) as u16;
     let [
@@ -61,7 +69,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(waiting_rows),
         Constraint::Length(working_rows),
         Constraint::Length(1),
-        Constraint::Length(input.height() as u16),
+        Constraint::Length(bottom_rows as u16),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -70,7 +78,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
-    draw_form(frame, transcript_area, app);
     draw_plan(frame, plan_area, app);
     let waiting = waiting_lines(&app.waiting, waiting_area.width as usize);
     frame.render_widget(Paragraph::new(waiting), waiting_area);
@@ -83,9 +90,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let line = working_line(app.spinner, elapsed, waiting);
         frame.render_widget(Paragraph::new(line), working_area);
     }
-    draw_rule(frame, upper_rule);
-    draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
-    draw_commands(frame, app, upper_rule);
+    match form {
+        Some((lines, cursor)) => draw_form(frame, upper_rule, prompt_area, app, lines, cursor),
+        None => {
+            draw_rule(frame, upper_rule);
+            draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
+            draw_commands(frame, app, upper_rule);
+        }
+    }
     draw_confirm(frame, transcript_area, app);
     draw_guard_rule(frame, lower_rule, app);
     header::draw_context(frame, context_area, app);
@@ -2287,42 +2299,48 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// The widest a form box gets, in columns.
-const FORM_WIDTH: u16 = 72;
-
-/// The open form, centred over the transcript, scrolled to keep the cursor's
-/// row in view.
-fn draw_form(frame: &mut Frame, over: Rect, app: &App) {
+/// The open form in the prompt's place, scrolled to keep the cursor's line
+/// in view, under a rule carrying its message and keys.
+fn draw_form(
+    frame: &mut Frame,
+    rule: Rect,
+    area: Rect,
+    app: &App,
+    lines: Vec<Line<'static>>,
+    cursor: usize,
+) {
     let Some(asked) = &app.form else {
         return;
     };
-    let width = FORM_WIDTH.min(over.width);
-    let inner = (width as usize).saturating_sub(4);
-    let (mut lines, cursor) = form_lines(&asked.form, inner);
-    if let Some(error) = &asked.form.error {
-        lines.push(Line::styled(
-            cut(error, inner),
-            Style::new().fg(palette::get().yellow),
-        ));
-    }
-    let height = (lines.len() as u16 + 2).min(over.height);
-    let shown = height.saturating_sub(2) as usize;
-    let skip = (cursor + 1).saturating_sub(shown);
-    let area = Rect {
-        x: over.x + (over.width - width) / 2,
-        y: over.y + (over.height - height) / 2,
-        width,
-        height,
+    let keys = match app.forms.len() {
+        0 => "enter pick   esc dismiss".to_string(),
+        more => format!("{more} more   enter pick   esc dismiss"),
     };
-    let title = cut(&asked.form.message, inner);
-    let mut block = pane(&title, true)
-        .title_bottom(Line::styled("enter pick   esc dismiss", dim()).right_aligned());
-    if !app.forms.is_empty() {
-        block = block.title_bottom(Line::styled(format!("{} more", app.forms.len()), dim()));
-    }
+    let width = rule.width as usize;
+    let title = cut(&asked.form.message, width.saturating_sub(keys.width() + 9));
+    let rest = width.saturating_sub(title.width() + keys.width() + 8);
+    let title_style = Style::new()
+        .fg(palette::get().blue)
+        .add_modifier(Modifier::BOLD);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("── ", dim()),
+            Span::styled(title, title_style),
+            Span::styled(format!(" {} ", "─".repeat(rest)), dim()),
+            Span::styled(keys, dim()),
+            Span::styled(" ──", dim()),
+        ])),
+        rule,
+    );
+    let skip = (cursor + 1).saturating_sub(area.height as usize);
     let lines: Vec<Line> = lines.into_iter().skip(skip).collect();
-    clear(frame, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    let lead = PROMPT_LEAD.len() as u16;
+    let body = Rect {
+        x: area.x + lead.min(area.width),
+        width: area.width.saturating_sub(lead),
+        ..area
+    };
+    frame.render_widget(Paragraph::new(lines), body);
 }
 
 /// The form's lines at `width`, and the line the cursor's row is on.
@@ -2361,6 +2379,12 @@ fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, usize) {
         } else {
             line
         });
+    }
+    if let Some(error) = &form.error {
+        lines.push(Line::styled(
+            cut(error, width),
+            Style::new().fg(palette::get().yellow),
+        ));
     }
     (lines, cursor_line)
 }
