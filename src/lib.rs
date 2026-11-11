@@ -17,6 +17,7 @@ pub mod prompt;
 pub mod registry;
 pub mod report;
 pub mod scenario;
+pub mod select;
 pub mod session;
 pub mod settings;
 pub mod ui;

@@ -32,6 +32,7 @@ use crate::log;
 use crate::prompt;
 use crate::registry;
 use crate::report::{self, Reporter, Snapshot};
+use crate::select::{self, Point, Selection};
 use crate::session::{Entry, Transcript};
 use crate::settings::{Control, Setting, Settings};
 use crate::ui::{self, Word};
@@ -58,6 +59,19 @@ pub struct Guard {
 const SPIN_INTERVAL: Duration = Duration::from_millis(150);
 
 const PAN_COLUMNS: isize = 4;
+
+/// How often a drag held above or below the transcript scrolls it a line.
+const EDGE_SCROLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// A left press on the transcript, which its release makes a click unless
+/// a drag made it a selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Press {
+    at: Position,
+
+    /// Where a selection from the press starts, when the press is on text.
+    anchor: Option<Point>,
+}
 
 /// How long a block's copy glyph says `copied`.
 const COPIED_FOR: Duration = Duration::from_secs(1);
@@ -167,6 +181,16 @@ pub struct App {
 
     /// The block whose thumb the pointer is over.
     pub hover_bar: Option<(usize, usize)>,
+
+    /// The transcript's text, set by the last draw.
+    pub texts: select::Texts,
+
+    /// The range a drag over the transcript marked, kept until the next
+    /// click.
+    pub selection: Option<Selection>,
+
+    /// A press on the transcript, until its release.
+    pub press: Option<Press>,
 
     /// The copy glyphs on screen, set by the last draw.
     pub copies: Vec<ui::CopyArea>,
@@ -624,6 +648,19 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => return self.click(position),
             MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(press) = self.press
+                    && let Some(anchor) = press.anchor
+                    && position != press.at
+                {
+                    let head = self.texts.nearest(position);
+                    let selection = self.selection.get_or_insert(Selection {
+                        anchor,
+                        head,
+                        pointer: None,
+                    });
+                    selection.head = head;
+                    selection.pointer = Some(position);
+                }
                 if let Some(drag) = self.drag {
                     self.pans.insert(drag.key, drag.pan_at(position.x));
                 }
@@ -636,7 +673,7 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) => {
                 self.drag = None;
                 self.v_drag = None;
-                return Action::None;
+                return self.release();
             }
             MouseEventKind::ScrollLeft => -PAN_COLUMNS,
             MouseEventKind::ScrollUp if shift => -PAN_COLUMNS,
@@ -658,6 +695,50 @@ impl App {
             self.pans.insert(block.key, offset);
         }
         Action::None
+    }
+
+    /// End a press on the transcript: copy what its drag selected, or else
+    /// act on a click at the press.
+    fn release(&mut self) -> Action {
+        let Some(press) = self.press.take() else {
+            return Action::None;
+        };
+        if let Some(selection) = &mut self.selection {
+            selection.pointer = None;
+            let text = selection.copy(&self.texts.lines);
+            if text.is_empty() {
+                return Action::None;
+            }
+            return Action::Copy(text);
+        }
+        if let Some(action) = self.click_link(press.at) {
+            return action;
+        }
+        if let Some(fold) = self.folds.iter().find(|fold| fold.whole.contains(press.at)) {
+            self.flip_fold(fold.id.clone());
+        }
+        Action::None
+    }
+
+    /// Which way a drag held past the transcript's top or bottom scrolls
+    /// it: 1 up, -1 down, 0 when the pointer is not past either.
+    pub fn edge_scroll(&self) -> isize {
+        let Some(pointer) = self.selection.as_ref().and_then(|s| s.pointer) else {
+            return 0;
+        };
+        let area = self.texts.area;
+        if pointer.y < area.y {
+            1
+        } else if pointer.y >= area.bottom() && self.scroll > 0 {
+            -1
+        } else {
+            0
+        }
+    }
+
+    /// Scroll a line the way `edge_scroll` says.
+    pub fn scroll_past_edge(&mut self) {
+        self.scroll = self.scroll.saturating_add_signed(self.edge_scroll());
     }
 
     /// Move the hover to the link at `position`, and ask for its hover
@@ -806,6 +887,7 @@ impl App {
     }
 
     fn click(&mut self, position: Position) -> Action {
+        self.selection = None;
         if self.permission.is_some() || self.form.is_some() || self.confirm.is_some() {
             return Action::None;
         }
@@ -827,9 +909,6 @@ impl App {
             return Action::None;
         }
         let Some(chip) = self.chips.iter().find(|chip| chip.area.contains(position)) else {
-            if let Some(action) = self.click_link(position) {
-                return action;
-            }
             if let Some(toggle) = self
                 .toggles
                 .iter()
@@ -862,16 +941,19 @@ impl App {
                 self.copied = Some((key, Instant::now() + COPIED_FOR));
                 return Action::Copy(text);
             }
-            if let Some(fold) = self.folds.iter().find(|fold| fold.area.contains(position)) {
-                self.flip_fold(fold.id.clone());
-                return Action::None;
-            }
             if self.press_bar(position) {
                 return Action::None;
             }
-            if let Some(fold) = self.folds.iter().find(|fold| fold.whole.contains(position)) {
-                self.flip_fold(fold.id.clone());
-            }
+
+            // a drag in a wide block selects nothing, since its rows pan
+            let anchor = self
+                .texts
+                .text_at(position)
+                .filter(|_| !self.wide.iter().any(|block| block.area.contains(position)));
+            self.press = Some(Press {
+                at: position,
+                anchor,
+            });
             return Action::None;
         };
         let anchor = chip.area.x;
@@ -1613,6 +1695,9 @@ async fn session(
         drag: None,
         bars: Vec::new(),
         hover_bar: None,
+        texts: select::Texts::default(),
+        selection: None,
+        press: None,
         copies: Vec::new(),
         hover_copy: None,
         hover_fold: None,
@@ -1665,6 +1750,8 @@ async fn session(
     }
     let mut spin = tokio::time::interval(SPIN_INTERVAL);
     spin.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut edge = tokio::time::interval(EDGE_SCROLL_INTERVAL);
+    edge.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut redraw = true;
     let result = loop {
         if redraw && let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
@@ -1703,6 +1790,10 @@ async fn session(
             },
             _ = spin.tick(), if app.transcript.in_flight => {
                 app.spinner = app.spinner.wrapping_add(1);
+                Action::None
+            },
+            _ = edge.tick(), if app.edge_scroll() != 0 => {
+                app.scroll_past_edge();
                 Action::None
             },
             () = async { tokio::time::sleep_until(copied_until.unwrap().into()).await }, if copied_until.is_some() => {
@@ -1934,6 +2025,9 @@ mod tests {
             drag: None,
             bars: Vec::new(),
             hover_bar: None,
+            texts: select::Texts::default(),
+            selection: None,
+            press: None,
             copies: Vec::new(),
             hover_copy: None,
             hover_fold: None,
@@ -2093,11 +2187,10 @@ mod tests {
     #[test]
     fn clicking_a_file_link_shows_it_in_decade_or_says_there_is_no_connection() {
         let mut app = with_links();
-        let down = MouseEventKind::Down(MouseButton::Left);
-        assert!(matches!(at(&mut app, down, 11), Action::None));
+        assert!(matches!(click(&mut app, 11, 3), Action::None));
         assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
         app.decade_pane = Some(String::new());
-        let Action::Show { to, show } = at(&mut app, down, 11) else {
+        let Action::Show { to, show } = click(&mut app, 11, 3) else {
             panic!("no show");
         };
         assert_eq!(to, "code");
@@ -2108,11 +2201,10 @@ mod tests {
     #[test]
     fn clicking_a_url_or_a_scheme_with_no_click_command_does_nothing_by_default() {
         let mut app = with_links();
-        let down = MouseEventKind::Down(MouseButton::Left);
-        assert!(matches!(at(&mut app, down, 21), Action::None));
-        assert!(matches!(at(&mut app, down, 3), Action::None));
+        assert!(matches!(click(&mut app, 21, 3), Action::None));
+        assert!(matches!(click(&mut app, 3, 3), Action::None));
         app.links.open_urls = true;
-        assert!(matches!(at(&mut app, down, 21), Action::Run(_)));
+        assert!(matches!(click(&mut app, 21, 3), Action::Run(_)));
     }
 
     #[test]
@@ -2230,7 +2322,6 @@ mod tests {
         let (cut, text) = text_under(&mut app);
         assert_eq!(text, "pha");
         assert_eq!(cut.x, 2);
-        let down = MouseEventKind::Down(MouseButton::Left);
         app.mouse(wheel(
             MouseEventKind::Moved,
             KeyModifiers::NONE,
@@ -2238,7 +2329,7 @@ mod tests {
             cut.y,
         ));
         assert_eq!(app.hover_link.as_ref().unwrap().key, (0, 0));
-        app.mouse(wheel(down, KeyModifiers::NONE, cut.x, cut.y));
+        click(&mut app, cut.x, cut.y);
         assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
         app.pans.insert((0, 0), col + 5);
         header_rows_all(&mut app, 40);
@@ -3334,13 +3425,14 @@ mod tests {
         assert_eq!(menu.x, model.x);
     }
 
+    /// A press and a release at one place, and the first action of the two
+    /// that does something.
     fn click(app: &mut App, column: u16, row: u16) -> Action {
-        app.mouse(wheel(
-            MouseEventKind::Down(MouseButton::Left),
-            KeyModifiers::NONE,
-            column,
-            row,
-        ))
+        let event = |kind| wheel(kind, KeyModifiers::NONE, column, row);
+        match app.mouse(event(MouseEventKind::Down(MouseButton::Left))) {
+            Action::None => app.mouse(event(MouseEventKind::Up(MouseButton::Left))),
+            action => action,
+        }
     }
 
     #[test]
@@ -4410,5 +4502,159 @@ mod tests {
 
         let wheel_down = wheel(MouseEventKind::ScrollUp, KeyModifiers::NONE, 3, 9);
         assert!(app.pointer(wheel_down).1);
+    }
+
+    /// The screen position of the first character of `needle` in the
+    /// transcript as last drawn, or of its last character when `last`.
+    fn text_spot(app: &App, needle: &str, last: bool) -> Position {
+        use unicode_width::UnicodeWidthStr;
+
+        let texts = &app.texts;
+        let shown = texts.start..texts.start + texts.area.height as usize;
+        shown
+            .filter_map(|line| Some((line, texts.lines.get(line)?.as_ref()?)))
+            .find_map(|(line, text)| {
+                let mut at = text.text.find(needle)?;
+                if last {
+                    at += needle.len() - needle.chars().last()?.len_utf8();
+                }
+                let col = text.col + text.text[..at].width();
+                Some(Position::new(
+                    texts.area.x + col as u16,
+                    texts.area.y + (line - texts.start) as u16,
+                ))
+            })
+            .unwrap_or_else(|| panic!("{needle:?} is not on screen"))
+    }
+
+    /// A left drag from `from` to `to` with a draw after each step, and what
+    /// its release does.
+    fn drag_over(app: &mut App, from: Position, to: Position) -> Action {
+        let event = |kind, at: Position| wheel(kind, KeyModifiers::NONE, at.x, at.y);
+        app.mouse(event(MouseEventKind::Down(MouseButton::Left), from));
+        header_buffer(app, 80);
+        app.mouse(event(MouseEventKind::Drag(MouseButton::Left), to));
+        header_buffer(app, 80);
+        app.mouse(event(MouseEventKind::Up(MouseButton::Left), to))
+    }
+
+    fn drawn_with(entries: Vec<Entry>) -> App {
+        let mut app = app();
+        app.wide.clear();
+        app.transcript.entries = entries;
+        header_buffer(&mut app, 80);
+        app
+    }
+
+    fn copied_by(action: Action) -> String {
+        match action {
+            Action::Copy(text) => text,
+            _ => panic!("expected a copy"),
+        }
+    }
+
+    #[test]
+    fn a_drag_across_a_wrapped_paragraph_copies_one_line_joined_with_a_space() {
+        let words: Vec<String> = (1..=40).map(|n| format!("word{n}")).collect();
+        let text = words.join(" ");
+        let mut app = drawn_with(vec![Entry::Agent(text.clone())]);
+        let from = text_spot(&app, "word1 ", false);
+        let to = text_spot(&app, "word40", true);
+        assert!(to.y > from.y, "the paragraph wraps");
+        assert_eq!(copied_by(drag_over(&mut app, from, to)), text);
+    }
+
+    #[test]
+    fn a_drag_across_a_word_split_over_rows_joins_it_with_nothing() {
+        let word = format!("a{}z", "x".repeat(100));
+        let mut app = drawn_with(vec![Entry::Agent(word.clone())]);
+        let from = text_spot(&app, "ax", false);
+        let to = text_spot(&app, "xz", true);
+        assert!(to.y > from.y, "the word is split");
+        assert_eq!(copied_by(drag_over(&mut app, from, to)), word);
+    }
+
+    #[test]
+    fn a_line_break_in_a_message_stays_a_line_break_in_a_copy() {
+        let mut app = drawn_with(vec![Entry::User("first line\nsecond line".to_string())]);
+        let from = text_spot(&app, "first", false);
+        let to = text_spot(&app, "second line", true);
+        assert_eq!(
+            copied_by(drag_over(&mut app, from, to)),
+            "first line\nsecond line"
+        );
+    }
+
+    #[test]
+    fn a_copy_leaves_out_borders_gutters_and_a_code_blocks_header() {
+        let long = "abcdefghij".repeat(10);
+        let text = format!("before\n\n```\n{long}\nshort\n```\n\nafter");
+        let mut app = drawn_with(vec![Entry::Agent(text)]);
+        let from = text_spot(&app, "before", false);
+        let to = text_spot(&app, "after", true);
+        let copy = copied_by(drag_over(&mut app, from, to));
+        assert_eq!(copy, format!("before\n\n{long}\nshort\n\nafter"));
+
+        let buffer = header_buffer(&mut app, 80);
+        let tint = crate::palette::get().tint;
+        assert_eq!(buffer[(from.x, from.y)].bg, tint);
+        assert_ne!(buffer[(from.x - 2, from.y)].bg, tint);
+    }
+
+    #[test]
+    fn the_selection_stays_after_the_release_and_goes_at_the_next_click() {
+        let mut app = drawn_with(vec![Entry::Agent("one two three".to_string())]);
+        let from = text_spot(&app, "one", false);
+        let to = text_spot(&app, "two", true);
+        assert_eq!(copied_by(drag_over(&mut app, from, to)), "one two");
+        assert!(app.selection.is_some());
+        assert!(matches!(click(&mut app, from.x, from.y), Action::None));
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn a_click_on_a_call_without_a_drag_still_folds_it_and_a_drag_does_not() {
+        let mut app = with_settings();
+        let fold = unfolded_edit(&mut app);
+        let head = Position::new(fold.area.x + 3, fold.area.y);
+        let below = Position::new(fold.area.x + 8, fold.area.y + 1);
+        assert!(matches!(drag_over(&mut app, head, below), Action::Copy(_)));
+        assert!(app.expanded.contains(&fold.id));
+        click(&mut app, head.x, head.y);
+        assert!(!app.expanded.contains(&fold.id));
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn a_drag_from_the_conversations_scroll_bar_scrolls_and_selects_nothing() {
+        let notices = (0..60).map(|n| Entry::Notice(format!("notice {n}")));
+        let mut app = drawn_with(notices.collect());
+        let bar = app.v_bar.as_ref().expect("a scroll bar").area;
+        let thumb = bar.y + bar.height - 1;
+        let from = Position::new(bar.x, thumb);
+        let to = Position::new(bar.x, bar.y);
+        assert!(matches!(drag_over(&mut app, from, to), Action::None));
+        assert!(app.scroll > 0);
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn a_drag_held_below_the_transcript_scrolls_it_down_a_line_at_a_time() {
+        let notices = (0..60).map(|n| Entry::Notice(format!("notice {n}")));
+        let mut app = drawn_with(notices.collect());
+        app.scroll = 5;
+        header_buffer(&mut app, 80);
+        let from = text_spot(&app, "notice 55", false);
+        let event = |kind, at: Position| wheel(kind, KeyModifiers::NONE, at.x, at.y);
+        app.mouse(event(MouseEventKind::Down(MouseButton::Left), from));
+        let below = Position::new(from.x, app.texts.area.bottom());
+        app.mouse(event(MouseEventKind::Drag(MouseButton::Left), below));
+        assert_eq!(app.edge_scroll(), -1);
+        app.scroll_past_edge();
+        app.scroll_past_edge();
+        assert_eq!(app.scroll, 3);
+        header_buffer(&mut app, 80);
+        let last = app.texts.start + app.texts.area.height as usize - 1;
+        assert_eq!(app.selection.as_ref().unwrap().head.line, last);
     }
 }

@@ -301,6 +301,18 @@ command line, the keys, and the scenario format the fake agent reads.
   nothing and does not hold up the session. coax sends no information about
   you in the request.
 
+- A left drag over the conversation's text selects it. The selected text
+  shows on the `tint` fill. The conversation scrolls while the pointer is held
+  above or below it. On release, coax copies the selection through OSC 52,
+  and the selection stays until the next click. A copy takes the text as
+  drawn, without borders, gutters, glyphs, a code block's header row or
+  scroll bars. Rows that wrapped join back into one line. They join with a
+  space where the row broke between words, and with nothing where it split a
+  word. A drag from a scroll bar, or one that starts inside a block that
+  pans, does what it did before and selects nothing. A link and a foldable
+  call now act on the release of a click, so a drag that starts on one
+  selects text and does not open or fold it.
+
 ### Changed
 
 - An agent that exits no longer takes coax with it. The conversation stays on
