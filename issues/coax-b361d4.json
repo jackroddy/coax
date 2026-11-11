@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T22:07:17.452607078Z",
-  "updated_at": "2026-11-11T00:32:20.281334573Z",
+  "updated_at": "2026-11-11T02:05:46.932531922Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -40,6 +40,14 @@
       "author": "Jack Roddy/bd10c4a0",
       "text": "Two ways forward. One is to teach cmr to parse inline markdown inside link text and bold, which today hold plain strings (`Inline::Link`, `Inline::Bold`). The other is to have the coax output style allow only plain words inside a colour link. The style rule is cheap, and coloured status words rarely need bold or code, so I lean to it.",
       "commit": "e619019",
+      "branch": "dev"
+    },
+    {
+      "id": "4d9fc7d8",
+      "at": "2026-11-11T02:05:46.932531082Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Jack wants colour allowed anywhere it can be (2026-11-10). That means teaching cmr to parse inline markdown inside link text and bold, so colour combines with bold and inline code in either order. Code blocks stay literal, since colour markup there would need stripping on copy, an escape for real code, and would show raw in other renderers. To be discussed next.",
+      "commit": "8fee24b",
       "branch": "dev"
     }
   ],
