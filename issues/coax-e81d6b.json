@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T04:43:32.950669538Z",
-  "updated_at": "2026-11-11T04:43:32.950669538Z",
+  "updated_at": "2026-11-11T04:50:31.945140456Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "3a6f94f3",
+      "at": "2026-11-11T04:50:31.945139736Z",
+      "author": "Jack Roddy/bd10c4a0",
+      "text": "Jack, 2026-11-11: Ctrl+c stays a one-press cancel of a running turn. Only Esc gets the second press.",
+      "commit": "4d4ac77",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4d4ac77",
