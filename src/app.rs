@@ -5056,6 +5056,20 @@ mod tests {
     }
 
     #[test]
+    fn a_drag_across_a_panned_block_copies_its_whole_lines() {
+        let long: String = (0..100).map(|n| char::from(b'a' + n % 26)).collect();
+        let mut app = drawn_with(vec![reply(format!(
+            "before\n\n```rust\n{long}\nshort\n```\n\nafter"
+        ))]);
+        app.pans.insert((0, 1), 10);
+        header_buffer(&mut app, 80);
+        let from = text_spot(&app, "before", false);
+        let to = text_spot(&app, "after", true);
+        let text = copied_by(drag_over(&mut app, from, to));
+        assert_eq!(text, format!("before\n\n{long}\nshort\n\nafter"));
+    }
+
+    #[test]
     fn a_drag_held_below_the_transcript_scrolls_it_down_a_line_at_a_time() {
         let notices = (0..60).map(|n| Entry::Notice(format!("notice {n}")));
         let mut app = drawn_with(notices.collect());

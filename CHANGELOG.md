@@ -332,8 +332,10 @@ command line, the keys, and the scenario format the fake agent reads.
   drawn, without borders, gutters, glyphs, a code block's header row or
   scroll bars. Rows that wrapped join back into one line. They join with a
   space where the row broke between words, and with nothing where it split a
-  word. A drag from a scroll bar, or one that starts inside a block that
-  pans, does what it did before and selects nothing. A link and a foldable
+  word. A selection that crosses a whole row of a block that pans copies
+  the row's full line, including the columns off screen. A drag from a
+  scroll bar, or one that starts inside a block that pans, does what it did
+  before and selects nothing. A link and a foldable
   call now act on the release of a click, so a drag that starts on one
   selects text and does not open or fold it.
 

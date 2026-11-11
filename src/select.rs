@@ -14,6 +14,9 @@ pub struct LineText {
     pub col: usize,
     pub text: String,
     pub join: Join,
+
+    /// The whole line, when `text` is the part of it a panned block shows.
+    pub whole: Option<String>,
 }
 
 impl LineText {
@@ -90,6 +93,15 @@ impl Selection {
                 });
             }
             first = false;
+            if let Some(whole) = &text.whole
+                && from.line != to.line
+                && text
+                    .cells()
+                    .all(|(_, col, width)| self.picks(line, col, width))
+            {
+                out.push_str(whole);
+                continue;
+            }
             out.extend(
                 text.cells()
                     .filter(|&(_, col, width)| self.picks(line, col, width))
@@ -167,6 +179,7 @@ mod tests {
             col,
             text: text.to_string(),
             join,
+            whole: None,
         })
     }
 
@@ -207,6 +220,43 @@ mod tests {
         assert_eq!(selection((0, 0), (1, 0)).covers(0, &line), Some(2..5));
         assert_eq!(selection((0, 3), (0, 3)).covers(0, &line), Some(3..4));
         assert_eq!(selection((0, 6), (1, 0)).covers(0, &line), None);
+    }
+
+    #[test]
+    fn a_selection_over_a_whole_panned_row_copies_its_whole_line() {
+        let panned = |shown: &str, whole: &str| {
+            Some(LineText {
+                whole: Some(whole.to_string()),
+                ..text(2, shown, Join::Break).unwrap()
+            })
+        };
+        let lines = [
+            text(0, "before", Join::Break),
+            panned("defgh", "abcdefghijk"),
+            panned("12345", "0123456789"),
+            text(0, "after", Join::Break),
+        ];
+        assert_eq!(
+            selection((0, 0), (3, 9)).copy(&lines),
+            "before\nabcdefghijk\n0123456789\nafter"
+        );
+
+        // a selection that ends partway along a panned row
+        // keeps the columns it covers there
+        assert_eq!(
+            selection((0, 0), (2, 3)).copy(&lines),
+            "before\nabcdefghijk\n12"
+        );
+    }
+
+    #[test]
+    fn a_selection_inside_one_panned_row_keeps_the_columns_on_screen() {
+        let lines = [Some(LineText {
+            whole: Some("abcdefghijk".to_string()),
+            ..text(2, "defgh", Join::Break).unwrap()
+        })];
+        assert_eq!(selection((0, 0), (0, 9)).copy(&lines), "defgh");
+        assert_eq!(selection((0, 3), (0, 4)).copy(&lines), "ef");
     }
 
     #[test]

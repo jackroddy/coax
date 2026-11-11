@@ -1136,6 +1136,7 @@ fn line_text(line: &Line, lead: usize, join: cmr::Join) -> LineText {
         col: lead,
         text,
         join,
+        whole: None,
     }
 }
 
@@ -1153,10 +1154,12 @@ fn windowed(text: &LineText, offset: usize, visible: usize) -> LineText {
         }
         col += width;
     }
+    let whole = (kept != text.text).then(|| text.text.clone());
     LineText {
         col: first.unwrap_or(offset) - offset,
         text: kept,
         join: text.join,
+        whole,
     }
 }
 
