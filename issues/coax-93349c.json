@@ -3,26 +3,29 @@
   "title": "A form docks at the bottom of the screen in place of the prompt",
   "body": "A form from an `elicitation/create` request opens as a box centred over the transcript (`draw_form` in `ui.rs`). In a live test Jack found the box floating over the middle of the chat awkward, since the transcript shows around and behind it.\n\n## Proposal\n\n- While a form is open, it takes the prompt's place at the bottom of the screen and grows up to half the screen height, scrolling past that. The transcript stays fully readable above it.\n- The working line above it keeps reading `waiting for you`.\n\n## Open\n\n- Each question's free-text `Other` field shows as a section of its own with a heading and a long description. It could be one row at the end of its question instead, as in `› other: type here`. Jack decides once he sees the docked form.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/bd10c4a0",
-  "lease_expires": "2026-11-11T01:34:38.185233608Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T00:39:17.379412855Z",
-  "updated_at": "2026-11-11T01:19:38.185233608Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T01:21:33.416907089Z",
+  "closed_at": "2026-11-11T01:21:33.416907089Z",
+  "close_reason": "Landed in f2c2f60. An open form draws between the rules in the prompt's place, at full width under the prompt's two-column indent, up to half the screen height. The rule above it shows the form's message, the keys and the `N more` count. The `Other` sections are unchanged, so that question stays open for Jack.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e619019",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "f2c2f60",
+      "branch": "dev"
+    }
   }
 }
