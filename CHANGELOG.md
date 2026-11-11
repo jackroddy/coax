@@ -23,8 +23,7 @@ command line, the keys, and the scenario format the fake agent reads.
   picker names the file to create. The picker has a header of its
   own, `coax` and a title over a dim rule, and marks the chosen row with `›`
   and a shaded background.
-- Started inside a decade pane, coax joins the decade socket. The status
-  line says when it is connected.
+- Started inside a decade pane, coax joins the decade socket.
 - coax names its agent to decade in hello (the agent's name, its version and
   the session id) and reports on it. The state is `working` during a turn,
   `attention` with the tool call's title as the question while a permission

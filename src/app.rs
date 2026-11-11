@@ -3305,10 +3305,10 @@ mod tests {
         assert_eq!(cell("↓4", 0).fg, palette.green);
         assert_eq!(cell("↓4", 1).fg, palette.foreground);
         assert_eq!(cell("$0.14", 0).fg, palette.orange);
-        assert_eq!(cell("decade", 0).fg, palette.cyan);
         assert_eq!(cell("0.9.0 available", 0).fg, palette.accent);
         assert!(is_dim(&cell("idle", 0)));
         assert!(is_dim(&cell(" · idle", 1)));
+        assert!(!status_row(&mut app, width).contains("decade"));
     }
 
     fn plan_entry(

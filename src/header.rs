@@ -144,12 +144,6 @@ fn status(app: &App) -> Vec<Item> {
             items.push(Item::new(settings::money(cost), orange, 3));
         }
     }
-    let cyan = Style::new().fg(palette.cyan);
-    match &app.decade_pane {
-        Some(pane) if pane.is_empty() => items.push(Item::new("decade".to_string(), cyan, 0)),
-        Some(pane) => items.push(Item::new(format!("decade pane {pane}"), cyan, 0)),
-        None => {}
-    }
     if let Some(version) = &app.update {
         let accent = Style::new().fg(palette.accent);
         items.push(Item::new(format!("{version} available"), accent, 4));
