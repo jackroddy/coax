@@ -1,8 +1,8 @@
 {
   "slug": "claude-adapter-queues-prompts",
-  "text": "The Claude adapter v0.101.0 declares `_meta.claudeCode.promptQueueing`. A `session/prompt` sent during a turn gets its own turn after the running one, and its own reply, in order. A v1 client gets no message when a queued turn starts. Only the v2 path sends `user_message` then. A `session/cancel` cancels every prompt received so far. Source: `startTurn` and `cancelTurns` in the adapter's bundled JavaScript.",
+  "text": "The Claude adapter v0.101.0 declares `_meta.claudeCode.promptQueueing`. A `session/prompt` sent during a turn gets its own reply, in order. Claude Code hands it to the model mid-turn with the next tool result, yet the adapter answers the first prompt only when the whole turn ends, so coax shows it as queued until then. A `session/cancel` cancels every prompt received so far. Seen live 2026-11-10. Source: `startTurn` and `cancelTurns` in the adapter's bundled JavaScript.",
   "created_at": "2026-11-11T00:32:20.21733059Z",
-  "updated_at": "2026-11-11T00:32:20.21733059Z",
+  "updated_at": "2026-11-11T00:47:35.569037643Z",
   "stamp": {
     "commit": "e619019",
     "branch": "dev"
