@@ -3196,9 +3196,8 @@ mod tests {
         let auto = &buffer[(mode.x, 29)];
         assert_eq!(auto.fg, crate::palette::get().yellow);
         assert!(!auto.modifier.contains(Modifier::DIM));
-        let muted = crate::palette::get().muted;
-        assert_eq!(buffer[(model.x, 29)].fg, muted);
-        assert_eq!(buffer[(mode.x + 5, 29)].fg, muted);
+        assert!(buffer[(model.x, 29)].modifier.contains(Modifier::DIM));
+        assert!(buffer[(mode.x + 5, 29)].modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -4363,7 +4362,7 @@ mod tests {
         assert!(first.ends_with(" 5m"), "{first}");
         assert!(text_of(&buffer, rows[1]).ends_with(" 50m"));
         let marker = &buffer[(rows[0].x, rows[0].y)];
-        assert_eq!(marker.fg, crate::palette::get().muted);
+        assert!(marker.modifier.contains(ratatui::style::Modifier::DIM));
     }
 
     #[test]

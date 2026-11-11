@@ -54,8 +54,9 @@ command line, the keys, and the scenario format the fake agent reads.
   `"#RRGGBB"` or an ANSI colour name, and a slot left out keeps the
   terminal's colour. With `background` set, coax paints every cell with it.
   coax's own slots take a terminal slot's name as well, and default to one:
-  `accent` to `yellow`, `muted` (dim text and rules) and `selection` (the
-  chosen row) to `bright_black`, and `orange` to `bright_red`. `tint`, a fill
+  `accent` to `yellow`, `selection` (the chosen row) to `bright_black`, and
+  `orange` to `bright_red`. `muted`, for dim text and rules, uses the
+  terminal's dim attribute when the config leaves it out. `tint`, a fill
   just off the background, mixes 7% of the foreground into the background.
   It takes their RGB from the config or, at startup, from the terminal's
   answers to OSC 10 and OSC 11, and falls back to `selection` when neither

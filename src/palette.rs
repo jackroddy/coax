@@ -35,8 +35,8 @@ pub struct Palette {
     /// Your messages, and whatever is under the pointer.
     pub accent: Color,
 
-    /// Secondary text and rules.
-    pub muted: Color,
+    /// Secondary text and rules, or `None` for the terminal's dim attribute.
+    pub muted: Option<Color>,
 
     /// The background of a chosen row.
     pub selection: Color,
@@ -68,10 +68,10 @@ const TERMINAL_SLOTS: [&str; 18] = [
 ];
 
 /// coax's own slots and the terminal slot each takes when the config leaves
-/// it out. `tint` is missing because its default is mixed.
-const COAX_DEFAULTS: [(&str, &str); 4] = [
+/// it out. `muted` and `tint` are missing because their defaults are not a
+/// slot.
+const COAX_DEFAULTS: [(&str, &str); 3] = [
     ("accent", "yellow"),
-    ("muted", "bright_black"),
     ("selection", "bright_black"),
     ("orange", "bright_red"),
 ];
@@ -102,7 +102,7 @@ impl Palette {
             foreground: Color::Reset,
             background: None,
             accent: Color::Yellow,
-            muted: Color::DarkGray,
+            muted: None,
             selection: Color::DarkGray,
             orange: Color::LightRed,
             tint: Color::DarkGray,
@@ -131,7 +131,7 @@ impl Palette {
             "foreground" => self.foreground,
             "background" => self.background.unwrap_or(Color::Reset),
             "accent" => self.accent,
-            "muted" => self.muted,
+            "muted" => self.muted.unwrap_or(self.bright_black),
             "selection" => self.selection,
             "orange" => self.orange,
             "tint" => self.tint,
@@ -163,7 +163,10 @@ impl Palette {
                 return;
             }
             "accent" => &mut self.accent,
-            "muted" => &mut self.muted,
+            "muted" => {
+                self.muted = Some(color);
+                return;
+            }
             "selection" => &mut self.selection,
             "orange" => &mut self.orange,
             "tint" => &mut self.tint,
@@ -207,7 +210,8 @@ impl<'de> Deserialize<'de> for PaletteConfig {
 }
 
 fn parse_value(name: &str, text: &str) -> Result<Value, String> {
-    let coax = name == "tint" || COAX_DEFAULTS.iter().any(|(slot, _)| *slot == name);
+    let coax =
+        matches!(name, "muted" | "tint") || COAX_DEFAULTS.iter().any(|(slot, _)| *slot == name);
     if !coax && !TERMINAL_SLOTS.contains(&name) {
         return Err(format!("`{name}` is not a palette slot"));
     }
@@ -236,6 +240,7 @@ impl PaletteConfig {
             let color = self.coax_value(name, &palette).or(palette.named(default));
             palette.set(name, color.unwrap_or(Color::Reset));
         }
+        palette.muted = self.coax_value("muted", &palette);
         let mixed = rgb(palette.background)
             .or(reported.background)
             .zip(rgb(Some(palette.foreground)).or(reported.foreground))
@@ -406,7 +411,8 @@ mod tests {
             .unwrap()
             .resolve(Reported::default());
         assert_eq!(palette.accent, Color::Rgb(0xda, 0x91, 0x5c));
-        assert_eq!(palette.muted, Color::Rgb(0x6d, 0x69, 0x77));
+        assert_eq!(palette.muted, None);
+        assert_eq!(palette.named("muted"), Some(Color::Rgb(0x6d, 0x69, 0x77)));
         assert_eq!(palette.selection, Color::Rgb(0x6d, 0x69, 0x77));
         assert_eq!(palette.orange, Color::LightRed);
     }

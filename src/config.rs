@@ -185,7 +185,7 @@ mod tests {
         let palette = config.palette.resolve(Default::default());
         assert_eq!(palette.accent, Color::Rgb(0xDA, 0x74, 0x5B));
         assert_eq!(palette.cyan, Color::DarkGray);
-        assert_eq!(palette.muted, Color::Rgb(0x6D, 0x69, 0x77));
+        assert_eq!(palette.muted, Some(Color::Rgb(0x6D, 0x69, 0x77)));
         assert_eq!(palette.green, Color::Green);
     }
 
@@ -208,7 +208,7 @@ mod tests {
     fn an_absent_palette_gives_the_ansi_fallbacks() {
         let palette = Config::default().palette.resolve(Default::default());
         assert_eq!(palette.accent, Color::Yellow);
-        assert_eq!(palette.muted, Color::DarkGray);
+        assert_eq!(palette.muted, None);
         assert_eq!(palette.selection, Color::DarkGray);
         assert_eq!(palette.foreground, Color::Reset);
         assert_eq!(palette.orange, Color::LightRed);

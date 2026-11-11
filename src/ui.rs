@@ -1009,9 +1009,9 @@ fn screen_style(style: cmr::Style) -> Style {
         out = out.add_modifier(Modifier::BOLD);
     }
     if style.dim {
-        out = match style.fg {
-            None => out.fg(palette.muted),
-            Some(_) => out.add_modifier(Modifier::DIM),
+        out = match (style.fg, palette.muted) {
+            (None, Some(muted)) => out.fg(muted),
+            _ => out.add_modifier(Modifier::DIM),
         };
     }
     if style.underline {
@@ -2735,7 +2735,10 @@ fn history_row(name: &str, note: Option<&str>, inner: usize) -> Line<'static> {
 }
 
 pub fn dim() -> Style {
-    Style::new().fg(palette::get().muted)
+    match palette::get().muted {
+        Some(muted) => Style::new().fg(muted),
+        None => Style::new().add_modifier(Modifier::DIM),
+    }
 }
 
 /// Clear `area` for a box drawn over the screen, back to the base style.
