@@ -204,7 +204,8 @@ fn context_line(context: Option<&settings::Context>, width: usize) -> Line<'stat
     let style = match percent {
         Some(percent) if percent > 95 => Style::new().fg(palette::get().red),
         Some(percent) if percent > 80 => Style::new().fg(palette::get().yellow),
-        _ => dim(),
+        Some(_) => Style::new().fg(palette::get().green),
+        None => dim(),
     };
     let number = percent.map_or(String::new(), |percent| format!("{percent}%"));
     let lead = format!(" context: {number}  ");
@@ -332,6 +333,29 @@ mod tests {
         let line = text(context_line(Some(&half), 40));
         assert!(line.starts_with(" context: 50%  ▰▰▰▰▰▰▰▰▰▰▰▰▱"), "{line}");
         assert_eq!(line.chars().count(), 39);
+    }
+
+    #[test]
+    fn the_context_bar_is_green_then_yellow_past_80_then_red_past_95() {
+        let colours = |used| {
+            let context = settings::Context { used, size: 100 };
+            let line = context_line(Some(&context), 40);
+            let colour = |n: usize| line.spans[n].style.fg;
+            (colour(1), colour(2), colour(3))
+        };
+        let palette = palette::get();
+        let muted = dim().fg;
+        assert_eq!(
+            colours(50),
+            (Some(palette.green), Some(palette.green), muted)
+        );
+        assert_eq!(
+            colours(85),
+            (Some(palette.yellow), Some(palette.yellow), muted)
+        );
+        assert_eq!(colours(97), (Some(palette.red), Some(palette.red), muted));
+        let empty = context_line(None, 40);
+        assert!(empty.spans.iter().all(|span| span.style == dim()));
     }
 
     #[test]

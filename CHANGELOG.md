@@ -106,9 +106,9 @@ command line, the keys, and the scenario format the fake agent reads.
   through `session/set_mode`.
 - A row above the status line shows the context in use as `context: 3%`
   and a bar of `▰` and `▱` across the rest of the row, in proportion. The
-  percentage and the filled part turn yellow past 80% and red past 95%.
-  Before the agent reports a context size, the row has no percentage and an
-  empty bar.
+  percentage and the filled part are green up to 80%, yellow past 80% and
+  red past 95%. Before the agent reports a context size, the row has no
+  percentage and a muted, empty bar.
 - The status line also shows the session's tokens as `↑28k ↓4` with the cost
   after them, such as `$0.14`, when the agent sends one. The `↑` is cyan and
   the `↓` green, with the numbers in the foreground colour. The cost is
