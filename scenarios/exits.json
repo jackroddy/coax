@@ -1,0 +1,19 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Read main.rs",
+            "kind": "read",
+            "status": "in_progress"
+          }
+        },
+        { "delay_ms": 50 },
+        { "exit": { "code": 3, "stderr": "boom\nsecond line" } }
+      ]
+    }
+  ]
+}

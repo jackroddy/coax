@@ -32,6 +32,14 @@ merges into `dev` once the work is whole, and takes merges from `dev` when the
 two drift apart. Nothing else branches off `dev` unless Jack asks. `main` takes
 a merge from `dev` only at a release.
 
+**Sessions.** coax never switches sessions from inside a running
+conversation. A session is chosen in the picker at launch, and nowhere else.
+
+**Logins.** coax takes no part in signing in to an agent or to an MCP server.
+It does not declare URL-mode elicitation, which the Claude adapter uses to send
+a login link. Anthropic's terms of service may forbid a third-party client from
+handling a Claude login. Until Jack says otherwise, coax stays out of logins.
+
 **Releases.** Jack says when a release is, never Claude. Until he does, the
 version in `Cargo.toml` stays where it is and changelog entries accumulate
 under `## [Unreleased]` with `### Added` / `### Changed` / `### Removed`
@@ -62,8 +70,8 @@ on the wire>}`, `{"permission": {...}}`, `{"delay_ms": N}` or `{"stop":
 ## checks
 
 ```console
-$ cargo fmt --all
-$ cargo fmt --all --check
+$ cargo fmt
+$ cargo fmt --check
 $ cargo clippy --all-targets --all-features
 $ cargo test --all-features
 ```

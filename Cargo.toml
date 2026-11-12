@@ -1,6 +1,6 @@
 [package]
 name = "coax"
-version = "0.1.0"
+version = "0.2.0"
 description = "a terminal chat for agents that speak the Agent Client Protocol"
 readme = "README.md"
 exclude = ["CLAUDE.md", ".claude", "tmp-claude"]
@@ -13,10 +13,15 @@ keywords = ["acp", "agent", "chat", "tui", "terminal"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-agent-client-protocol = { version = "5", features = ["process", "stdio"] }
+agent-client-protocol = { version = "5", features = ["process", "stdio", "unstable_end_turn_token_usage"] }
+cmr = { version = "0.2.0", path = "../cmr" }
 crossterm = "0.29.0"
+decade-channel = { version = "0.1.0", path = "../decade/decade-channel" }
+libc = "0.2"
 ratatui = "0.30"
 serde = "1.0.229"
 serde_json = "1.0.154"
 textwrap = "0.16.4"
 tokio = { version = "1.54.1", features = ["rt", "macros", "process", "io-util", "sync", "time", "fs"] }
+toml = "1.2.1"
+unicode-width = "0.2"

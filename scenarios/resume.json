@@ -1,0 +1,421 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "agent_thought_chunk",
+            "content": {
+              "type": "text",
+              "text": "The user said hello. I should look at the entry point before answering."
+            }
+          }
+        },
+        {
+          "delay_ms": 300
+        },
+        {
+          "update": {
+            "sessionUpdate": "plan",
+            "entries": [
+              {
+                "content": "Read the entry point",
+                "priority": "high",
+                "status": "in_progress"
+              },
+              {
+                "content": "Answer",
+                "priority": "medium",
+                "status": "pending"
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "c1",
+            "title": "Read src/main.rs",
+            "kind": "read",
+            "status": "in_progress",
+            "locations": [
+              {
+                "path": "src/main.rs",
+                "line": 1
+              }
+            ]
+          }
+        },
+        {
+          "delay_ms": 400
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "c1",
+            "status": "completed",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "fn main() {}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "plan",
+            "entries": [
+              {
+                "content": "Read the entry point",
+                "priority": "high",
+                "status": "completed"
+              },
+              {
+                "content": "Answer",
+                "priority": "medium",
+                "status": "in_progress"
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Hello. "
+            }
+          }
+        },
+        {
+          "delay_ms": 150
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "The entry point is a hello world, "
+            }
+          }
+        },
+        {
+          "delay_ms": 150
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "so there is not much to say about it yet.\n\nI could add a note file if you like."
+            }
+          }
+        },
+        {
+          "permission": {
+            "tool_call": {
+              "toolCallId": "c2",
+              "title": "Write NOTES.md",
+              "kind": "edit",
+              "locations": [
+                {
+                  "path": "NOTES.md"
+                }
+              ]
+            },
+            "options": [
+              {
+                "optionId": "allow",
+                "name": "Allow once",
+                "kind": "allow_once"
+              },
+              {
+                "optionId": "reject",
+                "name": "Reject",
+                "kind": "reject_once"
+              }
+            ],
+            "expect": "allow"
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "c2",
+            "status": "completed",
+            "content": [
+              {
+                "type": "diff",
+                "path": "NOTES.md",
+                "oldText": null,
+                "newText": "# notes\n\nhello\n"
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "plan",
+            "entries": [
+              {
+                "content": "Read the entry point",
+                "priority": "high",
+                "status": "completed"
+              },
+              {
+                "content": "Answer",
+                "priority": "medium",
+                "status": "completed"
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "\n\nDone. NOTES.md has three lines."
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "usage_update",
+            "used": 28481,
+            "size": 1000000
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "usage_update",
+            "used": 28481,
+            "size": 1000000,
+            "cost": {
+              "amount": 0.136,
+              "currency": "USD"
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "session_info_update",
+            "title": "Say hello from the entry point"
+          }
+        },
+        {
+          "stop": "end_turn"
+        }
+      ],
+      "usage": {
+        "totalTokens": 28485,
+        "inputTokens": 12,
+        "outputTokens": 4,
+        "cachedReadTokens": 28469,
+        "cachedWriteTokens": 0
+      }
+    },
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Second turn: nothing to do."
+            }
+          }
+        },
+        {
+          "stop": "end_turn"
+        }
+      ]
+    }
+  ],
+  "sessions": [
+    {
+      "id": "earlier-1",
+      "title": "Read the entry point",
+      "updated_at": "2026-11-08T09:30:00Z",
+      "history": [
+        {
+          "update": {
+            "sessionUpdate": "user_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "What does src/main.rs do?"
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "h1",
+            "title": "Read src/main.rs",
+            "kind": "read",
+            "status": "completed",
+            "locations": [
+              {
+                "path": "src/main.rs",
+                "line": 1
+              }
+            ]
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "It is a hello world. "
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Nothing else lives there yet."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "earlier-2",
+      "title": "Plan the notes file",
+      "updated_at": "2026-11-09T06:45:00Z",
+      "history": [
+        {
+          "update": {
+            "sessionUpdate": "user_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Should we add a notes file?"
+            }
+          }
+        },
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Yes. A short NOTES.md would do."
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "config_options": [
+    {
+      "id": "effort",
+      "name": "Effort",
+      "type": "select",
+      "currentValue": "default",
+      "options": [
+        {
+          "value": "default",
+          "name": "Default"
+        },
+        {
+          "value": "low",
+          "name": "Low"
+        },
+        {
+          "value": "high",
+          "name": "High",
+          "description": "Think harder, slower"
+        }
+      ],
+      "category": "thought_level"
+    },
+    {
+      "id": "mode",
+      "name": "Mode",
+      "type": "select",
+      "currentValue": "auto",
+      "options": [
+        {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before each change"
+        },
+        {
+          "value": "acceptEdits",
+          "name": "Accept edits",
+          "description": "Edits go through, other tools ask"
+        },
+        {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan only, change nothing"
+        },
+        {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Never ask"
+        },
+        {
+          "value": "bypassPermissions",
+          "name": "Bypass permissions",
+          "description": "Skip every check"
+        }
+      ],
+      "category": "mode"
+    },
+    {
+      "id": "model",
+      "name": "Model",
+      "type": "select",
+      "currentValue": "opus",
+      "options": [
+        {
+          "value": "opus",
+          "name": "Opus",
+          "description": "Most capable"
+        },
+        {
+          "value": "sonnet",
+          "name": "Sonnet",
+          "description": "Fast and capable"
+        },
+        {
+          "value": "haiku",
+          "name": "Haiku",
+          "description": "Quick"
+        }
+      ],
+      "category": "model"
+    },
+    {
+      "id": "fast",
+      "name": "Fast",
+      "category": "model_config",
+      "type": "boolean",
+      "currentValue": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "compact",
+      "description": "Summarise the conversation to free context"
+    },
+    {
+      "name": "review",
+      "description": "Review code",
+      "input": {
+        "hint": "what to review"
+      }
+    },
+    {
+      "name": "init",
+      "description": "Create a CLAUDE.md for this project"
+    }
+  ]
+}

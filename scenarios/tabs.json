@@ -1,0 +1,20 @@
+{
+  "acts": [
+    {
+      "steps": [
+        {
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Two ways to write the greeting:\n\n```rust tab=\"owned\"\nfn greet(name: String) -> String {\n    format!(\"hello, {name}\")\n}\n```\n\n```rust tab=\"borrowed\"\nfn greet(name: &str) -> String {\n    format!(\"hello, {name}\")\n}\n```\n\nAnd the two tables side by side:\n\n```markdown tab=\"before\"\n| name | calls |\n|---|---|\n| greet | 12 |\n| parse | 3 |\n```\n\n```markdown tab=\"after\"\n| name | calls | change |\n|---|---|---|\n| greet | 4 | -8 |\n| parse | 3 | 0 |\n```\n\nThe borrowed one copies less."
+            }
+          }
+        },
+        {
+          "stop": "end_turn"
+        }
+      ]
+    }
+  ]
+}
