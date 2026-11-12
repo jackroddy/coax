@@ -111,7 +111,7 @@ command line, the keys, and the scenario format the fake agent reads.
 - The right of the status line shows the session's tokens as `↑28k ↓4`,
   with the cost after them, such as `$0.14`, when the agent sends one. The
   `↑` is cyan and the `↓` green, with the numbers in the foreground colour.
-  The cost is orange. decade, the update notice and the idle state follow.
+  The cost is orange. The update notice and the idle state follow.
   On a narrow screen the model config settings and settings with no
   category move into `⋯` first. Then the update notice goes, then the
   tokens and cost, and then the remaining settings from the right.
@@ -253,6 +253,8 @@ command line, the keys, and the scenario format the fake agent reads.
   `requestedSchema` and an optional `expect`, which asks for a form as the
   Claude adapter does. `scenarios/questions.json` asks two questions in the
   shape `AskUserQuestion` takes, and one option carries a preview.
+- The scenario format gains an `exit` step that ends the fake agent's process
+  with a code and optional stderr text.
 - Enter during a turn sends the prompt to an agent that declares
   `promptQueueing` under `claudeCode` in its capabilities, as the Claude
   adapter does, and the agent runs it once the running turn ends. For any
@@ -380,8 +382,8 @@ command line, the keys, and the scenario format the fake agent reads.
   its row says `failed:` with the reason and Enter on it does nothing, and a
   row whose session list failed says `sessions failed:`. A failure before the
   session opens no longer prints terminal reset codes.
-- The scenario format has an `exit` step that ends the fake agent's process
-  with a code and optional stderr text.
+- After a panic the terminal no longer prints escape codes for clicks and the
+  wheel. coax turns mouse capture off before it restores the terminal.
 - A conversation that is taller than the pane at one width and shorter one
   column narrower no longer panics the scroll bar. The bar shows only when
   the narrower layout is still taller.
@@ -429,8 +431,7 @@ command line, the keys, and the scenario format the fake agent reads.
 - The session has no panes and reads like a messaging thread. The
   conversation starts on the first row. Under the prompt sit the context
   row, the status line and the progress row. The status line carries the
-  settings, tokens, cost, decade when connected, and `idle` between
-  turns. `decade` is cyan and `idle` dim. While a turn runs, a row
+  settings, tokens, cost, and `idle` between turns. `idle` is dim. While a turn runs, a row
   above the prompt shows a spinner stepping through `◐◓◑◒`, `working`, the
   time since the prompt was sent and `esc esc to cancel`. While a permission
   request waits, the row reads `waiting for you` in yellow, with the time.
@@ -464,7 +465,7 @@ command line, the keys, and the scenario format the fake agent reads.
   the mouse and the terminal's own text selection needs Shift held. PageUp and
   PageDown move a full page, and End jumps to the bottom. While scrolled up,
   new output leaves the view where it is and the last row says how many lines
-  are below.
+  are below. A click on that row jumps to the bottom.
 - End jumps the conversation to the bottom only while the prompt is empty. With
   text in the prompt it moves the cursor to the end of the prompt.
 - Agent text is drawn as markdown: headings, lists, tables, rules, inline
