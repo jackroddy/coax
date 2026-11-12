@@ -10,6 +10,8 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-12
+
 ### Added
 
 - Named agents in `~/.config/coax/config.toml` (under `$XDG_CONFIG_HOME` when
@@ -487,4 +489,5 @@ The name on crates.io, and a first session.
 - `coax-fake-agent`, an ACP agent that replays a scenario file, for tests and
   for development without a real agent.
 
+[0.2.0]: https://github.com/jackroddy/coax/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jackroddy/coax/releases/tag/v0.1.0
