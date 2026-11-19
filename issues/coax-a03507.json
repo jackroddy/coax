@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T20:41:25.801998807Z",
-  "updated_at": "2026-11-19T20:41:25.801998807Z",
+  "updated_at": "2026-11-19T21:03:46.353157088Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "b50cea80",
+      "at": "2026-11-19T21:03:46.353156428Z",
+      "author": "Jack Roddy/85c47808",
+      "text": "coax-698acc gives every table a header row, `┌ table   rules`, drawn by coax above cmr's rows. The wrap and pan words can go in that row next to `rules`.",
+      "commit": "9e906aa",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "ca3eb3e",
