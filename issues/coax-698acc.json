@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-19T23:01:18.234518061Z",
   "defer_until": null,
   "created_at": "2026-11-19T20:59:58.521912635Z",
-  "updated_at": "2026-11-19T22:49:19.875629495Z",
+  "updated_at": "2026-11-19T22:49:19.885642865Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-19T21:03:46.342879231Z",
       "author": "Jack Roddy/85c47808",
       "text": "Done in the working tree on `dev`, not yet committed. cmr's side is in the cmr working tree under cmr-420714.\n\nEvery table is now a `Part::Block`. `kept_whole` lays it out twice, without rules and with them, and puts a `┌ table` row above each layout. The second layout sits in `KeptBlock::ruled`, boxed so `Part` stays small. The header row has no selection text, and each link run moves down one row to make room for it. `block_view` takes a `rules` flag and shows the ruled rows when it is set.\n\nThe header row draws when a block has a copy or a `ruled` layout. A table has no copy, so its header row has no copy glyph. `Toggle::active` is now an `Option<Word>`, so a lone word like `rules` can show with no word in force. `App::rules` holds the keys switched on, and a click on `Word::Rules` adds or removes the key.\n\nChecked in tmux at 100 columns: a click on `rules` adds a rule between each pair of rows in that table alone.",
+      "commit": "9e906aa",
+      "branch": "dev"
+    },
+    {
+      "id": "d7ea300a",
+      "at": "2026-11-19T22:49:19.885642245Z",
+      "author": "Jack Roddy/85c47808",
+      "text": "Done in the working tree on `dev`, not yet committed. The toggle version was dropped before it was committed. The test `a_table_has_a_rule_between_its_rows_in_the_prose_and_in_a_quote` covers both places.",
       "commit": "9e906aa",
       "branch": "dev"
     }
