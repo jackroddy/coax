@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T20:41:25.801998807Z",
-  "updated_at": "2026-11-19T21:03:46.353157088Z",
+  "updated_at": "2026-11-19T22:49:23.355858699Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -22,9 +22,10 @@
       "id": "b50cea80",
       "at": "2026-11-19T21:03:46.353156428Z",
       "author": "Jack Roddy/85c47808",
-      "text": "coax-698acc gives every table a header row, `┌ table   rules`, drawn by coax above cmr's rows. The wrap and pan words can go in that row next to `rules`.",
+      "text": "coax-698acc tried a `┌ table` header row above each table to hold a `rules` toggle. Jack dropped the toggle and the row with it, so a table still has no header row for the wrap and pan words.",
       "commit": "9e906aa",
-      "branch": "dev"
+      "branch": "dev",
+      "edited_at": "2026-11-19T22:49:23.355858379Z"
     }
   ],
   "stamps": {
