@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T20:41:21.38069212Z",
-  "updated_at": "2026-11-19T23:23:29.973863885Z",
+  "updated_at": "2026-11-19T23:27:33.789648395Z",
   "closed_at": "2026-11-19T23:23:29.973863885Z",
   "close_reason": "Landed in 9e906aa with the cap at 40 and the floor at 16. Jack checked it in coax and kept both numbers. The long-word item under Open is still unsolved.",
   "resolution": "done",
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/85c47808",
       "text": "Done in the working tree on `dev`, not yet committed. `table_width` and `column_widths` in `src/ui.rs` set the width a table is laid out at, with `COLUMN_CAP` at 40 and `COLUMN_FLOOR` at 16. The code uses both for a table that fits the box and for one that pans. `column_widths` reads the rule row of the table laid out at `TABLE_WIDTH`, after trimming the padding `cmr::layout` adds to every row.\n\nAt 100 columns, a two-column table with a paragraph in one cell wraps inside the box. A five-column table at 105 natural columns narrows to fit. A seven-column table drops each column to 16 and pans. A `code` path in a 16-cell column breaks partway through, as the Open item says.\n\nThe test `a_link_in_a_panned_table_is_hovered_and_clicked_on_the_columns_it_shows` in `src/app.rs` built its wide table from one 60-character cell, which now wraps. It now uses four columns.",
       "commit": "ca3eb3e",
+      "branch": "dev"
+    },
+    {
+      "id": "c9a10a78",
+      "at": "2026-11-19T23:27:33.789647565Z",
+      "author": "Jack Roddy/85c47808",
+      "text": "Jack wants a word longer than its column to break across lines, as cmr does now. That settles the Open item about widening a column for its longest word. No change is coming.",
+      "commit": "d6d2ea6",
       "branch": "dev"
     }
   ],
