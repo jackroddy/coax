@@ -1,0 +1,28 @@
+{
+  "id": "coax-a03507",
+  "title": "A table can switch between wrapped cells and one line per row",
+  "body": "A code block wider than the box has a `wrap pan` toggle in its header row, as in `┌ rust   wrap pan   ⧉` (coax-06ff60). coax keeps the choice per block in `App::wraps`. A table has no header row, so it has nowhere to show the toggle.\n\nAfter coax-7d9a45, a table wraps a long cell inside a capped column. The pan form, with each row on one line at its natural width, is easier for comparing rows. A toggle would let a person switch one table between the two.\n\n## Open\n\n- Where the toggle sits on a table.\n- When a table shows it. A table that fits the box at its natural width has nothing to switch.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-19T20:41:25.801998807Z",
+  "updated_at": "2026-11-19T20:41:25.801998807Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "ca3eb3e",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
