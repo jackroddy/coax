@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-19T20:56:28.893281591Z",
   "defer_until": null,
   "created_at": "2026-11-19T20:41:21.38069212Z",
-  "updated_at": "2026-11-19T20:41:28.893281591Z",
+  "updated_at": "2026-11-19T20:43:15.166925058Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "473b0568",
+      "at": "2026-11-19T20:43:15.166924298Z",
+      "author": "Jack Roddy/85c47808",
+      "text": "Done in the working tree on `dev`, not yet committed. `table_width` and `column_widths` in `src/ui.rs` set the width a table is laid out at, with `COLUMN_CAP` at 40 and `COLUMN_FLOOR` at 16. The code uses both for a table that fits the box and for one that pans. `column_widths` reads the rule row of the table laid out at `TABLE_WIDTH`, after trimming the padding `cmr::layout` adds to every row.\n\nAt 100 columns, a two-column table with a paragraph in one cell wraps inside the box. A five-column table at 105 natural columns narrows to fit. A seven-column table drops each column to 16 and pans. A `code` path in a 16-cell column breaks partway through, as the Open item says.\n\nThe test `a_link_in_a_panned_table_is_hovered_and_clicked_on_the_columns_it_shows` in `src/app.rs` built its wide table from one 60-character cell, which now wraps. It now uses four columns.",
+      "commit": "ca3eb3e",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "ca3eb3e",
