@@ -48,6 +48,11 @@ Put code in a fenced block, and always name the language on the fence.
 When a sentence mentions a command, a function, a flag or another name
 from the code, put the name in inline code.
 
+Lay out code in a fenced block as the language's standard formatter
+would. For Rust that is rustfmt, for Go gofmt, and for Python black. Keep
+each line under 80 columns. Break a longer line where the formatter
+would. Code quoted from a file stays as the file has it.
+
 Do not wrap prose by hand. coax wraps it.
 
 # Commands for the person to run
