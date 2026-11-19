@@ -572,6 +572,7 @@ fn fitting_tabs(names: &[String], shown: usize, room: usize) -> Vec<usize> {
 fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize) -> MarkdownView {
     let mut blocks = cmr::parse(source);
     wrap_code(&mut blocks);
+    rule_tables(&mut blocks);
     let links = cmr::links(&blocks);
     let gutter = head
         .spans
@@ -614,6 +615,18 @@ fn wrap_code(blocks: &mut [cmr::Block]) {
         match block {
             cmr::Block::Code { wrap, .. } => *wrap = true,
             cmr::Block::Quote(inner) => wrap_code(inner),
+            _ => {}
+        }
+    }
+}
+
+/// Set every table in `blocks`, quoted ones included, to draw a rule
+/// between its rows.
+fn rule_tables(blocks: &mut [cmr::Block]) {
+    for block in blocks {
+        match block {
+            cmr::Block::Table { rules, .. } => *rules = true,
+            cmr::Block::Quote(inner) => rule_tables(inner),
             _ => {}
         }
     }
@@ -768,7 +781,8 @@ impl Rendered {
 /// code blocks that each name a tab are one `Part::Tabs`.
 fn markdown(text: &str, width: usize) -> Vec<Part> {
     let mut parts: Vec<Part> = Vec::new();
-    let blocks = cmr::parse(text);
+    let mut blocks = cmr::parse(text);
+    rule_tables(&mut blocks);
 
     // a link's index counts across the entry's blocks, and a block laid out
     // alone keeps the index the whole parse gave it
@@ -3501,6 +3515,17 @@ mod tests {
             rows.iter().all(|row| row.width() <= 4 + 3 + COLUMN_CAP),
             "{rows:?}"
         );
+    }
+
+    #[test]
+    fn a_table_has_a_rule_between_its_rows_in_the_prose_and_in_a_quote() {
+        let table = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |";
+        let quoted: String = table.lines().map(|line| format!("> {line}\n")).collect();
+        for text in [table, &quoted] {
+            let rows = plain(&flat(&markdown(text, 20)));
+            let rules = rows.iter().filter(|row| row.contains("──┼──")).count();
+            assert_eq!(rules, 2, "{rows:?}");
+        }
     }
 
     #[test]

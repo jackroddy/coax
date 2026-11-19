@@ -16,6 +16,8 @@ command line, the keys, and the scenario format the fake agent reads.
   column wraps. When a table is still wider than the box, coax narrows its
   widest columns first, down to 16 cells each. Only a table still too wide at
   that point pans. Before, one long cell was enough to make a table pan.
+- A table in the agent's text, a quoted one included, has a rule between each
+  pair of body rows, so a row whose cells wrap stays apart from the next.
 
 ## [0.2.0] - 2026-11-12
 
