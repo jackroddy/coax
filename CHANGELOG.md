@@ -10,6 +10,13 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ## [Unreleased]
 
+### Changed
+
+- coax lays out a table column at most 40 cells wide. Longer text in the
+  column wraps. When a table is still wider than the box, coax narrows its
+  widest columns first, down to 16 cells each. Only a table still too wide at
+  that point pans. Before, one long cell was enough to make a table pan.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added

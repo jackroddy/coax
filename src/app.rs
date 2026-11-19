@@ -2346,9 +2346,9 @@ mod tests {
     fn a_link_in_a_panned_table_is_hovered_and_clicked_on_the_columns_it_shows() {
         let mut app = app();
         app.wide.clear();
-        let note = "y".repeat(60);
+        let note = "yyyy ".repeat(5);
         app.transcript.entries.push(reply(format!(
-            "| name | note |\n|---|---|\n| [alpha](file:src/ui.rs#4) | {note} |"
+            "| name | a | b | c |\n|---|---|---|---|\n| [alpha](file:src/ui.rs#4) | {note} | {note} | {note} |"
         )));
         let text_under = |app: &mut App| {
             let screen = header_rows_all(app, 40);

@@ -652,6 +652,49 @@ const COPY_GLYPH: &str = "\u{29c9}";
 /// The widest a table is laid out when measuring it.
 const TABLE_WIDTH: usize = 1000;
 
+/// The widest a table column is laid out, past which its cells wrap.
+const COLUMN_CAP: usize = 40;
+
+/// The narrowest a table column is squeezed to fit the box, past which the
+/// table pans.
+const COLUMN_FLOOR: usize = 16;
+
+/// The width to lay `table` out at: no column wider than `COLUMN_CAP`, and
+/// the columns squeezed toward `COLUMN_FLOOR` to fit `width`.
+fn table_width(table: &cmr::Block, width: usize) -> usize {
+    let columns = column_widths(table);
+    if columns.is_empty() {
+        return TABLE_WIDTH;
+    }
+
+    // cmr narrows the widest column a cell at a time, so laid out at
+    // this sum each column comes out at min(natural, limit), and a
+    // floor above its MIN_COLUMN keeps it from stacking the rows
+    let gaps = 3 * (columns.len() - 1);
+    let total = |limit: usize| columns.iter().map(|&c| c.min(limit)).sum::<usize>() + gaps;
+    total(COLUMN_CAP).min(width.max(total(COLUMN_FLOOR)))
+}
+
+/// The natural width of each column of `table`, read from the rule under
+/// its header, or none when the table is too wide to draw as columns.
+fn column_widths(table: &cmr::Block) -> Vec<usize> {
+    let rule = cmr::layout(std::slice::from_ref(table), TABLE_WIDTH)
+        .into_iter()
+        .map(|row| row.into_iter().map(|(text, _)| text).collect::<String>())
+        .find(|row| {
+            let row = row.trim_end();
+            !row.is_empty() && row.chars().all(|ch| ch == '─' || ch == '┼')
+        });
+    match rule {
+        Some(rule) => rule
+            .trim_end()
+            .split("─┼─")
+            .map(|run| run.chars().count())
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
 impl Rendered {
     /// The text a copy of block `key` (an entry and a block within it) takes.
     pub fn copy_text(&self, key: (usize, usize)) -> Option<&str> {
@@ -719,7 +762,8 @@ impl Rendered {
 }
 
 /// `text` laid out one block at a time. Prose goes at `width`. A code block
-/// keeps its natural width, as does a table wider than `width`. Either is a
+/// keeps its natural width, as does a table whose columns cannot be
+/// squeezed to fit `width`. Either is a
 /// `Part::Block`, and the screen windows one wider than `width`. Adjacent
 /// code blocks that each name a tab are one `Part::Tabs`.
 fn markdown(text: &str, width: usize) -> Vec<Part> {
@@ -762,7 +806,11 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
         match kept_whole(block, item, width, &links) {
             Some(kept) => parts.push(Part::Block(kept)),
             None => {
-                let (rows, runs) = block_rows(item, width, &links);
+                let at = match item {
+                    cmr::Block::Table { .. } => table_width(item, width),
+                    _ => width,
+                };
+                let (rows, runs) = block_rows(item, at, &links);
                 let (flow_rows, flow_runs) = flow(&mut parts);
                 let base = flow_rows.len();
                 flow_runs.extend(runs.into_iter().map(|run| Run {
@@ -925,7 +973,7 @@ fn kept_whole(
             })
         }
         cmr::Block::Table { .. } => {
-            let (rows, runs) = block_rows(block, TABLE_WIDTH, links);
+            let (rows, runs) = block_rows(block, table_width(block, width), links);
             let natural = rows.lines.iter().map(Line::width).max().unwrap_or(0);
             (natural > width).then_some(KeptBlock {
                 block: index,
@@ -3431,6 +3479,41 @@ mod tests {
     fn a_table_that_fits_the_width_is_laid_out_with_the_prose() {
         let parts = markdown("| a | b |\n|---|---|\n| 1 | 2 |\n\nafter", 20);
         assert!(matches!(&parts[..], [Part::Flow { .. }]));
+    }
+
+    #[test]
+    fn a_table_has_the_natural_width_of_each_column() {
+        let blocks = cmr::parse("| a | bbb |\n|---|---|\n| cc dd | e |");
+        assert_eq!(column_widths(&blocks[0]), [5, 3]);
+    }
+
+    #[test]
+    fn a_long_cell_wraps_in_a_capped_column_when_the_box_has_room() {
+        let note = "word ".repeat(30);
+        let text = format!("| name | note |\n|---|---|\n| a | {note} |");
+        let parts = markdown(&text, 200);
+        let [Part::Flow { rows, .. }] = &parts[..] else {
+            panic!("expected the table with the prose");
+        };
+        let rows = plain(&rows.lines);
+        assert!(rows.len() > 3, "{rows:?}");
+        assert!(
+            rows.iter().all(|row| row.width() <= 4 + 3 + COLUMN_CAP),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_table_squeezed_to_its_floor_pans_and_keeps_its_columns() {
+        let cell = "word ".repeat(8);
+        let row = format!("|{}\n", format!(" {cell} |").repeat(4));
+        let text = format!("| a | b | c | d |\n|---|---|---|---|\n{row}");
+        let parts = markdown(&text, 50);
+        let [Part::Block(KeptBlock { natural, rows, .. })] = &parts[..] else {
+            panic!("expected one block");
+        };
+        assert_eq!(*natural, 4 * COLUMN_FLOOR + 3 * 3);
+        assert!(plain(&rows.lines).iter().any(|row| row.contains('┼')));
     }
 
     fn rendered_of(text: &str, width: usize) -> Vec<String> {
