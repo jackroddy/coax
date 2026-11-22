@@ -105,6 +105,31 @@ pub fn changes(sent: &Snapshot, now: &Snapshot) -> Option<AgentUpdate> {
     (update != AgentUpdate::default()).then_some(update)
 }
 
+/// The launch arguments decade passes back to start coax again on a
+/// session: `args` without `--prompt` and `--session` and their values.
+pub fn resume_args(args: &[String]) -> Vec<String> {
+    let mut kept = Vec::new();
+    let mut at = 0;
+    while at < args.len() {
+        match args[at].as_str() {
+            "--prompt" | "--session" => at += 2,
+            "--agent" => {
+                kept.extend(args[at..].iter().take(2).cloned());
+                at += 2;
+            }
+            "--allow" => {
+                kept.push(args[at].clone());
+                at += 1;
+            }
+            _ => {
+                kept.extend(args[at..].iter().cloned());
+                break;
+            }
+        }
+    }
+    kept
+}
+
 /// The decade channel, and what it has been told of the agent so far.
 pub struct Reporter {
     channel: Channel,
@@ -134,7 +159,12 @@ pub fn connect(
         json!({
             "socket": path,
             "pane": pane,
-            "agent": {"name": agent.name, "version": agent.version, "session": agent.session},
+            "agent": {
+                "name": agent.name,
+                "version": agent.version,
+                "session": agent.session,
+                "args": agent.args,
+            },
         }),
     );
     Ok(reporter(channel, messages))
@@ -206,6 +236,28 @@ mod tests {
 
     fn snapshot(transcript: &Transcript, question: Option<&str>) -> Snapshot {
         Snapshot::of(transcript, question, &Settings::default(), Instant::now())
+    }
+
+    fn words(line: &str) -> Vec<String> {
+        line.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn the_resume_args_drop_the_prompt_and_the_session_and_keep_the_agent() {
+        assert_eq!(
+            resume_args(&words("--prompt hi --agent claude --session 7f3a --allow")),
+            words("--agent claude --allow")
+        );
+    }
+
+    #[test]
+    fn the_resume_args_keep_a_raw_command_and_its_args_whole() {
+        assert_eq!(
+            resume_args(&words(
+                "--allow --prompt hi coax-fake-agent --prompt x.json"
+            )),
+            words("--allow coax-fake-agent --prompt x.json")
+        );
     }
 
     fn state_of(update: Option<AgentUpdate>) -> Option<Option<AgentState>> {

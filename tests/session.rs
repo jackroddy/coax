@@ -4,10 +4,10 @@ use agent_client_protocol::v1::schema::{
 };
 use agent_client_protocol::{AcpAgent, Error};
 use coax::acp::{self, Applied, Change, Event, Link};
-use coax::fake;
 use coax::scenario::Scenario;
 use coax::session::{Child, Entry, Transcript};
 use coax::settings::Settings;
+use coax::{agents, fake};
 
 const HELLO: &str = include_str!("../scenarios/hello.json");
 
@@ -366,6 +366,38 @@ async fn loading_an_unknown_session_is_an_error() {
             .load_session("missing".into(), std::env::temp_dir())
             .await;
         assert!(loaded.is_err());
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_session_named_by_id_is_found_with_its_title_and_loads_and_an_unknown_id_is_an_error() {
+    let scenario = Scenario::parse(RESUME).unwrap();
+    acp::run(fake::agent(scenario), "fake", async |mut link| {
+        let init = link.initialize().await?;
+        let cwd = std::env::temp_dir();
+        let title = agents::listed_title(&link, &init, &"earlier-2".into(), &cwd).await?;
+        assert_eq!(title.as_deref(), Some("Plan the notes file"));
+        link.load_session("earlier-2".into(), cwd.clone()).await?;
+        assert!(matches!(link.events.try_recv(), Ok(Event::Update(_))));
+        let missing = agents::listed_title(&link, &init, &"missing".into(), &cwd).await;
+        assert!(acp::describe(&missing.unwrap_err()).contains("no session missing"));
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn an_agent_that_cannot_load_sessions_refuses_a_session_named_by_id() {
+    let scenario = Scenario::parse(HELLO).unwrap();
+    acp::run(fake::agent(scenario), "fake", async |link| {
+        let init = link.initialize().await?;
+        let found =
+            agents::listed_title(&link, &init, &"earlier-1".into(), &std::env::temp_dir()).await;
+        assert!(found.is_err());
         Ok(())
     })
     .await

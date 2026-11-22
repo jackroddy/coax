@@ -1587,6 +1587,9 @@ pub struct Opening {
 
     /// The agent's id in the ACP registry, for the new-version check.
     pub registry: Option<String>,
+
+    /// The launch arguments the report to decade carries.
+    pub resume_args: Vec<String>,
 }
 
 fn flip(id: &str, on: bool) -> Change {
@@ -1629,6 +1632,7 @@ async fn session(
         mut keys,
         links,
         registry: registry_id,
+        resume_args,
     } = opening;
     let version = init
         .agent_info
@@ -1694,6 +1698,7 @@ async fn session(
         name: agent.clone(),
         version,
         session: session.0.to_string(),
+        args: resume_args,
     };
     let (mut reporter, mut decade_messages) = match report::connect_env(&identity) {
         Some((reporter, messages)) => (Some(reporter), Some(messages)),

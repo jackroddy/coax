@@ -93,6 +93,7 @@ async fn a_turn_with_a_tool_call_and_a_permission_reaches_decade_as_these_lines(
         name: "fake".to_string(),
         version: "1.2.3".to_string(),
         session: "fake-session".to_string(),
+        args: vec!["--agent".to_string(), "fake".to_string()],
     };
     let (reporter, _messages) = report::connect(&path, Some("chat"), &identity).unwrap();
     let scenario = Scenario::parse(HELLO).unwrap();
@@ -106,7 +107,7 @@ async fn a_turn_with_a_tool_call_and_a_permission_reaches_decade_as_these_lines(
     assert_eq!(
         lines,
         [
-            r#"{"hello":{"name":"coax","accepts":[],"pane":"chat","shows":[],"agent":{"name":"fake","version":"1.2.3","session":"fake-session"}}}"#,
+            r#"{"hello":{"name":"coax","accepts":[],"pane":"chat","shows":[],"agent":{"name":"fake","version":"1.2.3","session":"fake-session","args":["--agent","fake"]}}}"#,
             r#"{"agent":{"state":"idle"}}"#,
             r#"{"agent":{"state":"working"}}"#,
             r#"{"agent":{"activity":"Read src/main.rs"}}"#,
@@ -136,6 +137,7 @@ fn a_show_reaches_the_named_pane_with_its_kind_target_and_line() {
         name: "fake".to_string(),
         version: "1".to_string(),
         session: "s".to_string(),
+        args: Vec::new(),
     };
     let (mut reporter, _messages) = report::connect(&path, Some("chat"), &identity).unwrap();
     let show = decade_channel::Show {

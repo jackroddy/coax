@@ -10,6 +10,16 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ## [Unreleased]
 
+### Added
+
+- `coax --agent <name> --session <id>` loads that agent's session in place
+  of the picker. coax exits with an error before the screen opens when the
+  agent cannot load sessions or does not list the id for the folder.
+  `--session` without `--agent` is a usage error.
+- The report to decade carries the flags coax was started with, without
+  `--prompt` and `--session` and their values. decade passes them back,
+  with `--session`, to start coax again on the same session.
+
 ### Changed
 
 - coax lays out a table column at most 40 cells wide. Longer text in the
