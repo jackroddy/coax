@@ -3,7 +3,7 @@
   "title": "coax can resume a session by id from its command line",
   "body": "coax loads an earlier session only from its interactive picker (`src/picker.rs`, and the \"load\" choice in `src/main.rs`). Its command line is `coax [--prompt <text>] [--allow] [--agent <name> | <agent command> [args...]]`. coax reports to decade over the decade socket (`src/report.rs`), and the report's `Agent` holds the agent's name, version and session id.\n\ndecade is to resume a coax session when it restores a workspace (decade's issue decade-cf942a). For that, decade has to start coax on a given session with the flags it was first started with.\n\n## Proposal\n\n- `--session <id>`, given with `--agent <name>`, loads that session through the agent's session loading, in place of the picker. An id the agent does not know is an error coax reports before it starts.\n- The report's `Agent` carries `args`, the flags coax was started with, minus `--prompt` and its text and minus `--session` and its id. decade saves them and passes them back on resume. The field comes from `decade-channel`'s `Agent`, which gains `args` in the same change.\n\nJack signed off on 2026-11-22.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-22T09:04:42.248984743Z",
-  "updated_at": "2026-11-22T09:04:42.248984743Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-22T09:09:38.131063399Z",
+  "closed_at": "2026-11-22T09:09:38.131063399Z",
+  "close_reason": "Landed in 402a364: coax --agent <name> --session <id> loads that session, and the report to decade carries coax's flags without --prompt and --session. decade-channel's Agent gained args in decade's 227c925.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "d6d2ea6",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "402a364",
+      "branch": "dev"
+    }
   }
 }
