@@ -4,8 +4,8 @@ use std::time::Instant;
 
 use agent_client_protocol::v1::schema::{StopReason, ToolCallStatus};
 use decade_channel::{
-    Agent, AgentState, AgentUpdate, Channel, Context, Message, Show, Subagent, SubagentState,
-    Tokens,
+    Agent, AgentState, AgentUpdate, Channel, Context, Message, Restore, Show, Subagent,
+    SubagentState, Tokens,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
@@ -162,6 +162,31 @@ pub fn resume_args(args: &[String]) -> Vec<String> {
     kept
 }
 
+/// The command that starts coax again on `session`, from its resume args.
+pub fn restore_argv(args: &[String], session: &str) -> Vec<String> {
+    let mut agent = false;
+    let mut at = 0;
+    while at < args.len() {
+        match args[at].as_str() {
+            "--agent" => {
+                agent = true;
+                at += 2;
+            }
+            "--allow" => at += 1,
+            _ => break,
+        }
+    }
+    let mut argv = vec!["coax".to_string()];
+    argv.extend(args.iter().cloned());
+
+    // the flags after a raw agent command go to the agent, and --session
+    // needs --agent, so a raw command starts again on a new session
+    if agent && at >= args.len() {
+        argv.extend(["--session".to_string(), session.to_string()]);
+    }
+    argv
+}
+
 /// The decade channel, and what it has been told of the agent so far.
 pub struct Reporter {
     channel: Channel,
@@ -176,7 +201,7 @@ pub fn connect(
     agent: &Agent,
 ) -> io::Result<(Reporter, UnboundedReceiver<Message>)> {
     let joined = Channel::connect(path, "coax", &[], &[], pane, Some(agent));
-    let (channel, messages) = match joined {
+    let (mut channel, messages) = match joined {
         Ok(joined) => joined,
         Err(error) => {
             log::info(
@@ -186,6 +211,11 @@ pub fn connect(
             return Err(error);
         }
     };
+    channel.restore(&Restore {
+        argv: restore_argv(&agent.args, &agent.session),
+        terminal: true,
+        cwd: std::env::current_dir().ok(),
+    })?;
     log::info(
         "decade.connect",
         json!({
@@ -289,6 +319,22 @@ mod tests {
                 "--allow --prompt hi coax-fake-agent --prompt x.json"
             )),
             words("--allow coax-fake-agent --prompt x.json")
+        );
+    }
+
+    #[test]
+    fn the_restore_command_resumes_the_session_after_the_agents_flags() {
+        assert_eq!(
+            restore_argv(&words("--agent claude --allow"), "7f3a"),
+            words("coax --agent claude --allow --session 7f3a")
+        );
+    }
+
+    #[test]
+    fn the_restore_command_for_a_raw_agent_command_names_no_session() {
+        assert_eq!(
+            restore_argv(&words("--allow coax-fake-agent --prompt x.json"), "7f3a"),
+            words("coax --allow coax-fake-agent --prompt x.json")
         );
     }
 

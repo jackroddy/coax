@@ -104,10 +104,15 @@ async fn a_turn_with_a_tool_call_and_a_permission_reaches_decade_as_these_lines(
     .unwrap();
     let lines = lines.join().unwrap();
     std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    let restore = format!(
+        r#"{{"restore":{{"argv":["coax","--agent","fake","--session","fake-session"],"terminal":true,"cwd":"{}"}}}}"#,
+        std::env::current_dir().unwrap().display()
+    );
     assert_eq!(
         lines,
         [
             r#"{"hello":{"name":"coax","accepts":[],"pane":"chat","shows":[],"agent":{"name":"fake","version":"1.2.3","session":"fake-session","args":["--agent","fake"]}}}"#,
+            &restore,
             r#"{"agent":{"state":"idle"}}"#,
             r#"{"agent":{"state":"working"}}"#,
             r#"{"agent":{"activity":"Read src/main.rs"}}"#,
@@ -130,7 +135,7 @@ fn a_show_reaches_the_named_pane_with_its_kind_target_and_line() {
         BufReader::new(stream)
             .lines()
             .map(|line| line.unwrap())
-            .take(2)
+            .take(3)
             .collect::<Vec<_>>()
     });
     let identity = decade_channel::Agent {
@@ -148,7 +153,7 @@ fn a_show_reaches_the_named_pane_with_its_kind_target_and_line() {
     reporter.show("code", &show).unwrap();
     let lines = lines.join().unwrap();
     std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
-    let sent: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&lines[2]).unwrap();
     assert_eq!(
         sent,
         serde_json::json!({"to": "code", "show": {"kind": "file", "target": "/work/src/ui.rs", "at": 40}})
