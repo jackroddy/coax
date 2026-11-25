@@ -124,9 +124,17 @@ pub struct Texts {
     /// The text of each of the transcript's lines, `None` for a line that
     /// holds none or was not laid out.
     pub lines: Vec<Option<LineText>>,
+
+    /// The first line of each transcript entry, by entry.
+    pub starts: Vec<usize>,
 }
 
 impl Texts {
+    /// The entry that line `line` belongs to.
+    pub fn entry_of(&self, line: usize) -> Option<usize> {
+        entry_of(&self.starts, self.lines.len(), line)
+    }
+
     /// The point under `position`, when it is on a line that holds text.
     pub fn text_at(&self, position: Position) -> Option<Point> {
         if !self.area.contains(position) {
@@ -168,6 +176,13 @@ pub fn nearest(area: Rect, shown: Range<usize>, position: Position) -> Point {
         position.x.saturating_sub(area.x) as usize
     };
     Point { line, col }
+}
+
+/// The entry that line `line` of `total` belongs to, by each entry's first
+/// line.
+pub fn entry_of(starts: &[usize], total: usize, line: usize) -> Option<usize> {
+    let after = starts.partition_point(|start| *start <= line);
+    (after > 0 && line < total).then(|| after - 1)
 }
 
 #[cfg(test)]

@@ -34,7 +34,7 @@ use crate::prompt;
 use crate::registry;
 use crate::report::{self, Reporter, Snapshot};
 use crate::select::{self, Point, Selection};
-use crate::session::{Entry, Transcript};
+use crate::session::{self, Entry, Marked, Transcript};
 use crate::settings::{Category, Control, Setting, Settings};
 use crate::ui::{self, Word};
 
@@ -98,6 +98,40 @@ impl Drag {
         let start = column as isize - self.bar_x as isize - self.grab;
         ui::pan_for_thumb(self.visible, self.max, start, 2)
     }
+}
+
+/// A passage of a reply marked for the prompt, with where it lies in the
+/// reply's lines.
+pub struct Mark {
+    pub number: usize,
+    pub text: String,
+    pub entry: usize,
+
+    /// The ends of the passage, `line` counted from the entry's first line.
+    pub from: Point,
+    pub to: Point,
+}
+
+impl Mark {
+    /// The passage as a selection, for an entry whose first line is `first`.
+    pub fn selection(&self, first: usize) -> Selection {
+        let at = |point: Point| Point {
+            line: first + point.line,
+            col: point.col,
+        };
+        Selection {
+            anchor: at(self.from),
+            head: at(self.to),
+            pointer: None,
+        }
+    }
+}
+
+/// A prompt entered during a turn, waiting for its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Queued {
+    pub text: String,
+    pub marks: Vec<Marked>,
 }
 
 pub struct App {
@@ -191,6 +225,13 @@ pub struct App {
     /// click.
     pub selection: Option<Selection>,
 
+    /// The passages the prompt's chips stand for, in the order they were
+    /// made.
+    pub marks: Vec<Mark>,
+
+    /// Where the last draw put the button that marks the selection.
+    pub mark_button: Option<Rect>,
+
     /// A press on the transcript, until its release.
     pub press: Option<Press>,
 
@@ -247,7 +288,7 @@ pub struct App {
 
     /// Prompts entered during a turn, oldest first, each waiting for the
     /// turn before it to end.
-    pub waiting: VecDeque<String>,
+    pub waiting: VecDeque<Queued>,
 
     /// A held prompt whose turn has come, for the run loop to send.
     outbox: Option<String>,
@@ -511,10 +552,10 @@ impl App {
         let Some(next) = self.waiting.pop_front() else {
             return;
         };
-        self.transcript.prompt(next.clone());
         if !self.queueing {
-            self.outbox = Some(next);
+            self.outbox = Some(session::sent_text(&next.text, &next.marks));
         }
+        self.transcript.prompt_marked(next.text, next.marks);
     }
 
     /// Cancel the running turn, and put the waiting prompts back in the
@@ -534,7 +575,11 @@ impl App {
         if self.waiting.is_empty() {
             return;
         }
-        let mut texts: Vec<String> = self.waiting.drain(..).collect();
+        let mut texts: Vec<String> = self
+            .waiting
+            .drain(..)
+            .map(|queued| session::sent_text(&queued.text, &queued.marks))
+            .collect();
         if !self.input.is_empty() {
             texts.push(std::mem::take(&mut self.input));
         }
@@ -900,6 +945,13 @@ impl App {
     }
 
     fn click(&mut self, position: Position) -> Action {
+        if self
+            .mark_button
+            .is_some_and(|button| button.contains(position))
+        {
+            self.mark();
+            return Action::None;
+        }
         self.selection = None;
         if self.permission.is_some() || self.form.is_some() || self.confirm.is_some() {
             return Action::None;
@@ -1227,6 +1279,55 @@ impl App {
     fn edited(&mut self) {
         self.command_cursor = 0;
         self.command_closed = false;
+        let input = &self.input;
+        self.marks
+            .retain(|mark| input.contains(session::chip(mark.number)));
+    }
+
+    /// Mark the selection: put its chip in the prompt at the cursor and keep
+    /// its passage.
+    fn mark(&mut self) {
+        let Some(selection) = self.selection.take() else {
+            return;
+        };
+        self.mark_button = None;
+        let (from, to) = selection.ends();
+        let Some(entry) = self.texts.entry_of(from.line) else {
+            return;
+        };
+        let Some(number) = (1..=session::MAX_MARKS)
+            .find(|number| self.marks.iter().all(|mark| mark.number != *number))
+        else {
+            return;
+        };
+        let first = self.texts.starts[entry];
+        let relative = |point: Point| Point {
+            line: point.line - first,
+            col: point.col,
+        };
+        self.marks.push(Mark {
+            number,
+            text: selection.copy(&self.texts.lines),
+            entry,
+            from: relative(from),
+            to: relative(to),
+        });
+        self.insert(&session::chip(number).to_string());
+    }
+
+    /// The marks whose chips the prompt being sent holds, and no more marks
+    /// left over.
+    fn take_marks(&mut self, text: &str) -> Vec<Marked> {
+        let mut marks: Vec<Marked> = std::mem::take(&mut self.marks)
+            .into_iter()
+            .filter(|mark| text.contains(session::chip(mark.number)))
+            .map(|mark| Marked {
+                number: mark.number,
+                text: mark.text,
+            })
+            .collect();
+        marks.sort_by_key(|mark| mark.number);
+        marks
     }
 
     /// How many rows the open menu has.
@@ -1470,20 +1571,22 @@ impl App {
                 self.cursor = 0;
                 self.remember(&text, Some(Time::now()));
                 self.scroll = 0;
+                let marks = self.take_marks(&text);
+                let sent = session::sent_text(&text, &marks);
                 let held = self.queueing && self.waiting.is_empty() && self.transcript.held(now);
                 if held {
                     self.held_replies += 1;
                     self.transcript.end_turn();
                 } else if self.transcript.in_flight {
-                    self.waiting.push_back(text.clone());
+                    self.waiting.push_back(Queued { text, marks });
                     return if self.queueing {
-                        Action::Prompt(text)
+                        Action::Prompt(sent)
                     } else {
                         Action::None
                     };
                 }
-                self.transcript.prompt(text.clone());
-                Action::Prompt(text)
+                self.transcript.prompt_marked(text, marks);
+                Action::Prompt(sent)
             }
             KeyCode::Backspace => {
                 self.remove_between(prompt::char_before(&self.input, self.cursor));
@@ -1741,6 +1844,8 @@ async fn session(
         hover_bar: None,
         texts: select::Texts::default(),
         selection: None,
+        marks: Vec::new(),
+        mark_button: None,
         press: None,
         copies: Vec::new(),
         hover_copy: None,
@@ -2082,6 +2187,8 @@ mod tests {
             hover_bar: None,
             texts: select::Texts::default(),
             selection: None,
+            marks: Vec::new(),
+            mark_button: None,
             press: None,
             copies: Vec::new(),
             hover_copy: None,
@@ -3766,7 +3873,7 @@ mod tests {
         type_text(&mut app, "two");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::Prompt(text) if text == "two"));
         assert_eq!(users(&app), ["one"]);
-        assert_eq!(app.waiting, ["two"]);
+        assert_eq!(queued_texts(&app), ["two"]);
         done(&mut app, StopReason::EndTurn);
         assert_eq!(users(&app), ["one", "two"]);
         assert!(app.transcript.in_flight);
@@ -3832,7 +3939,7 @@ mod tests {
         agent_says(&mut app, "started");
         type_text(&mut app, "two");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.waiting, ["two"]);
+        assert_eq!(queued_texts(&app), ["two"]);
         done(&mut app, StopReason::EndTurn);
         assert_eq!(app.take_outbox().as_deref(), Some("two"));
         assert_eq!(texts(&app), ["one", "started", "two"]);
@@ -3866,7 +3973,10 @@ mod tests {
         let mut app = with_settings();
         app.transcript.prompt("one".to_string());
         app.waiting = ["two\nmore", "three", "four", "five"]
-            .map(str::to_string)
+            .map(|text| Queued {
+                text: text.to_string(),
+                marks: Vec::new(),
+            })
             .into();
         let rows = header_rows_all(&mut app, 60);
         let rows: Vec<&str> = rows.lines().collect();
@@ -3874,6 +3984,13 @@ mod tests {
         assert!(rows[20].starts_with(" queued  three "), "{}", rows[20]);
         assert!(rows[21].starts_with(" + 2 more queued"), "{}", rows[21]);
         assert!(rows[22].starts_with(" ◐ working"), "{}", rows[22]);
+    }
+
+    fn queued_texts(app: &App) -> Vec<&str> {
+        app.waiting
+            .iter()
+            .map(|queued| queued.text.as_str())
+            .collect()
     }
 
     fn ask_form(app: &mut App) -> oneshot::Receiver<ElicitationAction> {
@@ -5331,6 +5448,66 @@ mod tests {
         assert!(app.selection.is_some());
         assert!(matches!(click(&mut app, from.x, from.y), Action::None));
         assert!(app.selection.is_none());
+    }
+
+    fn mark_drag(app: &mut App, from: &str, to: &str) {
+        let from = text_spot(app, from, false);
+        let to = text_spot(app, to, true);
+        drag_over(app, from, to);
+        header_buffer(app, 80);
+    }
+
+    #[test]
+    fn a_marked_passage_reaches_the_agent_quoted_above_the_question() {
+        let mut app = drawn_with(vec![prompt("go"), reply("one two three")]);
+        mark_drag(&mut app, "one", "two");
+        let button = app.mark_button.expect("a mark button");
+        assert!(matches!(click(&mut app, button.x, button.y), Action::None));
+        assert_eq!(app.input, "①");
+        assert!(app.selection.is_none());
+        let screen = header_rows_all(&mut app, 80);
+        assert!(screen.contains("① one two three"), "{screen}");
+        type_text(&mut app, " why?");
+        let Action::Prompt(sent) = press(&mut app, KeyCode::Enter) else {
+            panic!("the prompt should go out");
+        };
+        assert_eq!(sent, "[1]\n> one two\n\n[1] why?");
+        assert!(app.marks.is_empty());
+        let Some(Entry::User(sent)) = app.transcript.entries.last() else {
+            panic!("the prompt should be in the transcript");
+        };
+        assert_eq!(sent.text, "① why?");
+        assert_eq!(sent.marks[0].text, "one two");
+        header_buffer(&mut app, 80);
+        let chip = app
+            .link_areas
+            .iter()
+            .find(|area| area.target == "mark:1")
+            .expect("the sent chip can be hovered");
+        assert_eq!(chip.title.as_deref(), Some("one two"));
+        let area = chip.area;
+        let buffer = header_buffer(&mut app, 80);
+        assert_eq!(buffer[(area.x, area.y)].symbol(), "①");
+    }
+
+    #[test]
+    fn backspace_over_a_chip_drops_its_mark() {
+        let mut app = drawn_with(vec![reply("one two three")]);
+        mark_drag(&mut app, "one", "two");
+        let button = app.mark_button.expect("a mark button");
+        click(&mut app, button.x, button.y);
+        assert_eq!(app.marks.len(), 1);
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.input, "");
+        assert!(app.marks.is_empty());
+    }
+
+    #[test]
+    fn a_selection_that_leaves_its_reply_offers_no_mark() {
+        let mut app = drawn_with(vec![reply("one two"), reply("three four")]);
+        mark_drag(&mut app, "two", "three");
+        assert!(app.selection.is_some());
+        assert_eq!(app.mark_button, None);
     }
 
     #[test]

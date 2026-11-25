@@ -14,6 +14,9 @@ pub const HOVER_TIMEOUT: Duration = Duration::from_secs(2);
 /// The most lines of a command's output a popup shows.
 pub const POPUP_LINES: usize = 15;
 
+/// The column a marked passage wraps at in its popup.
+const POPUP_WIDTH: usize = 70;
+
 /// The `[links]` table of `config.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -60,6 +63,9 @@ pub enum Kind<'a> {
         at: Option<At<'a>>,
     },
     Url,
+
+    /// A mark chip in a sent prompt, whose title is the marked passage.
+    Mark,
     Scheme {
         scheme: &'a str,
         rest: &'a str,
@@ -94,6 +100,7 @@ pub fn classify(target: &str) -> Kind<'_> {
         "color" => Kind::Color(rest),
         "file" => file(rest),
         "http" | "https" => Kind::Url,
+        "mark" => Kind::Mark,
         _ => Kind::Scheme { scheme, rest },
     }
 }
@@ -206,6 +213,17 @@ pub fn popup(
             }]
         }
         Kind::Url => vec![target.to_string()],
+        Kind::Mark => {
+            let passage = title?;
+            return Some(
+                passage
+                    .lines()
+                    .flat_map(|line| textwrap::wrap(line, POPUP_WIDTH))
+                    .take(POPUP_LINES)
+                    .map(|piece| piece.into_owned())
+                    .collect(),
+            );
+        }
         Kind::Scheme { .. } => {
             hover_command(target, config)?;
             return Some(match cache.get(target) {
@@ -413,6 +431,20 @@ mod tests {
     fn a_target_that_would_pass_a_flag_runs_nothing() {
         assert_eq!(hover_command("foam:--help", &config()), None);
         assert_eq!(hover_command("foam:", &config()), None);
+    }
+
+    #[test]
+    fn a_mark_chips_popup_shows_its_passage() {
+        let cache = HashMap::new();
+        let lines = popup(
+            "mark:1",
+            Some("one\ntwo"),
+            &config(),
+            Path::new("."),
+            &cache,
+        );
+        assert_eq!(lines, Some(vec!["one".to_string(), "two".to_string()]));
+        assert_eq!(click("mark:1", &config(), Path::new(".")), None);
     }
 
     #[test]

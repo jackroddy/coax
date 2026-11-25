@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ use crate::links::{self, Kind};
 use crate::palette;
 use crate::prompt;
 use crate::select::{self, LineText};
-use crate::session::{Child, Entry, Message, Tool};
+use crate::session::{self, Child, Entry, Message, Tool};
 use crate::settings::{self, Control};
 
 const MAX_PLAN_ROWS: usize = 6;
@@ -87,7 +87,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
     draw_plan(frame, plan_area, app);
-    let waiting = waiting_lines(&app.waiting, waiting_area.width as usize);
+    let texts: Vec<&str> = app
+        .waiting
+        .iter()
+        .map(|queued| queued.text.as_str())
+        .collect();
+    let waiting = waiting_lines(&texts, waiting_area.width as usize);
     frame.render_widget(Paragraph::new(waiting), waiting_area);
     let turn = app.transcript.in_flight.then(|| {
         let elapsed = app
@@ -134,7 +139,7 @@ const MAX_WAITING_ROWS: usize = 3;
 
 /// One row per prompt waiting for its turn, each its first line, and a last
 /// row counting the rest when they do not all fit.
-fn waiting_lines(waiting: &VecDeque<String>, width: usize) -> Vec<Line<'static>> {
+fn waiting_lines(waiting: &[&str], width: usize) -> Vec<Line<'static>> {
     let lead = " queued  ";
     let room = width.saturating_sub(lead.width() + 1);
     let shown = if waiting.len() > MAX_WAITING_ROWS {
@@ -1292,6 +1297,7 @@ fn windowed(text: &LineText, offset: usize, visible: usize) -> LineText {
 /// The transcript laid out at one width.
 struct Built {
     lines: Drawn,
+    starts: Vec<usize>,
     wides: Vec<Wide>,
     copies: Vec<Copy>,
     folds: Vec<Fold>,
@@ -1355,9 +1361,36 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
         .filter(|(_, until)| *until > Instant::now())
         .map(|(key, _)| *key);
     let today = Time::now();
+    let mut starts = Vec::new();
     for (index, entry) in app.transcript.entries.iter().enumerate() {
+        starts.push(lines.len());
         match entry {
-            Entry::User(prompt) => lines.append(bubble(prompt, today, width)),
+            Entry::User(prompt) => {
+                let drawn = bubble(prompt, today, width);
+                let top = lines.len();
+                for (row, text) in drawn.texts.iter().enumerate() {
+                    let Some(text) = text else { continue };
+                    let mut col = text.col;
+                    for ch in text.text.chars() {
+                        let mark = session::chip_number(ch)
+                            .and_then(|n| prompt.marks.iter().find(|mark| mark.number == n));
+                        if let Some(mark) = mark {
+                            spots.push(LinkSpot {
+                                key: (index, None, usize::MAX - mark.number),
+                                line: top + row,
+                                col: col.saturating_sub(2),
+                                width: 1,
+                                link: cmr::Link {
+                                    target: format!("mark:{}", mark.number),
+                                    title: Some(mark.text.clone()),
+                                },
+                            });
+                        }
+                        col += ch.width().unwrap_or(0);
+                    }
+                }
+                lines.append(drawn);
+            }
             Entry::Agent(reply) => {
                 let widest = (width * 9 / 10).max(5);
                 let visible_width = widest - 4;
@@ -1632,6 +1665,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
     }
     Built {
         lines,
+        starts,
         wides,
         copies,
         folds,
@@ -1676,6 +1710,7 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
     }
     let Built {
         lines,
+        starts,
         wides,
         copies,
         folds,
@@ -1804,10 +1839,66 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
             frame.buffer_mut().set_style(cells.intersection(area), tint);
         }
     }
+    let mark_style = Style::new().bg(palette::get().selection);
+    let accent = Style::new().fg(palette::get().accent);
+    for mark in &app.marks {
+        let Some(first) = starts.get(mark.entry) else {
+            continue;
+        };
+        let marked = mark.selection(*first);
+        for line in start..end {
+            let Some(Some(text)) = texts.get(line) else {
+                continue;
+            };
+            let Some(cols) = marked.covers(line, text) else {
+                continue;
+            };
+            let y = area.y + (line - start) as u16;
+            let cells = Rect::new(area.x + cols.start as u16, y, cols.len() as u16, 1);
+            frame
+                .buffer_mut()
+                .set_style(cells.intersection(area), mark_style);
+            if line == first + mark.from.line {
+                let glyph = session::chip(mark.number).to_string();
+                frame.buffer_mut().set_string(area.x, y, glyph, accent);
+            }
+        }
+    }
+    app.mark_button = None;
+    let offered = app
+        .selection
+        .as_ref()
+        .filter(|selection| selection.pointer.is_none() && app.marks.len() < session::MAX_MARKS);
+    if let Some(selection) = offered {
+        let (from, to) = selection.ends();
+        let entry = select::entry_of(&starts, texts.len(), from.line);
+        let reply = entry.filter(|entry| {
+            select::entry_of(&starts, texts.len(), to.line) == Some(*entry)
+                && matches!(app.transcript.entries[*entry], Entry::Agent(_))
+        });
+        if reply.is_some() && (start..end).contains(&to.line) {
+            let text_end = texts[to.line]
+                .as_ref()
+                .map_or(0, |text| text.col + text.text.width());
+            let width = MARK_BUTTON.width() as u16;
+            let x =
+                (area.x + to.col.min(text_end) as u16 + 1).min(area.right().saturating_sub(width));
+            let button = Rect::new(x, area.y + (to.line - start) as u16, width, 1);
+            let style = Style::new()
+                .fg(palette::get().background.unwrap_or(Color::Black))
+                .bg(palette::get().accent)
+                .add_modifier(Modifier::BOLD);
+            frame
+                .buffer_mut()
+                .set_string(button.x, button.y, MARK_BUTTON, style);
+            app.mark_button = Some(button);
+        }
+    }
     app.texts = select::Texts {
         area,
         start,
         lines: texts,
+        starts,
     };
     app.v_bar = None;
     if area.width < outer.width {
@@ -1819,6 +1910,9 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
         app.v_bar = Some(bar);
     }
 }
+
+/// The button a finished selection inside one reply shows at its end.
+const MARK_BUTTON: &str = " mark ";
 
 /// The conversation's scroll bar: its column on screen, and how far the
 /// conversation scrolls, in lines.
@@ -1964,7 +2058,7 @@ fn bubble(prompt: &Message, today: Time, width: usize) -> Drawn {
             rows.push_text(Line::default(), 0, cmr::Join::Break);
         }
         for (piece, join) in pieces {
-            rows.push_text(Line::from(piece), 0, join);
+            rows.push_text(Line::from(chip_spans(&piece, Style::default())), 0, join);
         }
     }
     let label = border_label(prompt, today, widest - 4);
@@ -2776,6 +2870,29 @@ fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'sta
     }
 }
 
+/// `text` as spans in `style`, with each mark chip in the accent colour.
+fn chip_spans(text: &str, style: Style) -> Vec<Span<'static>> {
+    let accent = Style::new()
+        .fg(palette::get().accent)
+        .add_modifier(Modifier::BOLD);
+    let mut spans = Vec::new();
+    let mut plain = String::new();
+    for ch in text.chars() {
+        if session::chip_number(ch).is_some() {
+            if !plain.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut plain), style));
+            }
+            spans.push(Span::styled(ch.to_string(), accent));
+        } else {
+            plain.push(ch);
+        }
+    }
+    if !plain.is_empty() || spans.is_empty() {
+        spans.push(Span::styled(plain, style));
+    }
+    spans
+}
+
 fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<Color>) {
     let text = colour.map_or(Style::default(), |colour| Style::new().fg(colour));
     let lines: Vec<Line> = input
@@ -2788,7 +2905,9 @@ fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<C
             } else {
                 Span::raw(PROMPT_LEAD)
             };
-            Line::from(vec![lead, Span::styled(row.clone(), text)])
+            let mut spans = vec![lead];
+            spans.extend(chip_spans(row, text));
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), area);
@@ -3408,8 +3527,7 @@ mod tests {
     #[test]
     fn a_queued_row_draws_its_label_in_the_accent_and_its_text_in_the_foreground() {
         let palette = palette::get();
-        let waiting: VecDeque<String> = ["one", "two", "three", "four"].map(str::to_string).into();
-        let lines = waiting_lines(&waiting, 40);
+        let lines = waiting_lines(&["one", "two", "three", "four"], 40);
         let colours = |line: &Line| -> Vec<(String, Option<Color>)> {
             line.spans
                 .iter()
