@@ -1,0 +1,28 @@
+{
+  "id": "coax-dd91a0",
+  "title": "A click on a foam link opens the issue in decade",
+  "body": "A `foam:` link has a hover popup but does nothing on a click. `click` in `links.rs` runs a scheme's `click` command from `config.toml` when one is set, and the foam scheme sets none. A click on a `file:` link instead returns `Click::Show`, which sends decade a `show` request of the `file` kind. The pane whose program shows files opens it.\n\nTo open an issue today, a person needs foam already running in a pane, or a click command that starts it in decade's scratch pane. A workspace may have no scratch pane.\n\n## Proposal\n\n- decade knows a `foam` kind, as it knows `file`. A program that shows foam issues declares the kind in its hello's `shows`.\n- A click on `foam:<id>` sends `show {kind: \"foam\", target: \"<id>\"}` to the pane that shows the kind, as a file link does.\n\n## Open\n\n- What program shows the kind: foam's own screen in a pane, or a decade program built on foam. That work belongs to decade and foam, and wants issues in their trackers.\n- What decade does when no pane shows the kind: start a program that does, or report that none can.\n- Which pane a click goes to. `LinksConfig::decade_pane` names one pane, for files.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T02:11:00.313180761Z",
+  "updated_at": "2026-11-25T02:11:00.313180761Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "57bfece",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
