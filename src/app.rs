@@ -238,6 +238,9 @@ pub struct App {
     /// Where the last draw put the button that marks the selection.
     pub mark_button: Option<Rect>,
 
+    /// Whether the pointer is over the mark button.
+    pub hover_mark: bool,
+
     /// A press on the transcript, until its release.
     pub press: Option<Press>,
 
@@ -350,6 +353,7 @@ struct Hovered {
     bar: Option<(usize, usize)>,
     fold: Option<ToolCallId>,
     link: Option<ui::LinkKey>,
+    mark: bool,
 }
 
 /// A header chip on screen.
@@ -689,6 +693,7 @@ impl App {
             bar: self.hover_bar,
             fold: self.hover_fold.clone(),
             link: self.hover_link.as_ref().map(|hover| hover.key),
+            mark: self.hover_mark,
         }
     }
 
@@ -699,6 +704,9 @@ impl App {
             MouseEventKind::Moved => {
                 self.hover = self.chip_at(position);
                 self.hover_copy = self.copy_at(position);
+                self.hover_mark = self
+                    .mark_button
+                    .is_some_and(|button| button.contains(position));
                 self.hover_v_bar = self
                     .v_bar_at(position)
                     .is_some_and(|(_, grab)| grab.is_some());
@@ -1343,7 +1351,21 @@ impl App {
             from: relative(from),
             to: relative(to),
         });
-        self.insert(&session::chip(number).to_string());
+
+        // a space after the chip, and before it when it would touch a word,
+        // since fonts draw a circled digit wider than the one column it
+        // takes and it would run into the cursor or the text beside it
+        let mut chip = String::new();
+        if self.input[..self.cursor]
+            .chars()
+            .last()
+            .is_some_and(|ch| !ch.is_whitespace())
+        {
+            chip.push(' ');
+        }
+        chip.push(session::chip(number));
+        chip.push(' ');
+        self.insert(&chip);
     }
 
     /// The marks whose chips the prompt being sent holds, and no more marks
@@ -1877,6 +1899,7 @@ async fn session(
         selection: None,
         marks: Vec::new(),
         mark_button: None,
+        hover_mark: false,
         press: None,
         last_press: None,
         copies: Vec::new(),
@@ -2221,6 +2244,7 @@ mod tests {
             selection: None,
             marks: Vec::new(),
             mark_button: None,
+            hover_mark: false,
             press: None,
             last_press: None,
             copies: Vec::new(),
@@ -5523,11 +5547,11 @@ mod tests {
         mark_drag(&mut app, "one", "two");
         let button = app.mark_button.expect("a mark button");
         assert!(matches!(click(&mut app, button.x, button.y), Action::None));
-        assert_eq!(app.input, "①");
+        assert_eq!(app.input, "① ");
         assert!(app.selection.is_none());
         let screen = header_rows_all(&mut app, 80);
         assert!(screen.contains("① one two three"), "{screen}");
-        type_text(&mut app, " why?");
+        type_text(&mut app, "why?");
         let Action::Prompt(sent) = press(&mut app, KeyCode::Enter) else {
             panic!("the prompt should go out");
         };
@@ -5551,11 +5575,36 @@ mod tests {
     }
 
     #[test]
+    fn the_mark_button_turns_solid_under_the_pointer() {
+        let mut app = drawn_with(vec![reply("one two three")]);
+        mark_drag(&mut app, "one", "two");
+        let button = app.mark_button.expect("a mark button");
+        let resting = header_buffer(&mut app, 80)[(button.x + 1, button.y)].style();
+        let moved = wheel(
+            MouseEventKind::Moved,
+            KeyModifiers::NONE,
+            button.x,
+            button.y,
+        );
+        app.mouse(moved);
+        assert!(app.hover_mark);
+        let hovered = header_buffer(&mut app, 80)[(button.x + 1, button.y)].style();
+        assert_ne!(resting.bg, hovered.bg);
+        assert!(
+            hovered
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+    }
+
+    #[test]
     fn backspace_over_a_chip_drops_its_mark() {
         let mut app = drawn_with(vec![reply("one two three")]);
         mark_drag(&mut app, "one", "two");
         let button = app.mark_button.expect("a mark button");
         click(&mut app, button.x, button.y);
+        assert_eq!(app.marks.len(), 1);
+        press(&mut app, KeyCode::Backspace);
         assert_eq!(app.marks.len(), 1);
         press(&mut app, KeyCode::Backspace);
         assert_eq!(app.input, "");

@@ -1908,10 +1908,16 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
             let x =
                 (area.x + to.col.min(text_end) as u16 + 1).min(area.right().saturating_sub(width));
             let button = Rect::new(x, area.y + (to.line - start) as u16, width, 1);
-            let style = Style::new()
-                .fg(palette::get().background.unwrap_or(Color::Black))
-                .bg(palette::get().accent)
-                .add_modifier(Modifier::BOLD);
+            let style = if app.hover_mark {
+                Style::new()
+                    .fg(palette::get().background.unwrap_or(Color::Black))
+                    .bg(palette::get().accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+                    .fg(palette::get().accent)
+                    .bg(palette::get().tint)
+            };
             frame
                 .buffer_mut()
                 .set_string(button.x, button.y, MARK_BUTTON, style);
@@ -1936,7 +1942,7 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
 }
 
 /// The button a finished selection inside one reply shows at its end.
-const MARK_BUTTON: &str = " mark ";
+const MARK_BUTTON: &str = " + mark ";
 
 /// The conversation's scroll bar: its column on screen, and how far the
 /// conversation scrolls, in lines.
