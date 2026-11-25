@@ -1,0 +1,28 @@
+{
+  "id": "coax-7c6537",
+  "title": "A coax started bare sends decade a restore block without its session",
+  "body": "coax sends decade a restore block when it connects, built by `restore_argv` in `src/report.rs` (commit 57bfece). `restore_argv` adds `--session <id>` only when coax's args contain `--agent`, because `--session` needs `--agent`. The intent was to skip raw agent commands, whose trailing flags go to the agent.\n\nJack always starts bare `coax`. It opens the session picker, where he resumes a session or starts a new one. The args are then empty, so the block is a bare `coax`:\n\n```toml\nargv = [\"coax\"]\nterminal = true\ncwd = \"~/projects/acre\"\n```\n\nOn restore, decade starts `coax` in the right directory, but it opens the picker instead of the session that was running.\n\n## Proposal\n\nWhen the args hold no `--agent` and no raw agent command, `restore_argv` builds `coax --agent <name> --session <id>` from the session coax actually opened: the agent the picker or the defaults chose, and that session's id. coax picks its session before it connects, so both are known when the block goes out. A raw agent command still gets no `--session`.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T02:18:53.690168508Z",
+  "updated_at": "2026-11-25T02:18:53.690168508Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "57bfece",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
