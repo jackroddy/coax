@@ -949,9 +949,18 @@ fn kept_whole(
     links: &[cmr::Link],
 ) -> Option<KeptBlock> {
     match block {
-        cmr::Block::Code { lang, lines, .. } => {
+        cmr::Block::Code {
+            lang,
+            lines,
+            sources,
+            ..
+        } => {
             let markdown = lang.as_deref().is_some_and(is_markdown);
-            let longest = lines.iter().map(|line| line.width()).max().unwrap_or(0);
+            let longest = lines
+                .iter()
+                .map(|line| line.replace('\t', "    ").width())
+                .max()
+                .unwrap_or(0);
 
             // the gutter is two columns: `│ ` on a line, `┌ ` before the language
             let wide = longest + 2 + COPY_ROOM > width;
@@ -974,6 +983,7 @@ fn kept_whole(
             let headed = |wrap| cmr::Block::Code {
                 lang: Some(lang.clone().unwrap_or_default()),
                 lines: lines.clone(),
+                sources: sources.clone(),
                 wrap,
                 tab: None,
             };
