@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-25T01:42:31.555036328Z",
   "defer_until": null,
   "created_at": "2026-11-25T01:27:28.900919629Z",
-  "updated_at": "2026-11-25T01:27:31.555036328Z",
+  "updated_at": "2026-11-25T01:35:19.301937252Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "edc40f4e",
+      "at": "2026-11-25T01:35:19.301936632Z",
+      "author": "Jack Roddy/72a5a67e",
+      "text": "Landed uncommitted on `dev`. In `form.rs`, `Field::other_of` ties a `<key>_custom` field to question `<key>` when that question is a choice, and `Form::next_question_row` lets Enter pass over it. In `ui.rs`, `draw_form` draws a rounded accent box over the rule and the prompt's rows. `form_lines` and `form_row` wrap every line with `textwrap`, and typed text with `prompt::wrap_rows`. The Other field draws as its question's last row, with the field's description as the placeholder. Checked in tmux at 60 and 100 columns.",
+      "commit": "402a364",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "402a364",
