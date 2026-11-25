@@ -28,9 +28,9 @@ command line, the keys, and the scenario format the fake agent reads.
   sub-agent is working, done or failed. A finished sub-agent stays in the
   list until the next prompt.
 - coax sends decade a restore block when it connects. decade starts coax
-  again from it, in the same folder and on the same session. A coax started
-  on a raw agent command comes back on a new session, since `--session`
-  needs `--agent`.
+  again from it, in the same folder and on the same session. That holds for
+  a session chosen in the picker too. A coax started on a raw agent command
+  comes back on a new session, since `--session` needs `--agent`.
 
 ### Changed
 

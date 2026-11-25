@@ -162,28 +162,21 @@ pub fn resume_args(args: &[String]) -> Vec<String> {
     kept
 }
 
-/// The command that starts coax again on `session`, from its resume args.
-pub fn restore_argv(args: &[String], session: &str) -> Vec<String> {
-    let mut agent = false;
-    let mut at = 0;
-    while at < args.len() {
-        match args[at].as_str() {
-            "--agent" => {
-                agent = true;
-                at += 2;
-            }
-            "--allow" => at += 1,
-            _ => break,
-        }
-    }
+/// The command that starts coax again on `session`. `agent` is the
+/// agent's name in `config.toml`, `None` for a raw agent command.
+pub fn restore_argv(agent: Option<&str>, args: &[String], session: &str) -> Vec<String> {
     let mut argv = vec!["coax".to_string()];
-    argv.extend(args.iter().cloned());
-
-    // the flags after a raw agent command go to the agent, and --session
-    // needs --agent, so a raw command starts again on a new session
-    if agent && at >= args.len() {
-        argv.extend(["--session".to_string(), session.to_string()]);
+    let Some(agent) = agent else {
+        // the flags after a raw agent command go to the agent, and
+        // --session needs --agent, so it starts again on a new session
+        argv.extend(args.iter().cloned());
+        return argv;
+    };
+    argv.extend(["--agent".to_string(), agent.to_string()]);
+    if args.iter().any(|arg| arg == "--allow") {
+        argv.push("--allow".to_string());
     }
+    argv.extend(["--session".to_string(), session.to_string()]);
     argv
 }
 
@@ -193,12 +186,13 @@ pub struct Reporter {
     sent: Snapshot,
 }
 
-/// Join decade at `path` as coax running `agent`. The messages decade sends
-/// arrive on the receiver.
+/// Join decade at `path` as coax running `agent`, and tell it to start coax
+/// again with `restore`. The messages decade sends arrive on the receiver.
 pub fn connect(
     path: &Path,
     pane: Option<&str>,
     agent: &Agent,
+    restore: Vec<String>,
 ) -> io::Result<(Reporter, UnboundedReceiver<Message>)> {
     let joined = Channel::connect(path, "coax", &[], &[], pane, Some(agent));
     let (mut channel, messages) = match joined {
@@ -212,7 +206,7 @@ pub fn connect(
         }
     };
     channel.restore(&Restore {
-        argv: restore_argv(&agent.args, &agent.session),
+        argv: restore,
         terminal: true,
         cwd: std::env::current_dir().ok(),
     })?;
@@ -233,10 +227,13 @@ pub fn connect(
 }
 
 /// Join decade by the environment's socket, if there is one.
-pub fn connect_env(agent: &Agent) -> Option<(Reporter, UnboundedReceiver<Message>)> {
+pub fn connect_env(
+    agent: &Agent,
+    restore: Vec<String>,
+) -> Option<(Reporter, UnboundedReceiver<Message>)> {
     let path = std::env::var_os("DECADE_SOCKET")?;
     let pane = std::env::var("DECADE_PANE").ok();
-    connect(Path::new(&path), pane.as_deref(), agent).ok()
+    connect(Path::new(&path), pane.as_deref(), agent, restore).ok()
 }
 
 fn reporter(
@@ -323,17 +320,29 @@ mod tests {
     }
 
     #[test]
-    fn the_restore_command_resumes_the_session_after_the_agents_flags() {
+    fn the_restore_command_resumes_the_session_on_the_named_agent() {
         assert_eq!(
-            restore_argv(&words("--agent claude --allow"), "7f3a"),
+            restore_argv(Some("claude"), &words("--agent claude --allow"), "7f3a"),
             words("coax --agent claude --allow --session 7f3a")
+        );
+    }
+
+    #[test]
+    fn the_restore_command_for_a_bare_coax_names_the_agent_the_picker_chose() {
+        assert_eq!(
+            restore_argv(Some("claude"), &[], "7f3a"),
+            words("coax --agent claude --session 7f3a")
         );
     }
 
     #[test]
     fn the_restore_command_for_a_raw_agent_command_names_no_session() {
         assert_eq!(
-            restore_argv(&words("--allow coax-fake-agent --prompt x.json"), "7f3a"),
+            restore_argv(
+                None,
+                &words("--allow coax-fake-agent --prompt x.json"),
+                "7f3a"
+            ),
             words("coax --allow coax-fake-agent --prompt x.json")
         );
     }

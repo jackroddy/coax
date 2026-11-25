@@ -95,7 +95,13 @@ async fn a_turn_with_a_tool_call_and_a_permission_reaches_decade_as_these_lines(
         session: "fake-session".to_string(),
         args: vec!["--agent".to_string(), "fake".to_string()],
     };
-    let (reporter, _messages) = report::connect(&path, Some("chat"), &identity).unwrap();
+    let (reporter, _messages) = report::connect(
+        &path,
+        Some("chat"),
+        &identity,
+        report::restore_argv(Some("fake"), &identity.args, &identity.session),
+    )
+    .unwrap();
     let scenario = Scenario::parse(HELLO).unwrap();
     acp::run(fake::agent(scenario), "fake", async |link| {
         one_turn(link, reporter).await
@@ -144,7 +150,13 @@ fn a_show_reaches_the_named_pane_with_its_kind_target_and_line() {
         session: "s".to_string(),
         args: Vec::new(),
     };
-    let (mut reporter, _messages) = report::connect(&path, Some("chat"), &identity).unwrap();
+    let (mut reporter, _messages) = report::connect(
+        &path,
+        Some("chat"),
+        &identity,
+        report::restore_argv(Some("fake"), &identity.args, &identity.session),
+    )
+    .unwrap();
     let show = decade_channel::Show {
         kind: "file".to_string(),
         target: "/work/src/ui.rs".to_string(),

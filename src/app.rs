@@ -1646,6 +1646,7 @@ async fn session(
         .and_then(|meta| meta.get("claudeCode")?.get("promptQueueing")?.as_bool())
         .unwrap_or(false);
     let agent = name
+        .clone()
         .or(init.agent_info.map(|info| info.name))
         .unwrap_or_else(|| "agent".to_string());
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
@@ -1694,13 +1695,14 @@ async fn session(
             "ms": opening_began.elapsed().as_millis() as u64,
         }),
     );
+    let restore = report::restore_argv(name.as_deref(), &resume_args, &session.0);
     let identity = decade_channel::Agent {
         name: agent.clone(),
         version,
         session: session.0.to_string(),
         args: resume_args,
     };
-    let (mut reporter, mut decade_messages) = match report::connect_env(&identity) {
+    let (mut reporter, mut decade_messages) = match report::connect_env(&identity, restore) {
         Some((reporter, messages)) => (Some(reporter), Some(messages)),
         None => (None, None),
     };
