@@ -3,26 +3,29 @@
   "title": "coax tells decade how to start it again with a restore block",
   "body": "decade restarts coax on restore through a path of its own. coax's hello carries an `agent` block (`decade_channel::Agent`, built in `run` in `src/app.rs`) with the session id and `resume_args`. decade saves those and, on restore, types `coax <args> --session <id>` into a ghostty.\n\ndecade now gives every decade-aware program a general way to say how it starts again: a restore block, sent with `Channel::restore(&Restore)` from `decade-channel` (`Restore { argv, terminal }`). decade is dropping its coax special case (decade issue decade-a14cb8) and will restart coax only through that block.\n\n## Proposal\n\n- Right after `Channel::connect` in `report::connect`, coax sends a restore block whose argv is `coax`, then `agent.args`, then `--session <id>`, with `terminal` true and `cwd` the directory coax runs in. decade starts the argv there on restore, so the agent behind coax finds its session by directory (`cwd` arrives with decade issue decade-69fe70).\n- When the session coax runs on changes while it runs, coax sends the block again with the new id.\n- The `agent` block stays as it is. decade still uses its session id to attach a returning agent to its card.\n\n## Cost\n\ncoax must ship this before or with the decade build that drops the special case. A running coax without it is not restarted by that decade. `decade-channel` is a path dependency, so the new call is already there.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/72a5a67e",
-  "lease_expires": "2026-11-25T02:09:17.598705267Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T01:46:54.653209213Z",
-  "updated_at": "2026-11-25T01:54:38.773451054Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T01:55:45.233883717Z",
+  "closed_at": "2026-11-25T01:55:45.233883717Z",
+  "close_reason": "Landed in 57bfece. report::connect sends the restore block right after Channel::connect, with cwd set to coax's working directory. A raw agent command gets no --session, since flags after it go to the agent and --session needs --agent. The block goes out once: coax picks its session before it connects and never switches it.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "8c02c02",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "57bfece",
+      "branch": "dev"
+    }
   }
 }
