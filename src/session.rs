@@ -221,6 +221,30 @@ impl Transcript {
             .count()
     }
 
+    /// The top-level subagent calls of this run that still work at `now`,
+    /// and the others started since the latest prompt.
+    pub fn subagents(&self, now: Instant) -> Vec<&Tool> {
+        let turn = self
+            .entries
+            .iter()
+            .rposition(|entry| matches!(entry, Entry::User(_)))
+            .map_or(0, |at| at + 1)
+            .max(self.replayed);
+        self.entries[self.replayed..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, entry)| match entry {
+                Entry::Tool(tool)
+                    if tool.starts_agent()
+                        && (self.replayed + offset >= turn || tool.agent_running(now)) =>
+                {
+                    Some(tool)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Whether the turn runs only because subagents still work at `now`:
     /// the main agent's reply is written and none of its own calls run.
     pub fn held(&self, now: Instant) -> bool {

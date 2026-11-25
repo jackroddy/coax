@@ -3,12 +3,15 @@ use std::path::Path;
 use std::time::Instant;
 
 use agent_client_protocol::v1::schema::{StopReason, ToolCallStatus};
-use decade_channel::{Agent, AgentState, AgentUpdate, Channel, Context, Message, Show, Tokens};
+use decade_channel::{
+    Agent, AgentState, AgentUpdate, Channel, Context, Message, Show, Subagent, SubagentState,
+    Tokens,
+};
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::log;
-use crate::session::{Entry, Transcript};
+use crate::session::{Child, Entry, Tool, Transcript};
 use crate::settings::Settings;
 
 /// What coax tells decade about its agent at one moment.
@@ -21,6 +24,7 @@ pub struct Snapshot {
     pub context: Option<Context>,
     pub tokens: Option<Tokens>,
     pub cost: Option<f64>,
+    pub subagents: Option<Vec<Subagent>>,
 }
 
 impl Snapshot {
@@ -63,8 +67,42 @@ impl Snapshot {
                 .as_ref()
                 .filter(|cost| cost.currency == "USD")
                 .map(|cost| cost.amount),
+            subagents: Some(
+                transcript
+                    .subagents(now)
+                    .into_iter()
+                    .map(|tool| subagent(tool, now))
+                    .collect::<Vec<_>>(),
+            )
+            .filter(|list| !list.is_empty()),
         }
     }
+}
+
+fn subagent(tool: &Tool, now: Instant) -> Subagent {
+    let state = if tool.agent_running(now) {
+        SubagentState::Working
+    } else if tool.cancelled || tool.status == ToolCallStatus::Failed {
+        SubagentState::Failed
+    } else {
+        SubagentState::Done
+    };
+    let activity = tool.children.iter().rev().find_map(|child| match child {
+        Child::Tool(child) if running(child) => Some(child.title.clone()),
+        _ => None,
+    });
+    Subagent {
+        name: tool.title.clone(),
+        activity: activity.filter(|_| state == SubagentState::Working),
+        state,
+    }
+}
+
+fn running(tool: &Tool) -> bool {
+    matches!(
+        tool.status,
+        ToolCallStatus::Pending | ToolCallStatus::InProgress
+    ) && !tool.cancelled
 }
 
 /// The title of the latest call of this turn that has not finished.
@@ -75,14 +113,7 @@ fn running_title(transcript: &Transcript) -> Option<String> {
         .rev()
         .take_while(|entry| !matches!(entry, Entry::User(_)))
         .find_map(|entry| match entry {
-            Entry::Tool(tool)
-                if matches!(
-                    tool.status,
-                    ToolCallStatus::Pending | ToolCallStatus::InProgress
-                ) && !tool.cancelled =>
-            {
-                Some(tool.title.clone())
-            }
+            Entry::Tool(tool) if running(tool) => Some(tool.title.clone()),
             _ => None,
         })
 }
@@ -101,7 +132,7 @@ pub fn changes(sent: &Snapshot, now: &Snapshot) -> Option<AgentUpdate> {
         context: field(&sent.context, &now.context),
         tokens: field(&sent.tokens, &now.tokens),
         cost: field(&sent.cost, &now.cost),
-        subagents: None,
+        subagents: field(&sent.subagents, &now.subagents),
     };
     (update != AgentUpdate::default()).then_some(update)
 }
@@ -367,6 +398,101 @@ mod tests {
             .unwrap();
         transcript.apply(SessionUpdate::ToolCallUpdate(update));
         assert_eq!(snapshot(&transcript, None).state, Some(AgentState::Done));
+    }
+
+    fn call(value: serde_json::Value) -> SessionUpdate {
+        SessionUpdate::ToolCall(serde_json::from_value(value).unwrap())
+    }
+
+    fn status(id: &str, status: &str) -> SessionUpdate {
+        SessionUpdate::ToolCallUpdate(
+            serde_json::from_value(serde_json::json!({"toolCallId": id, "status": status}))
+                .unwrap(),
+        )
+    }
+
+    fn task(id: &str, title: &str) -> SessionUpdate {
+        call(serde_json::json!({
+            "toolCallId": id, "title": title, "status": "in_progress",
+            "_meta": {"claudeCode": {"toolName": "Task"}}
+        }))
+    }
+
+    fn child(id: &str, parent: &str, title: &str) -> SessionUpdate {
+        call(serde_json::json!({
+            "toolCallId": id, "title": title, "status": "in_progress",
+            "_meta": {"claudeCode": {"parentToolUseId": parent}}
+        }))
+    }
+
+    fn entry(name: &str, activity: Option<&str>, state: SubagentState) -> Subagent {
+        Subagent {
+            name: name.to_string(),
+            activity: activity.map(str::to_string),
+            state,
+        }
+    }
+
+    #[test]
+    fn the_subagents_are_reported_with_their_running_call_and_state() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("hi".to_string());
+        assert_eq!(snapshot(&transcript, None).subagents, None);
+        transcript.apply(task("t1", "Survey"));
+        transcript.apply(child("c1", "t1", "Read src/ui.rs"));
+        transcript.apply(task("t2", "Review"));
+        transcript.apply(task("t3", "Tests"));
+        let before = snapshot(&transcript, None);
+        transcript.apply(status("t2", "completed"));
+        transcript.apply(status("t3", "failed"));
+        let after = snapshot(&transcript, None);
+        assert_eq!(
+            changes(&before, &after).unwrap().subagents,
+            Some(Some(vec![
+                entry("Survey", Some("Read src/ui.rs"), SubagentState::Working),
+                entry("Review", None, SubagentState::Done),
+                entry("Tests", None, SubagentState::Failed),
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_subagent_started_by_a_subagent_is_not_reported() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("hi".to_string());
+        transcript.apply(task("t1", "Survey"));
+        transcript.apply(call(serde_json::json!({
+            "toolCallId": "t2", "title": "Nested", "status": "in_progress",
+            "_meta": {"claudeCode": {"toolName": "Task", "parentToolUseId": "t1"}}
+        })));
+        let names: Vec<String> = snapshot(&transcript, None)
+            .subagents
+            .unwrap()
+            .into_iter()
+            .map(|subagent| subagent.name)
+            .collect();
+        assert_eq!(names, ["Survey"]);
+    }
+
+    #[test]
+    fn a_finished_subagent_leaves_the_list_when_the_next_turn_starts() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("hi".to_string());
+        transcript.apply(task("t1", "Survey"));
+        transcript.apply(task("t2", "Review"));
+        transcript.apply(status("t2", "completed"));
+        transcript.finished(StopReason::EndTurn);
+        let ended = snapshot(&transcript, None);
+        assert_eq!(ended.subagents.as_ref().map(Vec::len), Some(2));
+        transcript.prompt("next".to_string());
+        let next = snapshot(&transcript, None);
+        assert_eq!(
+            next.subagents,
+            Some(vec![entry("Survey", None, SubagentState::Working)])
+        );
+        transcript.apply(status("t1", "completed"));
+        let cleared = snapshot(&transcript, None);
+        assert_eq!(changes(&next, &cleared).unwrap().subagents, Some(None));
     }
 
     #[test]

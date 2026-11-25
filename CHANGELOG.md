@@ -23,6 +23,10 @@ command line, the keys, and the scenario format the fake agent reads.
   `file:src/acp.rs#Link::prompt`. A click sends the name to decade's file
   pane as `at: {"symbol": "Link::prompt"}`. The pane looks the name up.
   The hover popup shows the path and the name.
+- The report to decade lists the agent's sub-agents. Each entry names the
+  sub-agent's task and the call it is running. It also says whether the
+  sub-agent is working, done or failed. A finished sub-agent stays in the
+  list until the next prompt.
 
 ### Changed
 
