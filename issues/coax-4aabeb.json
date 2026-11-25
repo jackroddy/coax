@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T02:43:16.43208707Z",
-  "updated_at": "2026-11-25T03:37:55.098167477Z",
+  "updated_at": "2026-11-25T03:37:55.108478508Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "b6135f7d",
+      "at": "2026-11-25T03:37:55.108477718Z",
+      "author": "Jack Roddy/72a5a67e",
+      "text": "Jack folded the second fault into this issue: a mark quotes the drawn text, so markdown such as backticks, bullets and link targets is lost. Seen in a live test of marks.",
+      "commit": "eccfe83",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "60bef0e",
