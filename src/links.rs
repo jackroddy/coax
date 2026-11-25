@@ -57,7 +57,7 @@ pub enum Kind<'a> {
     Color(&'a str),
     File {
         path: &'a str,
-        line: Option<u32>,
+        at: Option<At<'a>>,
     },
     Url,
     Scheme {
@@ -67,6 +67,16 @@ pub enum Kind<'a> {
 
     /// A target with no scheme.
     Inert,
+}
+
+/// The place in a file a `file:` link names after its `#`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum At<'a> {
+    Line(u32),
+
+    /// A function's name, as in `Link::prompt`, which the pane showing the
+    /// file looks up.
+    Symbol(&'a str),
 }
 
 pub fn classify(target: &str) -> Kind<'_> {
@@ -90,14 +100,23 @@ pub fn classify(target: &str) -> Kind<'_> {
 
 fn file(rest: &str) -> Kind<'_> {
     let rest = rest.strip_prefix("//").unwrap_or(rest);
-    let (path, line) = match rest.rsplit_once('#') {
-        Some((path, at)) => (path, at.strip_prefix('L').unwrap_or(at).parse().ok()),
+    let (path, at) = match rest.rsplit_once('#') {
+        Some((path, at)) => (path, place(at)),
         None => (rest, None),
     };
     if path.is_empty() {
         Kind::Inert
     } else {
-        Kind::File { path, line }
+        Kind::File { path, at }
+    }
+}
+
+fn place(at: &str) -> Option<At<'_>> {
+    let line = at.strip_prefix('L').unwrap_or(at).parse();
+    match line {
+        Ok(line) => Some(At::Line(line)),
+        Err(_) if at.is_empty() => None,
+        Err(_) => Some(At::Symbol(at)),
     }
 }
 
@@ -138,12 +157,15 @@ pub enum Click {
 
 pub fn click(target: &str, config: &LinksConfig, cwd: &Path) -> Option<Click> {
     match classify(target) {
-        Kind::File { path, line } => Some(Click::Show {
+        Kind::File { path, at } => Some(Click::Show {
             to: config.decade_pane.clone(),
             show: Show {
                 kind: "file".to_string(),
                 target: cwd.join(path).to_string_lossy().into_owned(),
-                at: line.map(|line| json!(line)),
+                at: at.map(|at| match at {
+                    At::Line(line) => json!(line),
+                    At::Symbol(name) => json!({ "symbol": name }),
+                }),
             },
         }),
         Kind::Url if config.open_urls => {
@@ -174,11 +196,12 @@ pub fn popup(
     cache: &HashMap<String, Loaded>,
 ) -> Option<Vec<String>> {
     let mut lines = match classify(target) {
-        Kind::File { path, line } => {
+        Kind::File { path, at } => {
             let full = cwd.join(path);
             let shown = full.strip_prefix(cwd).unwrap_or(&full).display();
-            vec![match line {
-                Some(line) => format!("{shown}:{line}"),
+            vec![match at {
+                Some(At::Line(line)) => format!("{shown}:{line}"),
+                Some(At::Symbol(name)) => format!("{shown} · {name}"),
                 None => shown.to_string(),
             }]
         }
@@ -337,33 +360,40 @@ mod tests {
     }
 
     #[test]
-    fn a_file_target_has_a_path_and_an_optional_line() {
+    fn a_file_target_has_a_path_and_an_optional_line_or_function() {
         assert_eq!(
             classify("file:src/ui.rs#40"),
             Kind::File {
                 path: "src/ui.rs",
-                line: Some(40)
+                at: Some(At::Line(40))
             }
         );
         assert_eq!(
             classify("file:src/ui.rs"),
             Kind::File {
                 path: "src/ui.rs",
-                line: None
+                at: None
             }
         );
         assert_eq!(
             classify("file:///etc/hosts#L3"),
             Kind::File {
                 path: "/etc/hosts",
-                line: Some(3)
+                at: Some(At::Line(3))
             }
         );
         assert_eq!(
-            classify("file:a.rs#top"),
+            classify("file:src/acp.rs#Link::prompt"),
+            Kind::File {
+                path: "src/acp.rs",
+                at: Some(At::Symbol("Link::prompt"))
+            }
+        );
+        assert_eq!(
+            classify("file:a.rs#"),
             Kind::File {
                 path: "a.rs",
-                line: None
+                at: None
             }
         );
         assert_eq!(classify("file:"), Kind::Inert);
@@ -400,6 +430,19 @@ mod tests {
         };
         assert_eq!(show.target, "/abs/a.rs");
         assert_eq!(show.at, None);
+    }
+
+    #[test]
+    fn a_function_click_sends_the_name_for_the_pane_to_look_up() {
+        let cwd = PathBuf::from("/work/coax");
+        let target = "file:src/acp.rs#Link::prompt";
+        let Some(Click::Show { show, .. }) = click(target, &config(), &cwd) else {
+            panic!("no show");
+        };
+        assert_eq!(show.target, "/work/coax/src/acp.rs");
+        assert_eq!(show.at, Some(json!({ "symbol": "Link::prompt" })));
+        let popup = popup(target, None, &config(), &cwd, &HashMap::new());
+        assert_eq!(popup, Some(vec!["src/acp.rs · Link::prompt".to_string()]));
     }
 
     #[test]

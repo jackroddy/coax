@@ -19,6 +19,10 @@ command line, the keys, and the scenario format the fake agent reads.
 - The report to decade carries the flags coax was started with, without
   `--prompt` and `--session` and their values. decade passes them back,
   with `--session`, to start coax again on the same session.
+- A `file:` link can name a function after its `#`, as in
+  `file:src/acp.rs#Link::prompt`. A click sends the name to decade's file
+  pane as `at: {"symbol": "Link::prompt"}`. The pane looks the name up.
+  The hover popup shows the path and the name.
 
 ### Changed
 
