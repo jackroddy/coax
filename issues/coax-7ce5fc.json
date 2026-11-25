@@ -3,20 +3,20 @@
   "title": "A passage of a reply can be marked and asked about in the prompt",
   "body": "To ask about part of a reply today, a person quotes or paraphrases enough of it in the prompt for the agent to find it. Drag selection (c813ecf) selects transcript text from the press to the pointer and copies it through OSC 52. It leaves nothing in the prompt.\n\n## Proposal\n\n- When the mouse is let go on a selection inside one agent reply, a `mark` button appears at the selection's end. A click on it marks the selection. No key does this, so the version's minor does not move.\n- A selection that crosses from one message into another offers no `mark`. Code blocks and tables inside the reply can be marked.\n- Marking puts a numbered chip, as in `①`, in the prompt at the cursor, drawn in the accent colour. Chips are numbered in the order they are made. A prompt can hold several.\n- The marked passage stays highlighted in the transcript, with the same number beside it, until the prompt is sent or its chip is deleted.\n- A chip is one character in the prompt. Backspace deletes it whole, and its mark goes with it.\n- On send, the agent receives each marked passage quoted under its number, above the question. In the question each chip becomes `[1]`, `[2]` where it stood.\n- In the transcript, the sent prompt shows its chips. Hovering a chip shows its passage.\n\n## Open\n\n- What a chip copies as when the person copies prompt text.\n- How a highlighted passage stays anchored when the transcript reflows on a resize.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/72a5a67e",
-  "lease_expires": "2026-11-25T02:58:09.172461731Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T02:11:00.322936979Z",
-  "updated_at": "2026-11-25T02:43:09.172461731Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T02:43:16.421182473Z",
+  "closed_at": "2026-11-25T02:43:16.421182473Z",
+  "close_reason": "Landed in 60bef0e. Mark in app.rs holds a passage by entry and line offset, and draw_transcript in ui.rs highlights it and draws the mark button. sent_text in session.rs builds what the agent receives. A chip copies as its glyph. A highlight that drifts on reflow went to its own issue.",
+  "resolution": "done",
   "notes": [
     {
       "id": "aee746f0",
@@ -32,6 +32,9 @@
       "commit": "57bfece",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "60bef0e",
+      "branch": "dev"
+    }
   }
 }
