@@ -2685,7 +2685,7 @@ fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'sta
                 }
                 FormKind::Many { options, picked } => {
                     let on = picked[option];
-                    (options, if on { "[x] " } else { "[ ] " }, on)
+                    (options, if on { "■ " } else { "□ " }, on)
                 }
                 _ => return Vec::new(),
             };
@@ -2769,7 +2769,7 @@ fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'sta
             let FormKind::Toggle(on) = form.fields[field].kind else {
                 return Vec::new();
             };
-            let mark = if on { "[x] yes" } else { "[ ] no" };
+            let mark = if on { "■ yes" } else { "□ no" };
             vec![Line::styled(mark, mark_style(on))]
         }
         Row::Submit => vec![Line::styled("submit", accent.add_modifier(Modifier::BOLD))],
