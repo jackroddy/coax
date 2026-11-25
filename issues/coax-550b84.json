@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-25T22:05:53.265798261Z",
   "defer_until": null,
   "created_at": "2026-11-25T20:37:42.452059279Z",
-  "updated_at": "2026-11-25T21:50:53.265798261Z",
+  "updated_at": "2026-11-25T21:51:12.591209374Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "75cc524c",
+      "at": "2026-11-25T21:51:12.591208664Z",
+      "author": "Jack Roddy/c836bb27",
+      "text": "coax builds against cmr's Document, Format and Page API and draws italics, in bbf0880. The path dependency on ../cmr stays until cmr 0.3.0 is on crates.io, which is what is left of this issue.",
+      "commit": "bbf0880",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "98a3304",
