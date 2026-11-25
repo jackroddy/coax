@@ -1,0 +1,28 @@
+{
+  "id": "coax-fbc0e8",
+  "title": "A prompt template fills in a prompt that is sent often",
+  "body": "Every prompt in coax is typed into the input box from scratch. The one way to reuse an old prompt is `/history`, which lists the prompts sent in the session for picking one again. Some prompts Jack sends follow the same shape every time, with only a few parts changing:\n\n- A list of tasks, how long he will be away, and a request for any questions before he goes.\n- \"Do commits, cleanups, and foam bookkeeping\", sent word for word.\n\n## Proposal\n\nA prompt template is a named prompt with blanks to fill in. Choosing one opens it in the input as a short form, one field per blank, and sending it fills the blanks into the template text. A template with no blanks is sent as it stands, so it works as a shortcut for a fixed prompt.\n\n```text\naway: tasks (a list), time away\n  {tasks}\n\n  I'm stepping out for {time}, so get through as much of this as you can.\n  Any questions before I go?\n```\n\n## Open\n\n- Where templates are defined: coax's `config.toml`, or a file of their own beside it.\n- How a template is chosen: a slash command such as `/away`, a picker like `/history`'s, or a key.\n- Whether the form is a set of fields drawn in the input, or the template text placed in the input with its blanks marked for editing in place.\n- Whether a list field takes one item per line.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T21:42:36.303795033Z",
+  "updated_at": "2026-11-25T21:42:36.303795033Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "98a3304",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
