@@ -1,0 +1,28 @@
+{
+  "id": "coax-52b78b",
+  "title": "A notice holding newlines aborts coax when it is cut to fit the screen",
+  "body": "The Claude adapter reports a hit usage limit as an error whose text holds JSON on several lines, and coax shows it as a notice. `cut` in `ui.rs` counted a newline as no column while trimming, though `str::width` counts it as one. The trimmed notice measured wider than the screen, and `(width - text.width()) / 2` in `build_transcript` wrapped around. The release build then aborted in `str::repeat`. Seen in a core dump on 2026-11-24, on a screen between about 97 and 124 columns wide.",
+  "type": "bug",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T04:37:00.845298039Z",
+  "updated_at": "2026-11-25T04:37:00.845298039Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "98a3304",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
