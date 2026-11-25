@@ -618,6 +618,7 @@ impl App {
                 self.transcript.notice("decade went away".to_string());
             }
             Message::Panes(_)
+            | Message::Screenshot { .. }
             | Message::Verb { .. }
             | Message::Show { .. }
             | Message::Highlight { .. }
