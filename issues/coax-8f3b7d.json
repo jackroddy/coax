@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T01:48:16.848082157Z",
-  "updated_at": "2026-11-25T01:59:30.179196932Z",
+  "updated_at": "2026-11-25T02:00:28.135580241Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-25T01:59:30.169707853Z",
       "author": "Jack Roddy/72a5a67e",
       "text": "Checked against the adapter's source, in a checkout of `claude-agent-acp` a little ahead of v0.101.0.\n\n- A background Bash call goes `completed` at launch, with a result like \"Command running in background with ID …\". The adapter sends coax nothing more on that call.\n- The adapter receives the SDK's `task_started`, `task_notification` and `background_tasks_changed` frames. It passes them on only to a client that declares the JetBrains AIR `asyncTasks` capability or the `terminal_output` meta. coax declares neither, in `src/acp.rs`.\n- The adapter never holds a turn for a background shell. The comment on `liveBackgroundTasks` in `acp-agent.ts` says a hold must never wait on a shell.\n- `_session/async_task/stop` takes `{sessionId, asyncTaskId}` and returns `{stopped}`. It works only for AIR clients. No method lists tasks.\n- Not traced to the end: when the command exits, Claude Code probably wakes the model with a follow-up turn (`startAutonomousCycle`). coax would see that turn as agent text with no prompt open.\n\nSo coax cannot show a background command without declaring a new capability.\n\n| path | what coax gets | cost |\n|---|---|---|\n| declare `terminal_output` | a terminal kept open on the call until the command ends, with its output and exit | coax handles terminal updates on every Bash call, foreground ones too |\n| declare AIR `asyncTasks` | a full task lifecycle, and stopping | AIR changes other behaviour too, such as background sub-agents no longer holding the turn |\n| read the launch result's text | the task's ID, and perhaps its end from the follow-up turn | no reliable end signal |\n\nThe lean is `terminal_output`, the one path with a real end signal that does not bring the rest of AIR. What declaring it changes for ordinary Bash calls is being read next.",
+      "commit": "57bfece",
+      "branch": "dev"
+    },
+    {
+      "id": "b65e12c4",
+      "at": "2026-11-25T02:00:28.135579321Z",
+      "author": "Jack Roddy/72a5a67e",
+      "text": "What declaring `terminal_output` changes, read in the same adapter checkout.\n\n- A client declares it with `\"terminal_output\": true` in `clientCapabilities._meta` (`ClientCapabilities.from` in `tool-calls/client-capabilities.ts`). The adapter does not read `terminal: true`. In coax this is one more key in the `_meta` map in `src/acp.rs`.\n- Foreground Bash: the `tool_call` carries `_meta.terminal_info {terminal_id}`, and its `content` becomes `{\"type\": \"terminal\", \"terminalId\": ...}`. At the result the adapter sends one update with `_meta.terminal_output {terminal_id, data}` holding the whole output. A second update carries the status and `_meta.terminal_exit {terminal_id, exit_code, signal}`. The output no longer arrives as a text block in `content`, and `rawOutput` is left out. Nothing streams before the result.\n- Background Bash: the call goes `completed` at launch, with the launch text in `terminal_output`. `withRunningTerminal` holds back `terminal_exit`. When the task ends, `endBackgroundTask` calls `taskEnded` in `background-work.ts`, which sends `terminal_exit` with `exit_code` null, killed or not. The status does not change. No output arrives while the command runs, since the live tail runs only for ACP v2 clients.\n- If the session ends before the command, the adapter sends no `terminal_exit` to a v1 client.\n- Reading the source found no effect on turn holds, sub-agents, queued prompts or permission requests.\n\nNot confirmed: that the SDK's `task_notification` reaches `endBackgroundTask` for a client like coax, and that replay on `session/load` sends the terminal messages too. A live trial with a logged session would settle both.\n\nCost for coax: `Transcript` keeps no `_meta` beyond the parent link, and stores only `content`. Once coax declares the meta, Bash output moves out of `content`, so coax has to keep `terminal_output` and `terminal_exit` itself. Without that, Bash output would disappear from the transcript.",
       "commit": "57bfece",
       "branch": "dev"
     }
