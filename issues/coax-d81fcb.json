@@ -3,26 +3,29 @@
   "title": "A foam link's hover popup shows the issue rendered as markdown",
   "body": "Hovering a `foam:` link runs the hover command from `[links.schemes.foam]` in `config.toml`, which is `foam show {target} --plain`. `popup` in `links.rs` passes the output through `clean` and shows at most `POPUP_LINES` (15) of its lines as plain text. An issue body is markdown, so the popup shows its `##` headings, backticks, fences and tables as typed characters.\n\ncoax renders agent messages with `cmr`, through `cmr::parse` and `cmr::layout_marked` in `ui.rs`. The popup could lay out an issue the same way.\n\n## Open\n\n- Where coax gets the markdown. `foam show --plain` prints the issue's header lines, body and notes as one text. `foam show --json` gives the fields apart, so coax could render the body and notes with `cmr` and draw the header itself. Reading JSON ties the popup to foam's output. Today any scheme's hover output is opaque text.\n- Whether rendering applies to foam alone or to any scheme, through a setting on the scheme.\n- How the 15-line cap counts rendered lines, and whether the popup scrolls.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/72a5a67e",
-  "lease_expires": "2026-11-25T03:46:51.313785542Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T02:11:00.303000765Z",
-  "updated_at": "2026-11-25T03:31:51.313785542Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T03:31:51.330125687Z",
+  "closed_at": "2026-11-25T03:31:51.330125687Z",
+  "close_reason": "Landed in 365fd6a. hover_command runs foam show --json for a foam link, markdown_popup in links.rs turns the issue into markdown, and markdown_popup_rows in ui.rs lays it out with cmr. An output that is not an issue's JSON falls back to plain lines.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "57bfece",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "365fd6a",
+      "branch": "dev"
+    }
   }
 }
