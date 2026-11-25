@@ -12,6 +12,7 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Added
 
+- Text between single `*` or `_` in a reply is drawn in italics.
 - A double click on transcript text selects and copies the word under the
   pointer. A triple click selects and copies its line, joined across the
   rows a soft wrap split it into.

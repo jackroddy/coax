@@ -287,16 +287,16 @@ fn draw_link_popup(frame: &mut Frame, app: &App) {
 /// `source` laid out as markdown at most `width` wide, cut to
 /// `links::POPUP_LINES` rows with a last row of `…` when it runs longer.
 fn markdown_popup_rows(source: &str, width: usize) -> Vec<Line<'static>> {
-    let mut blocks = cmr::parse(source);
-    wrap_code(&mut blocks);
-    rule_tables(&mut blocks);
-    let links = cmr::links(&blocks);
-    let mut rows: Vec<Line> = cmr::layout_marked(&blocks, width.max(1))
-        .into_iter()
-        .map(|(row, _)| {
+    let doc = cmr::parse(source);
+    let page = doc.render_with(wrapped_format(width.max(1)));
+    let mut rows: Vec<Line> = page
+        .rows()
+        .iter()
+        .map(|row| {
             let spans: Vec<Span> = row
-                .into_iter()
-                .map(|(text, style)| Span::styled(text, link_style(style, &links)))
+                .pieces
+                .iter()
+                .map(|(text, style)| Span::styled(text.clone(), link_style(*style, &doc.links)))
                 .collect();
             trim_end(Line::from(spans))
         })
@@ -626,19 +626,16 @@ fn markdown_view(
             .checked_sub(1)?;
         Some(starts.get(line)? + byte - joined[line])
     };
-    let mut blocks = cmr::parse(&source);
-    wrap_code(&mut blocks);
-    rule_tables(&mut blocks);
-    let links = cmr::links(&blocks);
+    let doc = cmr::parse(&source);
     let gutter = head
         .spans
         .first()
         .map_or(Style::default(), |span| span.style);
     let inner = width.saturating_sub(2 + COPY_ROOM).max(1);
-    let laid = cmr::layout_marked(&blocks, inner);
+    let page = doc.render_with(wrapped_format(inner));
 
     // the head row comes first, and `│ ` starts every row after it
-    let runs = link_runs(&laid, &links)
+    let runs = link_runs(page.rows(), &doc.links)
         .into_iter()
         .map(|run| Run {
             row: run.row + 1,
@@ -648,19 +645,15 @@ fn markdown_view(
         .collect();
     let mut rows = Drawn::default();
     rows.push(head.clone(), None);
-    for (row, mark) in laid {
-        let sources = row_sources(&row, mark.lead, in_reply);
+    for row in page.rows() {
+        let sources = row_sources(row, in_reply);
         let mut spans = vec![Span::styled("│ ", gutter)];
         spans.extend(
-            row.into_iter()
-                .map(|(text, style)| Span::styled(text, link_style(style, &links))),
+            row.pieces
+                .iter()
+                .map(|(text, style)| Span::styled(text.clone(), link_style(*style, &doc.links))),
         );
-        rows.push_sourced(
-            trim_end(Line::from(spans)),
-            2 + mark.lead,
-            mark.join,
-            sources,
-        );
+        rows.push_sourced(trim_end(Line::from(spans)), 2 + row.lead, row.join, sources);
     }
     let widest = rows.lines[1..].iter().map(Line::width).max().unwrap_or(0);
     let natural = widest.max(header + 2) + COPY_ROOM;
@@ -671,27 +664,14 @@ fn markdown_view(
     }
 }
 
-/// Set every code block in `blocks`, quoted ones included, to wrap.
-fn wrap_code(blocks: &mut [cmr::Block]) {
-    for block in blocks {
-        match block {
-            cmr::Block::Code { wrap, .. } => *wrap = true,
-            cmr::Block::Quote(inner) => wrap_code(inner),
-            _ => {}
-        }
-    }
-}
-
-/// Set every table in `blocks`, quoted ones included, to draw a rule
-/// between its rows.
-fn rule_tables(blocks: &mut [cmr::Block]) {
-    for block in blocks {
-        match block {
-            cmr::Block::Table { rules, .. } => *rules = true,
-            cmr::Block::Quote(inner) => rule_tables(inner),
-            _ => {}
-        }
-    }
+/// The format of markdown drawn in a box `width` wide: every code block
+/// wraps and every table rules its rows.
+fn wrapped_format(width: usize) -> cmr::Format {
+    cmr::Format::builder()
+        .width(width)
+        .code(cmr::Overflow::Wrap)
+        .table_rules(true)
+        .build()
 }
 
 /// Whether a code block fenced with `lang` wraps by default: one with no
@@ -753,9 +733,10 @@ fn table_width(table: &cmr::Block, width: usize) -> usize {
 /// The natural width of each column of `table`, read from the rule under
 /// its header, or none when the table is too wide to draw as columns.
 fn column_widths(table: &cmr::Block) -> Vec<usize> {
-    let rule = cmr::layout(std::slice::from_ref(table), TABLE_WIDTH)
-        .into_iter()
-        .map(|row| row.into_iter().map(|(text, _)| text).collect::<String>())
+    let rule = render_block(table, &[], TABLE_WIDTH)
+        .rows()
+        .iter()
+        .map(cmr::Row::text)
         .find(|row| {
             let row = row.trim_end();
             !row.is_empty() && row.chars().all(|ch| ch == '─' || ch == '┼')
@@ -843,12 +824,11 @@ impl Rendered {
 /// code blocks that each name a tab are one `Part::Tabs`.
 fn markdown(text: &str, width: usize) -> Vec<Part> {
     let mut parts: Vec<Part> = Vec::new();
-    let mut blocks = cmr::parse(text);
-    rule_tables(&mut blocks);
+    let doc = cmr::parse(text);
 
     // a link's index counts across the entry's blocks, and a block laid out
     // alone keeps the index the whole parse gave it
-    let links = cmr::links(&blocks);
+    let cmr::Document { blocks, links } = &doc;
     let mut block = 0;
     while block < blocks.len() {
         if block > 0 {
@@ -868,7 +848,7 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
         if !names.is_empty() {
             let end = block + names.len();
             let tabs = (block..end)
-                .filter_map(|n| kept_whole(n, &blocks[n], width, &links))
+                .filter_map(|n| kept_whole(n, &blocks[n], width, links))
                 .collect();
             parts.push(Part::Tabs {
                 first: block,
@@ -879,14 +859,14 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
             continue;
         }
         let item = &blocks[block];
-        match kept_whole(block, item, width, &links) {
+        match kept_whole(block, item, width, links) {
             Some(kept) => parts.push(Part::Block(kept)),
             None => {
                 let at = match item {
                     cmr::Block::Table { .. } => table_width(item, width),
                     _ => width,
                 };
-                let (rows, runs) = block_rows(item, at, &links);
+                let (rows, runs) = block_rows(item, at, links);
                 let (flow_rows, flow_runs) = flow(&mut parts);
                 let base = flow_rows.len();
                 flow_runs.extend(runs.into_iter().map(|run| Run {
@@ -899,6 +879,21 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
         block += 1;
     }
     parts
+}
+
+/// `block` laid out alone at `width`, its link numbers indexing `links`,
+/// a table with a rule between its rows.
+fn render_block(block: &cmr::Block, links: &[cmr::Link], width: usize) -> cmr::Page {
+    let doc = cmr::Document {
+        blocks: vec![block.clone()],
+        links: links.to_vec(),
+    };
+    doc.render_with(
+        cmr::Format::builder()
+            .width(width)
+            .table_rules(true)
+            .build(),
+    )
 }
 
 fn flow(parts: &mut Vec<Part>) -> (&mut Drawn, &mut Vec<Run>) {
@@ -917,27 +912,28 @@ fn flow(parts: &mut Vec<Part>) -> (&mut Drawn, &mut Vec<Run>) {
 /// The rows of one block, and where the links that act on a click sit in
 /// them. `links` are the links of the whole entry.
 fn block_rows(block: &cmr::Block, width: usize, links: &[cmr::Link]) -> (Drawn, Vec<Run>) {
-    let rows = cmr::layout_marked(std::slice::from_ref(block), width);
-    let runs = link_runs(&rows, links);
+    let page = render_block(block, links, width);
+    let runs = link_runs(page.rows(), links);
     let mut lines = Drawn::default();
-    for (row, mark) in rows {
-        let sources = row_sources(&row, mark.lead, Some);
+    for row in page.rows() {
+        let sources = row_sources(row, Some);
         let line = row
-            .into_iter()
-            .map(|(text, style)| Span::styled(text, link_style(style, links)))
+            .pieces
+            .iter()
+            .map(|(text, style)| Span::styled(text.clone(), link_style(*style, links)))
             .collect();
-        lines.push_sourced(trim_end(line), mark.lead, mark.join, sources);
+        lines.push_sourced(trim_end(line), row.lead, row.join, sources);
     }
     (lines, runs)
 }
 
 /// Where the links that act on a click sit in laid out `rows`, whose link
 /// numbers index `links`.
-fn link_runs(rows: &[(cmr::Row, cmr::Mark)], links: &[cmr::Link]) -> Vec<Run> {
+fn link_runs(rows: &[cmr::Row], links: &[cmr::Link]) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
-    for (row, (pieces, _)) in rows.iter().enumerate() {
+    for (row, laid) in rows.iter().enumerate() {
         let mut col = 0;
-        for (text, style) in pieces {
+        for (text, style) in &laid.pieces {
             let piece = text.width();
             if let Some(index) = style.link
                 && let Some(link) = links.get(index)
@@ -1264,6 +1260,9 @@ fn screen_style(style: cmr::Style) -> Style {
             _ => out.add_modifier(Modifier::DIM),
         };
     }
+    if style.italic {
+        out = out.add_modifier(Modifier::ITALIC);
+    }
     if style.underline {
         out = out.add_modifier(Modifier::UNDERLINED);
     }
@@ -1346,18 +1345,14 @@ fn line_text(line: &Line, lead: usize, join: cmr::Join) -> LineText {
     }
 }
 
-/// The source byte of each character of `row` from column `lead` on, as
-/// `at` maps the byte of the text cmr parsed.
-fn row_sources(
-    row: &cmr::Row,
-    lead: usize,
-    at: impl Fn(usize) -> Option<usize>,
-) -> Vec<Option<usize>> {
+/// The source byte of each character of `row` after its lead, as `at` maps
+/// the byte of the text cmr parsed.
+fn row_sources(row: &cmr::Row, at: impl Fn(usize) -> Option<usize>) -> Vec<Option<usize>> {
     let mut col = 0;
     let mut sources = Vec::new();
-    for (text, style) in row {
+    for (text, style) in &row.pieces {
         for (byte, ch) in text.char_indices() {
-            if col >= lead {
+            if col >= row.lead {
                 sources.push(style.source.and_then(|start| at(start + byte)));
             }
             col += ch.width().unwrap_or(0);
@@ -2536,12 +2531,14 @@ fn diff_rows(content: &[ToolCallContent], width: usize) -> Drawn {
 fn output_rows(content: &[ToolCallContent], width: usize) -> Drawn {
     let mut rows = Drawn::default();
     for text in output(content) {
-        for (row, mark) in cmr::layout_marked(&cmr::parse(text), width) {
+        let page = cmr::parse(text).render_with(cmr::Format::builder().width(width).build());
+        for row in page.rows() {
             let line = row
-                .into_iter()
-                .map(|(text, style)| Span::styled(text, screen_style(style)))
+                .pieces
+                .iter()
+                .map(|(text, style)| Span::styled(text.clone(), screen_style(*style)))
                 .collect();
-            rows.push_text(trim_end(line), mark.lead, mark.join);
+            rows.push_text(trim_end(line), row.lead, row.join);
         }
     }
     rows
@@ -3886,8 +3883,8 @@ mod tests {
 
     #[test]
     fn a_table_has_the_natural_width_of_each_column() {
-        let blocks = cmr::parse("| a | bbb |\n|---|---|\n| cc dd | e |");
-        assert_eq!(column_widths(&blocks[0]), [5, 3]);
+        let doc = cmr::parse("| a | bbb |\n|---|---|\n| cc dd | e |");
+        assert_eq!(column_widths(&doc.blocks[0]), [5, 3]);
     }
 
     #[test]
@@ -4310,12 +4307,15 @@ mod tests {
                     - one\n- two\n\n```rs\nfn main() {}\n```\n\n\
                     | a | b |\n|---|---|\n| 1 | 2 |\n\n---\n\n> quoted text";
         for width in [30, 60] {
-            let whole: Vec<Line> = cmr::render(text, width)
-                .into_iter()
+            let page = cmr::parse(text).render_with(cmr::Format::builder().width(width).build());
+            let whole: Vec<Line> = page
+                .rows()
+                .iter()
                 .map(|row| {
                     trim_end(
-                        row.into_iter()
-                            .map(|(text, style)| Span::styled(text, screen_style(style)))
+                        row.pieces
+                            .iter()
+                            .map(|(text, style)| Span::styled(text.clone(), screen_style(*style)))
                             .collect(),
                     )
                 })
