@@ -17,8 +17,9 @@ command line, the keys, and the scenario format the fake agent reads.
   rows a soft wrap split it into.
 - A selection inside one reply shows a `mark` button at its end. A click on
   it puts a numbered chip, as in `①`, in the prompt and highlights the
-  passage with the same number. The agent receives each marked passage
-  quoted under its number above the prompt, with each chip as `[1]`.
+  passage with the same number. The highlight stays on the passage's words
+  when the reply reflows. The agent receives each passage's markdown
+  source quoted under its number above the prompt, with each chip as `[1]`.
   Backspace over a chip drops its mark. Hovering a chip in a sent prompt
   shows its passage.
 - `coax --agent <name> --session <id>` loads that agent's session in place

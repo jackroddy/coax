@@ -603,11 +603,30 @@ fn fitting_tabs(names: &[String], shown: usize, room: usize) -> Vec<usize> {
         .unwrap_or_default()
 }
 
-/// A `markdown` block's `source` drawn as markdown under its `head` row, in
-/// a box no wider than `width`. `header` is the width the head row takes
-/// after its gutter.
-fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize) -> MarkdownView {
-    let mut blocks = cmr::parse(source);
+/// A `markdown` block's `lines` drawn as markdown under its `head` row, in
+/// a box no wider than `width`. `starts` holds the reply's byte each line
+/// starts at, and `header` is the width the head row takes after its gutter.
+fn markdown_view(
+    head: &Line<'static>,
+    lines: &[String],
+    starts: &[usize],
+    header: usize,
+    width: usize,
+) -> MarkdownView {
+    let source = lines.join("\n");
+    let mut joined = Vec::with_capacity(lines.len());
+    let mut at = 0;
+    for line in lines {
+        joined.push(at);
+        at += line.len() + 1;
+    }
+    let in_reply = |byte: usize| {
+        let line = joined
+            .partition_point(|&start| start <= byte)
+            .checked_sub(1)?;
+        Some(starts.get(line)? + byte - joined[line])
+    };
+    let mut blocks = cmr::parse(&source);
     wrap_code(&mut blocks);
     rule_tables(&mut blocks);
     let links = cmr::links(&blocks);
@@ -630,12 +649,18 @@ fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize
     let mut rows = Drawn::default();
     rows.push(head.clone(), None);
     for (row, mark) in laid {
+        let sources = row_sources(&row, mark.lead, in_reply);
         let mut spans = vec![Span::styled("│ ", gutter)];
         spans.extend(
             row.into_iter()
                 .map(|(text, style)| Span::styled(text, link_style(style, &links))),
         );
-        rows.push_text(trim_end(Line::from(spans)), 2 + mark.lead, mark.join);
+        rows.push_sourced(
+            trim_end(Line::from(spans)),
+            2 + mark.lead,
+            mark.join,
+            sources,
+        );
     }
     let widest = rows.lines[1..].iter().map(Line::width).max().unwrap_or(0);
     let natural = widest.max(header + 2) + COPY_ROOM;
@@ -896,11 +921,12 @@ fn block_rows(block: &cmr::Block, width: usize, links: &[cmr::Link]) -> (Drawn, 
     let runs = link_runs(&rows, links);
     let mut lines = Drawn::default();
     for (row, mark) in rows {
+        let sources = row_sources(&row, mark.lead, Some);
         let line = row
             .into_iter()
             .map(|(text, style)| Span::styled(text, link_style(style, links)))
             .collect();
-        lines.push_text(trim_end(line), mark.lead, mark.join);
+        lines.push_sourced(trim_end(line), mark.lead, mark.join, sources);
     }
     (lines, runs)
 }
@@ -1011,9 +1037,9 @@ fn kept_whole(
             if lang.is_some() || wide {
                 rows.texts[0] = None;
             }
-            let source = lines.join("\n");
-            let rendered = markdown
-                .then(|| markdown_view(&rows.lines[0], &source, header(&toggles[..1]), width));
+            let rendered = markdown.then(|| {
+                markdown_view(&rows.lines[0], lines, sources, header(&toggles[..1]), width)
+            });
             let wrapped = wide.then(|| {
                 let mut rows = block_rows(&headed(true), width.saturating_sub(COPY_ROOM), links).0;
                 rows.texts[0] = None;
@@ -1027,7 +1053,7 @@ fn kept_whole(
                 block: index,
                 rows,
                 natural,
-                copy: Some(source),
+                copy: Some(lines.join("\n")),
                 runs,
                 rendered,
                 wrapped,
@@ -1263,6 +1289,20 @@ impl Drawn {
         self.push(line, Some(text));
     }
 
+    /// `push_text`, with the source byte of each character after `lead`.
+    fn push_sourced(
+        &mut self,
+        line: Line<'static>,
+        lead: usize,
+        join: cmr::Join,
+        mut sources: Vec<Option<usize>>,
+    ) {
+        let mut text = line_text(&line, lead, join);
+        sources.truncate(text.text.chars().count());
+        text.sources = sources;
+        self.push(line, Some(text));
+    }
+
     fn len(&self) -> usize {
         self.lines.len()
     }
@@ -1302,7 +1342,28 @@ fn line_text(line: &Line, lead: usize, join: cmr::Join) -> LineText {
         text,
         join,
         whole: None,
+        sources: Vec::new(),
     }
+}
+
+/// The source byte of each character of `row` from column `lead` on, as
+/// `at` maps the byte of the text cmr parsed.
+fn row_sources(
+    row: &cmr::Row,
+    lead: usize,
+    at: impl Fn(usize) -> Option<usize>,
+) -> Vec<Option<usize>> {
+    let mut col = 0;
+    let mut sources = Vec::new();
+    for (text, style) in row {
+        for (byte, ch) in text.char_indices() {
+            if col >= lead {
+                sources.push(style.source.and_then(|start| at(start + byte)));
+            }
+            col += ch.width().unwrap_or(0);
+        }
+    }
+    sources
 }
 
 /// `text` as a block panned by `offset` that shows `visible` columns shows
@@ -1311,11 +1372,13 @@ fn windowed(text: &LineText, offset: usize, visible: usize) -> LineText {
     let mut col = text.col;
     let mut first = None;
     let mut kept = String::new();
-    for ch in text.text.chars() {
+    let mut sources = Vec::new();
+    for (n, ch) in text.text.chars().enumerate() {
         let width = ch.width().unwrap_or(0);
         if col >= offset && col + width <= offset + visible {
             first.get_or_insert(col);
             kept.push(ch);
+            sources.push(text.sources.get(n).copied().flatten());
         }
         col += width;
     }
@@ -1325,6 +1388,7 @@ fn windowed(text: &LineText, offset: usize, visible: usize) -> LineText {
         text: kept,
         join: text.join,
         whole,
+        sources,
     }
 }
 
@@ -1876,26 +1940,30 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
     let mark_style = Style::new().bg(palette::get().selection);
     let accent = Style::new().fg(palette::get().accent);
     for mark in &app.marks {
-        let Some(first) = starts.get(mark.entry) else {
+        let Some(&first) = starts.get(mark.entry) else {
             continue;
         };
-        let marked = mark.selection(*first);
-        for line in start..end {
+        let last = starts.get(mark.entry + 1).copied().unwrap_or(texts.len());
+        let mut chip = true;
+        for line in first..last.min(end) {
             let Some(Some(text)) = texts.get(line) else {
                 continue;
             };
-            let Some(cols) = marked.covers(line, text) else {
+            let Some(cols) = text.marked(&mark.source) else {
                 continue;
             };
-            let y = area.y + (line - start) as u16;
-            let cells = Rect::new(area.x + cols.start as u16, y, cols.len() as u16, 1);
-            frame
-                .buffer_mut()
-                .set_style(cells.intersection(area), mark_style);
-            if line == first + mark.from.line {
-                let glyph = session::chip(mark.number).to_string();
-                frame.buffer_mut().set_string(area.x, y, glyph, accent);
+            if line >= start {
+                let y = area.y + (line - start) as u16;
+                let cells = Rect::new(area.x + cols.start as u16, y, cols.len() as u16, 1);
+                frame
+                    .buffer_mut()
+                    .set_style(cells.intersection(area), mark_style);
+                if chip {
+                    let glyph = session::chip(mark.number).to_string();
+                    frame.buffer_mut().set_string(area.x, y, glyph, accent);
+                }
             }
+            chip = false;
         }
     }
     app.mark_button = None;

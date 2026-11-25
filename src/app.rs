@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -107,30 +108,15 @@ impl Drag {
 }
 
 /// A passage of a reply marked for the prompt, with where it lies in the
-/// reply's lines.
+/// reply's source.
 pub struct Mark {
     pub number: usize,
     pub text: String,
     pub entry: usize,
 
-    /// The ends of the passage, `line` counted from the entry's first line.
-    pub from: Point,
-    pub to: Point,
-}
-
-impl Mark {
-    /// The passage as a selection, for an entry whose first line is `first`.
-    pub fn selection(&self, first: usize) -> Selection {
-        let at = |point: Point| Point {
-            line: first + point.line,
-            col: point.col,
-        };
-        Selection {
-            anchor: at(self.from),
-            head: at(self.to),
-            pointer: None,
-        }
-    }
+    /// The bytes of the reply's text the passage covers, empty when the
+    /// selection held no text with a known source.
+    pub source: Range<usize>,
 }
 
 /// A prompt entered during a turn, waiting for its own.
@@ -1330,7 +1316,7 @@ impl App {
             return;
         };
         self.mark_button = None;
-        let (from, to) = selection.ends();
+        let (from, _) = selection.ends();
         let Some(entry) = self.texts.entry_of(from.line) else {
             return;
         };
@@ -1339,17 +1325,22 @@ impl App {
         else {
             return;
         };
-        let first = self.texts.starts[entry];
-        let relative = |point: Point| Point {
-            line: point.line - first,
-            col: point.col,
+        let reply = match &self.transcript.entries[entry] {
+            Entry::Agent(reply) => Some(reply.text.as_str()),
+            _ => None,
         };
+        let passage = reply
+            .zip(selection.source(&self.texts.lines))
+            .and_then(|(reply, range)| {
+                let range = select::widened(reply, range);
+                Some((reply.get(range.clone())?.to_string(), range))
+            });
+        let (text, source) = passage.unwrap_or_else(|| (selection.copy(&self.texts.lines), 0..0));
         self.marks.push(Mark {
             number,
-            text: selection.copy(&self.texts.lines),
+            text,
             entry,
-            from: relative(from),
-            to: relative(to),
+            source,
         });
 
         // a space after the chip, and before it when it would touch a word,
@@ -5572,6 +5563,70 @@ mod tests {
         let area = chip.area;
         let buffer = header_buffer(&mut app, 80);
         assert_eq!(buffer[(area.x, area.y)].symbol(), "①");
+    }
+
+    /// The passage of a mark made by a drag from `from` to `to`.
+    fn marked_text(app: &mut App, from: &str, to: &str) -> String {
+        mark_drag(app, from, to);
+        let button = app.mark_button.expect("a mark button");
+        click(app, button.x, button.y);
+        app.marks.last().expect("a mark").text.clone()
+    }
+
+    #[test]
+    fn a_marked_passage_reaches_the_agent_as_its_markdown_source() {
+        let mut app = drawn_with(vec![reply("say **one** and `two` then three")]);
+        assert_eq!(marked_text(&mut app, "one", "two"), "**one** and `two`");
+        type_text(&mut app, "why?");
+        let Action::Prompt(sent) = press(&mut app, KeyCode::Enter) else {
+            panic!("the prompt should go out");
+        };
+        assert_eq!(sent, "[1]\n> **one** and `two`\n\n[1] why?");
+    }
+
+    #[test]
+    fn marking_exactly_the_text_of_inline_code_or_a_link_takes_its_markers() {
+        let text = "see `run()` or [the docs](https://example.com/a) now";
+        let mut app = drawn_with(vec![reply(text)]);
+        assert_eq!(marked_text(&mut app, "run", "()"), "`run()`");
+        assert_eq!(
+            marked_text(&mut app, "the docs", "docs"),
+            "[the docs](https://example.com/a)"
+        );
+    }
+
+    #[test]
+    fn a_mark_from_a_list_bullet_starts_at_the_items_text() {
+        let mut app = drawn_with(vec![reply("- first item here\n- second")]);
+        assert_eq!(marked_text(&mut app, "•", "here"), "first item here");
+    }
+
+    #[test]
+    fn a_mark_inside_a_markdown_block_drawn_as_markdown_takes_its_source() {
+        let text = "before\n\n```md\nsome **bold** words\n```";
+        let mut app = drawn_with(vec![reply(text)]);
+        assert_eq!(marked_text(&mut app, "bold", "words"), "**bold** words");
+    }
+
+    #[test]
+    fn a_marked_passage_stays_on_its_words_when_the_reply_reflows() {
+        let words: Vec<String> = (1..=40).map(|n| format!("word{n}")).collect();
+        let mut app = drawn_with(vec![reply(words.join(" "))]);
+        marked_text(&mut app, "word5 ", "word30");
+        let buffer = header_buffer(&mut app, 50);
+        let area = app.texts.area;
+        let selection = crate::palette::get().selection;
+        let rows: Vec<String> = (area.top()..area.bottom())
+            .map(|y| {
+                (area.left()..area.right())
+                    .filter(|&x| buffer[(x, y)].bg == selection)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .filter(|row| !row.is_empty())
+            .collect();
+        assert!(rows.len() > 2, "the passage wraps over more rows at 50");
+        assert_eq!(rows.join(" "), words[4..30].join(" "));
     }
 
     #[test]
