@@ -101,6 +101,7 @@ pub fn changes(sent: &Snapshot, now: &Snapshot) -> Option<AgentUpdate> {
         context: field(&sent.context, &now.context),
         tokens: field(&sent.tokens, &now.tokens),
         cost: field(&sent.cost, &now.cost),
+        subagents: None,
     };
     (update != AgentUpdate::default()).then_some(update)
 }
