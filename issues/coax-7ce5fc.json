@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T02:11:00.322936979Z",
-  "updated_at": "2026-11-25T02:12:57.413055155Z",
+  "updated_at": "2026-11-25T02:12:57.423372473Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "aee746f0",
+      "at": "2026-11-25T02:12:57.423371943Z",
+      "author": "Jack Roddy/72a5a67e",
+      "text": "Jack settled the design as the body now states. A mark button appears at the end of a selection, with no key. A numbered chip goes in the prompt, with the same number beside the highlighted passage. The agent receives each passage quoted under its number above the question. The highlight lasts until the prompt is sent or its chip is deleted. A mark covers text inside one reply.",
+      "commit": "57bfece",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "57bfece",
