@@ -2317,7 +2317,7 @@ mod tests {
             panic!("no load");
         };
         assert_eq!(target, "foam:a");
-        assert_eq!(argv, ["foam", "show", "a"]);
+        assert_eq!(argv, ["foam", "show", "a", "--json"]);
         assert_eq!(app.hover_link.as_ref().unwrap().key, (0, None, 0));
         assert!(matches!(
             at(&mut app, MouseEventKind::Moved, 4),

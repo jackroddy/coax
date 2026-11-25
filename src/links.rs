@@ -149,7 +149,63 @@ pub fn hover_command(target: &str, config: &LinksConfig) -> Option<Vec<String>> 
     let Kind::Scheme { scheme, rest } = classify(target) else {
         return None;
     };
+    if scheme.eq_ignore_ascii_case("foam") {
+        return substitute(&FOAM_HOVER.map(str::to_string), rest);
+    }
     substitute(&scheme_config(scheme, config)?.hover, rest)
+}
+
+/// The hover command of a `foam:` link, whatever `config.toml` says, so its
+/// popup can lay out the issue's fields.
+const FOAM_HOVER: [&str; 4] = ["foam", "show", "{target}", "--json"];
+
+#[derive(Deserialize)]
+struct FoamIssue {
+    title: String,
+    #[serde(rename = "type")]
+    kind: String,
+    status: String,
+    priority: u8,
+    body: Option<String>,
+    #[serde(default)]
+    notes: Vec<FoamNote>,
+}
+
+#[derive(Deserialize)]
+struct FoamNote {
+    author: String,
+    at: String,
+    text: String,
+}
+
+/// The markdown a `foam:` link's popup lays out, from the issue `foam show
+/// --json` gave, or `None` for any other link or an output that is not one.
+pub fn markdown_popup(target: &str, cache: &HashMap<String, Loaded>) -> Option<String> {
+    let Kind::Scheme { scheme, .. } = classify(target) else {
+        return None;
+    };
+    if !scheme.eq_ignore_ascii_case("foam") {
+        return None;
+    }
+    let Some(Loaded::Text(json)) = cache.get(target) else {
+        return None;
+    };
+    let issue: FoamIssue = serde_json::from_str(json).ok()?;
+    let mut text = format!(
+        "**{}**\n\n[{} · {} · P{}](color:muted)\n",
+        issue.title, issue.kind, issue.status, issue.priority
+    );
+    if let Some(body) = issue.body.filter(|body| !body.trim().is_empty()) {
+        text.push_str(&format!("\n{body}\n"));
+    }
+    for note in issue.notes {
+        let day = note.at.get(..10).unwrap_or(&note.at);
+        text.push_str(&format!(
+            "\n---\n\n[{} · {day}](color:muted)\n\n{}\n",
+            note.author, note.text
+        ));
+    }
+    Some(text)
 }
 
 /// What a click on a link does.
@@ -420,8 +476,12 @@ mod tests {
     #[test]
     fn the_hover_command_has_the_part_after_the_scheme_in_place_of_target() {
         assert_eq!(
+            hover_command("note:todo.md", &config()).unwrap(),
+            ["cat", "todo.md"]
+        );
+        assert_eq!(
             hover_command("foam:coax-1", &config()).unwrap(),
-            ["foam", "show", "coax-1", "--plain"]
+            ["foam", "show", "coax-1", "--json"]
         );
         assert_eq!(hover_command("other:x", &config()), None);
         assert_eq!(hover_command("file:x", &config()), None);
@@ -431,6 +491,29 @@ mod tests {
     fn a_target_that_would_pass_a_flag_runs_nothing() {
         assert_eq!(hover_command("foam:--help", &config()), None);
         assert_eq!(hover_command("foam:", &config()), None);
+    }
+
+    #[test]
+    fn a_foam_links_popup_lays_out_the_issue_from_its_json() {
+        assert_eq!(
+            hover_command("foam:coax-1", &LinksConfig::default()).unwrap(),
+            ["foam", "show", "coax-1", "--json"]
+        );
+        let mut cache = HashMap::new();
+        let json = r#"{"title": "A title", "type": "bug", "status": "open", "priority": 2,
+            "body": "Some `code`.", "notes": [{"author": "Jack", "at": "2026-11-24T10:00:00Z",
+            "text": "A note."}], "id": "coax-1"}"#;
+        cache.insert("foam:coax-1".to_string(), Loaded::Text(json.to_string()));
+        assert_eq!(
+            markdown_popup("foam:coax-1", &cache).unwrap(),
+            "**A title**\n\n[bug · open · P2](color:muted)\n\nSome `code`.\n\n---\n\n\
+             [Jack · 2026-11-24](color:muted)\n\nA note.\n"
+        );
+        cache.insert(
+            "foam:coax-2".to_string(),
+            Loaded::Text("not json".to_string()),
+        );
+        assert_eq!(markdown_popup("foam:coax-2", &cache), None);
     }
 
     #[test]

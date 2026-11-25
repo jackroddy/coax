@@ -40,6 +40,10 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- Hovering a `foam:` link shows the issue laid out as markdown. The title
+  is bold, with a dim line of its type, status and priority under it. The
+  body and notes follow. coax runs `foam show <id> --json` for the popup,
+  whatever hover command `config.toml` gives the foam scheme.
 - coax draws an agent's question form in a box with an accent border. Long
   text in the form wraps inside the box, where coax used to cut it short.
   The text typed into a field wraps too. Each question's header shows its

@@ -246,26 +246,30 @@ fn draw_link_popup(frame: &mut Frame, app: &App) {
     let Some(hover) = &app.hover_link else {
         return;
     };
-    let shown = links::popup(
-        &hover.target,
-        hover.title.as_deref(),
-        &app.links,
-        &app.cwd,
-        &app.link_cache,
-    );
-    let Some(lines) = shown else {
-        return;
-    };
     let screen = frame.area();
-    let inner = lines
-        .iter()
-        .map(|line| line.width())
-        .max()
-        .unwrap_or(0)
-        .min(72)
-        .min((screen.width as usize).saturating_sub(4));
+    let room = 72.min((screen.width as usize).saturating_sub(4));
+    let rows = match links::markdown_popup(&hover.target, &app.link_cache) {
+        Some(source) => markdown_popup_rows(&source, room),
+        None => {
+            let shown = links::popup(
+                &hover.target,
+                hover.title.as_deref(),
+                &app.links,
+                &app.cwd,
+                &app.link_cache,
+            );
+            let Some(lines) = shown else {
+                return;
+            };
+            lines
+                .iter()
+                .map(|line| Line::raw(cut(line, room)))
+                .collect()
+        }
+    };
+    let inner = rows.iter().map(Line::width).max().unwrap_or(0);
     let width = (inner as u16 + 4).min(screen.width);
-    let height = (lines.len() as u16 + 2).min(screen.height);
+    let height = (rows.len() as u16 + 2).min(screen.height);
     let x = hover.at.x.min(screen.width - width);
     let y = if hover.at.y + 1 + height <= screen.height {
         hover.at.y + 1
@@ -273,15 +277,35 @@ fn draw_link_popup(frame: &mut Frame, app: &App) {
         hover.at.y.saturating_sub(height)
     };
     let area = Rect::new(x, y, width, height);
-    let rows: Vec<Line> = lines
-        .iter()
-        .map(|line| Line::raw(cut(line, inner)))
-        .collect();
     let block = Block::bordered()
         .border_style(dim())
         .padding(Padding::horizontal(1));
     clear(frame, area);
     frame.render_widget(Paragraph::new(rows).block(block), area);
+}
+
+/// `source` laid out as markdown at most `width` wide, cut to
+/// `links::POPUP_LINES` rows with a last row of `…` when it runs longer.
+fn markdown_popup_rows(source: &str, width: usize) -> Vec<Line<'static>> {
+    let mut blocks = cmr::parse(source);
+    wrap_code(&mut blocks);
+    rule_tables(&mut blocks);
+    let links = cmr::links(&blocks);
+    let mut rows: Vec<Line> = cmr::layout_marked(&blocks, width.max(1))
+        .into_iter()
+        .map(|(row, _)| {
+            let spans: Vec<Span> = row
+                .into_iter()
+                .map(|(text, style)| Span::styled(text, link_style(style, &links)))
+                .collect();
+            trim_end(Line::from(spans))
+        })
+        .collect();
+    if rows.len() > links::POPUP_LINES {
+        rows.truncate(links::POPUP_LINES - 1);
+        rows.push(Line::styled("…", dim()));
+    }
+    rows
 }
 
 /// A screen that says only `message`, centred and dim, while a session opens.
@@ -3447,6 +3471,17 @@ mod tests {
         let view = input_view(&text, 0, 4, 5);
         assert!(view.starts_here);
         assert_eq!(view.cursor, (2, 0));
+    }
+
+    #[test]
+    fn a_markdown_popup_lays_out_its_source_and_cuts_a_long_one() {
+        let rows = markdown_popup_rows("**Title**\n\nSome `code` here.", 40);
+        assert_eq!(plain(&rows), ["Title", "", "Some code here."]);
+        assert!(rows[0].spans[0].style.add_modifier.contains(Modifier::BOLD));
+        let long: String = (0..30).map(|n| format!("line {n}\n\n")).collect();
+        let rows = markdown_popup_rows(&long, 40);
+        assert_eq!(rows.len(), links::POPUP_LINES);
+        assert_eq!(plain(&rows).last().unwrap(), "…");
     }
 
     fn choice(title: &str, description: Option<&str>) -> form::Choice {
