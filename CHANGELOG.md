@@ -37,7 +37,8 @@ command line, the keys, and the scenario format the fake agent reads.
 - coax draws an agent's question form in a box with an accent border. Long
   text in the form wraps inside the box, where coax used to cut it short.
   The text typed into a field wraps too. Each question's header shows its
-  number, as in "Storage · 1 of 2".
+  number, as in "Storage · 1 of 2". A question's option descriptions start
+  in one column past its widest option title.
 - A question's Other field is drawn as the question's last row. Enter on a
   single choice moves to the next question and passes over that Other
   field. Down still reaches it.

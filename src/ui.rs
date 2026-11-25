@@ -2656,6 +2656,21 @@ fn preview_lines(preview: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
+/// The fewest columns a question's descriptions get beside its titles.
+const DESCRIPTION_MIN: usize = 16;
+
+/// The width of a question's title column, marks included, or `None` when
+/// its options have no descriptions or the box is too narrow for a second
+/// column.
+fn title_column(options: &[form::Choice], mark: usize, width: usize) -> Option<usize> {
+    if options.iter().all(|choice| choice.description.is_none()) {
+        return None;
+    }
+    let widest = options.iter().map(|choice| choice.title.width()).max()?;
+    let cap = width.checked_sub(2 + DESCRIPTION_MIN)?;
+    (cap > mark).then(|| (widest + mark).min(cap))
+}
+
 /// A row's lines, at most `width` wide.
 fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'static>> {
     let accent = Style::new().fg(palette::get().accent);
@@ -2663,22 +2678,22 @@ fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'sta
     let mark_style = |on: bool| if on { green } else { dim() };
     match row {
         Row::Option(field, option) => {
-            let (choice, mark, on) = match &form.fields[field].kind {
+            let (options, mark, on) = match &form.fields[field].kind {
                 FormKind::Choice { options, picked } => {
                     let on = *picked == Some(option);
-                    (&options[option], if on { "● " } else { "○ " }, on)
+                    (options, if on { "● " } else { "○ " }, on)
                 }
                 FormKind::Many { options, picked } => {
                     let on = picked[option];
-                    (&options[option], if on { "[x] " } else { "[ ] " }, on)
+                    (options, if on { "[x] " } else { "[ ] " }, on)
                 }
                 _ => return Vec::new(),
             };
+            let choice = &options[option];
             let indent = " ".repeat(mark.width());
-            let room = width.saturating_sub(mark.width());
-            let title = wrap(&choice.title, room);
-            let last_width = title.last().map_or(0, |piece| piece.width());
-            let mut lines: Vec<Line> = title
+            let column = title_column(options, mark.width(), width);
+            let room = column.unwrap_or(width).saturating_sub(mark.width());
+            let mut lines: Vec<Vec<Span>> = wrap(&choice.title, room)
                 .into_iter()
                 .enumerate()
                 .map(|(n, piece)| {
@@ -2687,21 +2702,29 @@ fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'sta
                     } else {
                         Span::raw(indent.clone())
                     };
-                    Line::from(vec![lead, Span::raw(piece)])
+                    vec![lead, Span::raw(piece)]
                 })
                 .collect();
-            if let Some(description) = &choice.description {
-                if lines.len() == 1 && last_width + 2 + description.width() <= room {
-                    lines[0]
-                        .spans
-                        .push(Span::styled(format!("  {description}"), dim()));
-                } else {
-                    for piece in wrap(description, room) {
-                        lines.push(Line::styled(format!("{indent}{piece}"), dim()));
+            match (column, &choice.description) {
+                (Some(column), Some(description)) => {
+                    let pieces = wrap(description, width.saturating_sub(column + 2));
+                    for (n, piece) in pieces.into_iter().enumerate() {
+                        if n == lines.len() {
+                            lines.push(Vec::new());
+                        }
+                        let used: usize = lines[n].iter().map(|span| span.width()).sum();
+                        lines[n].push(Span::raw(" ".repeat(column + 2 - used)));
+                        lines[n].push(Span::styled(piece, dim()));
                     }
                 }
+                (None, Some(description)) => {
+                    for piece in wrap(description, room) {
+                        lines.push(vec![Span::styled(format!("{indent}{piece}"), dim())]);
+                    }
+                }
+                _ => {}
             }
-            lines
+            lines.into_iter().map(Line::from).collect()
         }
         Row::Text(field) => {
             let field = &form.fields[field];
@@ -3305,6 +3328,31 @@ mod tests {
         let view = input_view(&text, 0, 4, 5);
         assert!(view.starts_here);
         assert_eq!(view.cursor, (2, 0));
+    }
+
+    fn choice(title: &str, description: Option<&str>) -> form::Choice {
+        form::Choice {
+            value: title.to_string(),
+            title: title.to_string(),
+            description: description.map(str::to_string),
+            preview: None,
+        }
+    }
+
+    #[test]
+    fn a_questions_descriptions_start_in_one_column_past_its_widest_title() {
+        let options = [choice("Memory", Some("lost")), choice("Disk", None)];
+        assert_eq!(title_column(&options, 2, 60), Some(8));
+        let long = [choice(&"x".repeat(50), Some("why")), choice("Disk", None)];
+        assert_eq!(title_column(&long, 2, 60), Some(60 - 2 - DESCRIPTION_MIN));
+    }
+
+    #[test]
+    fn a_question_too_narrow_for_two_columns_or_with_no_descriptions_has_none() {
+        let options = [choice("Memory", Some("lost")), choice("Disk", None)];
+        assert_eq!(title_column(&options, 2, 20), None);
+        let plain = [choice("Linux", None), choice("macOS", None)];
+        assert_eq!(title_column(&plain, 4, 60), None);
     }
 
     #[test]

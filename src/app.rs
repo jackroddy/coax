@@ -3898,7 +3898,7 @@ mod tests {
         let mut answer = ask_form(&mut app);
         let screen = header_rows_all(&mut app, 100);
         assert!(
-            screen.contains("○ Disk  kept under the state directory"),
+            screen.contains("○ Disk    kept under the state directory"),
             "{screen}"
         );
         type_text(&mut app, "x");
@@ -3972,7 +3972,11 @@ mod tests {
         assert!(form.iter().all(|row| !row.contains('…')), "{screen}");
         let disk = form.iter().position(|row| row.contains("● Disk")).unwrap();
         assert!(
-            form[disk + 1].starts_with("│     kept under the state directory "),
+            form[disk].starts_with("│   ● Disk    kept under the state "),
+            "{screen}"
+        );
+        assert!(
+            form[disk + 1].starts_with("│             directory "),
             "{screen}"
         );
         assert!(
