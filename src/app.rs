@@ -73,7 +73,13 @@ pub struct Press {
 
     /// Where a selection from the press starts, when the press is on text.
     anchor: Option<Point>,
+
+    /// 1 for a click, 2 for the second of a double click, 3 for a triple.
+    count: u8,
 }
+
+/// The longest wait between the clicks of a double or triple click.
+const MULTI_CLICK: Duration = Duration::from_millis(400);
 
 /// How long a block's copy glyph says `copied`.
 const COPIED_FOR: Duration = Duration::from_secs(1);
@@ -234,6 +240,9 @@ pub struct App {
 
     /// A press on the transcript, until its release.
     pub press: Option<Press>,
+
+    /// When and where the last press on the transcript was, and its count.
+    pub last_press: Option<(Instant, Position, u8)>,
 
     /// The copy glyphs on screen, set by the last draw.
     pub copies: Vec<ui::CopyArea>,
@@ -711,6 +720,7 @@ impl App {
                     && position != press.at
                 {
                     let head = self.texts.nearest(position);
+                    self.last_press = None;
                     let selection = self.selection.get_or_insert(Selection {
                         anchor,
                         head,
@@ -767,6 +777,16 @@ impl App {
             if text.is_empty() {
                 return Action::None;
             }
+            return Action::Copy(text);
+        }
+        let picked = press.anchor.and_then(|point| match press.count {
+            2 => select::word_at(&self.texts.lines, point),
+            3 => select::line_at(&self.texts.lines, point),
+            _ => None,
+        });
+        if let Some(selection) = picked {
+            let text = selection.copy(&self.texts.lines);
+            self.selection = Some(selection);
             return Action::Copy(text);
         }
         if let Some(action) = self.click_link(press.at) {
@@ -1015,9 +1035,20 @@ impl App {
                 .texts
                 .text_at(position)
                 .filter(|_| !self.wide.iter().any(|block| block.area.contains(position)));
+            let now = Instant::now();
+            let count = match self.last_press {
+                Some((at, place, count))
+                    if place == position && now.duration_since(at) < MULTI_CLICK =>
+                {
+                    count % 3 + 1
+                }
+                _ => 1,
+            };
+            self.last_press = Some((now, position, count));
             self.press = Some(Press {
                 at: position,
                 anchor,
+                count,
             });
             return Action::None;
         };
@@ -1847,6 +1878,7 @@ async fn session(
         marks: Vec::new(),
         mark_button: None,
         press: None,
+        last_press: None,
         copies: Vec::new(),
         hover_copy: None,
         hover_fold: None,
@@ -2190,6 +2222,7 @@ mod tests {
             marks: Vec::new(),
             mark_button: None,
             press: None,
+            last_press: None,
             copies: Vec::new(),
             hover_copy: None,
             hover_fold: None,
@@ -5447,6 +5480,33 @@ mod tests {
         assert_eq!(copied_by(drag_over(&mut app, from, to)), "one two");
         assert!(app.selection.is_some());
         assert!(matches!(click(&mut app, from.x, from.y), Action::None));
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn a_double_click_copies_the_word_and_a_triple_click_the_whole_wrapped_line() {
+        let long = "first words then a line long enough to wrap over two rows of \
+                    the transcript at eighty columns wide, ending here";
+        let mut app = drawn_with(vec![reply(format!("alpha beta_gamma delta\n\n{long}"))]);
+        let at = text_spot(&app, "beta", false);
+        assert!(matches!(click(&mut app, at.x, at.y), Action::None));
+        assert_eq!(copied_by(click(&mut app, at.x, at.y)), "beta_gamma");
+        assert!(app.selection.is_some());
+        let at = text_spot(&app, "then", false);
+        click(&mut app, at.x, at.y);
+        click(&mut app, at.x, at.y);
+        assert_eq!(copied_by(click(&mut app, at.x, at.y)), long);
+    }
+
+    #[test]
+    fn clicks_too_far_apart_in_time_select_nothing() {
+        let mut app = drawn_with(vec![reply("alpha beta")]);
+        let at = text_spot(&app, "beta", false);
+        click(&mut app, at.x, at.y);
+        if let Some((when, _, _)) = &mut app.last_press {
+            *when -= MULTI_CLICK * 2;
+        }
+        assert!(matches!(click(&mut app, at.x, at.y), Action::None));
         assert!(app.selection.is_none());
     }
 

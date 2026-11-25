@@ -12,6 +12,9 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Added
 
+- A double click on transcript text selects and copies the word under the
+  pointer. A triple click selects and copies its line, joined across the
+  rows a soft wrap split it into.
 - A selection inside one reply shows a `mark` button at its end. A click on
   it puts a numbered chip, as in `①`, in the prompt and highlights the
   passage with the same number. The agent receives each marked passage

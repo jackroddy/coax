@@ -112,6 +112,63 @@ impl Selection {
     }
 }
 
+/// The word under `point` of `lines`: the run of letters, digits and
+/// underscores around it, or `None` off a word.
+pub fn word_at(lines: &[Option<LineText>], point: Point) -> Option<Selection> {
+    let text = lines.get(point.line)?.as_ref()?;
+    let cells: Vec<(char, usize, usize)> = text.cells().collect();
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let at = cells
+        .iter()
+        .position(|&(ch, col, width)| (col..col + width.max(1)).contains(&point.col) && word(ch))?;
+    let first = cells[..at]
+        .iter()
+        .rposition(|&(ch, ..)| !word(ch))
+        .map_or(0, |n| n + 1);
+    let last = cells[at..]
+        .iter()
+        .position(|&(ch, ..)| !word(ch))
+        .map_or(cells.len() - 1, |n| at + n - 1);
+    Some(Selection {
+        anchor: Point {
+            line: point.line,
+            col: cells[first].1,
+        },
+        head: Point {
+            line: point.line,
+            col: cells[last].1,
+        },
+        pointer: None,
+    })
+}
+
+/// The line under `point` of `lines`, with the rows a soft wrap split it
+/// into.
+pub fn line_at(lines: &[Option<LineText>], point: Point) -> Option<Selection> {
+    let goes_on =
+        |line: usize| matches!(lines.get(line), Some(Some(text)) if text.join != Join::Break);
+    lines.get(point.line)?.as_ref()?;
+    let mut first = point.line;
+    while first > 0 && goes_on(first) && matches!(lines.get(first - 1), Some(Some(_))) {
+        first -= 1;
+    }
+    let mut last = point.line;
+    while goes_on(last + 1) {
+        last += 1;
+    }
+    Some(Selection {
+        anchor: Point {
+            line: first,
+            col: 0,
+        },
+        head: Point {
+            line: last,
+            col: usize::MAX,
+        },
+        pointer: None,
+    })
+}
+
 /// The transcript's text as the last draw laid it out.
 #[derive(Default)]
 pub struct Texts {
