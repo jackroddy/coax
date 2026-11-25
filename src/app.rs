@@ -5499,6 +5499,22 @@ mod tests {
     }
 
     #[test]
+    fn a_long_notice_with_newlines_draws_as_one_cut_line_when_the_screen_cuts_it_after_a_newline() {
+        let mut app = app();
+        app.transcript.notice(
+            "prompt failed: Internal error: You've hit your 5-hour limit · resets \
+             9:30pm (America/Denver): {\n  \"errorKind\": \"rate_limit\"\n}"
+                .to_string(),
+        );
+        let screen = header_rows_all(&mut app, 110);
+        let row = screen
+            .lines()
+            .find(|row| row.contains("prompt failed"))
+            .expect("the notice is drawn");
+        assert!(row.trim_end().ends_with('…'), "{screen}");
+    }
+
+    #[test]
     fn a_double_click_copies_the_word_and_a_triple_click_the_whole_wrapped_line() {
         let long = "first words then a line long enough to wrap over two rows of \
                     the transcript at eighty columns wide, ending here";

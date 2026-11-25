@@ -1753,8 +1753,9 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 lines.push_text(line, pad, cmr::Join::Break);
             }
             Entry::Notice(text) => {
-                let text = cut(text, width);
-                let pad = (width - text.width()) / 2;
+                let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                let text = cut(&flat, width);
+                let pad = width.saturating_sub(text.width()) / 2;
                 let line = Line::from(format!("{}{text}", " ".repeat(pad))).style(dim());
                 lines.push_text(line, pad, cmr::Join::Break);
             }
@@ -2636,7 +2637,9 @@ pub fn cut(text: &str, room: usize) -> String {
     let mut out = String::new();
     let mut used = 0;
     for ch in text.chars() {
-        let width = ch.width().unwrap_or(0);
+        // measured as a string, as `text.width()` measures it, where a
+        // newline takes a column though the char has no width
+        let width = ch.encode_utf8(&mut [0; 4]).width();
         if used + width > room - 1 {
             break;
         }
@@ -3591,6 +3594,14 @@ mod tests {
         assert_eq!(title_column(&options, 2, 20), None);
         let plain = [choice("Linux", None), choice("macOS", None)];
         assert_eq!(title_column(&plain, 4, 60), None);
+    }
+
+    #[test]
+    fn cut_never_returns_text_wider_than_its_room_when_the_text_holds_newlines() {
+        let text = "a long line\nwith a newline\nand another one after it";
+        for room in 1..text.len() {
+            assert!(cut(text, room).width() <= room, "room {room}");
+        }
     }
 
     #[test]

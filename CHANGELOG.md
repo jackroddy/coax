@@ -44,6 +44,9 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- A notice is drawn as one line, with its newlines as spaces. coax no
+  longer aborts when a notice holding newlines, such as a rate-limit error
+  from the agent, is cut to fit the screen.
 - Hovering a `foam:` link shows the issue laid out as markdown. The title
   is bold, with a dim line of its type, status and priority under it. The
   body and notes follow. coax runs `foam show <id> --json` for the popup,
