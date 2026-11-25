@@ -1,0 +1,28 @@
+{
+  "id": "coax-4aabeb",
+  "title": "A mark's highlight stays on its passage when the reply reflows",
+  "body": "`Mark` in `app.rs` records a marked passage as its entry, plus the line offset and screen column of each end within that entry, taken from the layout at the moment of marking. `draw_transcript` in `ui.rs` highlights those cells on each draw. When the reply lays out again at another width, after a resize or a change of the scroll bar, its lines wrap differently. The highlight then covers other text, while the passage sent to the agent stays as marked.\n\n## Open\n\n- Whether to anchor a mark to the reply's rendered text, as a character range, and find its cells again on each layout.",
+  "type": "bug",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T02:43:16.43208707Z",
+  "updated_at": "2026-11-25T02:43:16.43208707Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "60bef0e",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
