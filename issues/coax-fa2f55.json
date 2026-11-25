@@ -1,0 +1,28 @@
+{
+  "id": "coax-fa2f55",
+  "title": "The question form cuts long text and stops Enter at each Other field",
+  "body": "`form_row` and `draw_form` in `ui.rs` pass every piece of an open form through `cut`, which truncates with `…`. That covers the message on the rule, field titles, option titles and descriptions, the error line, and the text typed into a text field. Only a field's description wraps. At 60 columns the rule reads \"Please answer the followin…\", and text typed past the box's width can no longer be seen.\n\nThe form is plain lines under a dim rule, with nothing setting it apart from the transcript. The Claude adapter sends each `AskUserQuestion` question as a choice field `question_N` and an optional text field `question_N_custom`, and coax draws the second as a section of its own titled \"Other\". When Enter picks a single choice, `Form::key` moves the cursor to the next field, which is always that `_custom` field.\n\n## Proposal\n\n- Every line of the form wraps to the box. An option's continuation lines indent past its mark. A description that does not fit beside its option's title goes on its own dim lines. Typed text wraps over as many lines as it needs. Previews stay cut, since they hold fixed-width text.\n- The form is drawn in a rounded box with an accent border. Its message is a wrapped heading inside the box, and its keys sit on the bottom border.\n- Each question has a header with its number, as in \"Storage · 1 of 2\". The cursor row gets an accent bar at its left edge. Picked marks are green.\n- A field keyed `<key>_custom` that follows the field `<key>` is drawn as the last row of that question, \"› other: type here\", with no section of its own.\n- Enter on a single choice moves past that question's `_custom` field to the next question. Down still reaches it.\n\n## Rejected\n\n- Skipping every optional text field after a choice. A text question from another agent would be skipped too.",
+  "type": "bug",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T01:27:28.900919629Z",
+  "updated_at": "2026-11-25T01:27:28.900919629Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "402a364",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
