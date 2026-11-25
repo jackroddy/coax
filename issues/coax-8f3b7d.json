@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T01:48:16.848082157Z",
-  "updated_at": "2026-11-25T01:48:16.848082157Z",
+  "updated_at": "2026-11-25T01:59:30.169708583Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "52a0f06e",
+      "at": "2026-11-25T01:59:30.169707853Z",
+      "author": "Jack Roddy/72a5a67e",
+      "text": "Checked against the adapter's source, in a checkout of `claude-agent-acp` a little ahead of v0.101.0.\n\n- A background Bash call goes `completed` at launch, with a result like \"Command running in background with ID …\". The adapter sends coax nothing more on that call.\n- The adapter receives the SDK's `task_started`, `task_notification` and `background_tasks_changed` frames. It passes them on only to a client that declares the JetBrains AIR `asyncTasks` capability or the `terminal_output` meta. coax declares neither, in `src/acp.rs`.\n- The adapter never holds a turn for a background shell. The comment on `liveBackgroundTasks` in `acp-agent.ts` says a hold must never wait on a shell.\n- `_session/async_task/stop` takes `{sessionId, asyncTaskId}` and returns `{stopped}`. It works only for AIR clients. No method lists tasks.\n- Not traced to the end: when the command exits, Claude Code probably wakes the model with a follow-up turn (`startAutonomousCycle`). coax would see that turn as agent text with no prompt open.\n\nSo coax cannot show a background command without declaring a new capability.\n\n| path | what coax gets | cost |\n|---|---|---|\n| declare `terminal_output` | a terminal kept open on the call until the command ends, with its output and exit | coax handles terminal updates on every Bash call, foreground ones too |\n| declare AIR `asyncTasks` | a full task lifecycle, and stopping | AIR changes other behaviour too, such as background sub-agents no longer holding the turn |\n| read the launch result's text | the task's ID, and perhaps its end from the follow-up turn | no reliable end signal |\n\nThe lean is `terminal_output`, the one path with a real end signal that does not bring the rest of AIR. What declaring it changes for ordinary Bash calls is being read next.",
+      "commit": "57bfece",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "461c197",
