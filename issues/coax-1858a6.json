@@ -3,26 +3,29 @@
   "title": "coax reports its sub-agents to decade",
   "body": "coax reports its agent's state to decade with `agent` messages on decade's socket. When a turn ends while sub-agents or background tasks still run, coax reports `done`, and decade's workspace card turns green while work goes on.\n\ndecade is gaining a `subagents` list in its agent report (decade issue decade-164700): each entry has a name, a one-line activity and a state of working, done or failed. The agent sends the whole list each time it changes. decade shows the list as sent and leaves it to the agent when finished entries leave.\n\n## Proposal\n\n- coax sends its direct sub-agents and background tasks as the `subagents` list, with `AgentUpdate` from `decade-channel`.\n- Finished and failed entries stay until the agent's next turn starts, so the person sees what finished.\n- coax keeps reporting `working` while any sub-agent works.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/72a5a67e",
-  "lease_expires": "2026-11-25T02:01:57.48484332Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T01:28:43.35291258Z",
-  "updated_at": "2026-11-25T01:46:57.48484332Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T01:48:16.858047262Z",
+  "closed_at": "2026-11-25T01:48:16.858047262Z",
+  "close_reason": "Landed in 461c197. Snapshot::of fills the subagents list from Transcript::subagents. The working state while sub-agents run was already in place. Background shell commands went to their own issue, since coax does not track them.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "402a364",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "461c197",
+      "branch": "dev"
+    }
   }
 }
