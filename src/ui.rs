@@ -288,8 +288,8 @@ fn draw_link_popup(frame: &mut Frame, app: &App) {
 /// `links::POPUP_LINES` rows with a last row of `…` when it runs longer.
 fn markdown_popup_rows(source: &str, width: usize) -> Vec<Line<'static>> {
     let doc = cmr::parse(source);
-    let page = doc.render_with(wrapped_format(width.max(1)));
-    let mut rows: Vec<Line> = page
+    let format = wrapped_format(width.max(1)).max_height(links::POPUP_LINES);
+    doc.render_with(format.build())
         .rows()
         .iter()
         .map(|row| {
@@ -300,12 +300,7 @@ fn markdown_popup_rows(source: &str, width: usize) -> Vec<Line<'static>> {
                 .collect();
             trim_end(Line::from(spans))
         })
-        .collect();
-    if rows.len() > links::POPUP_LINES {
-        rows.truncate(links::POPUP_LINES - 1);
-        rows.push(Line::styled("…", dim()));
-    }
-    rows
+        .collect()
 }
 
 /// A screen that says only `message`, centred and dim, while a session opens.
@@ -632,7 +627,7 @@ fn markdown_view(
         .first()
         .map_or(Style::default(), |span| span.style);
     let inner = width.saturating_sub(2 + COPY_ROOM).max(1);
-    let page = doc.render_with(wrapped_format(inner));
+    let page = doc.render_with(wrapped_format(inner).build());
 
     // the head row comes first, and `│ ` starts every row after it
     let runs = link_runs(page.rows(), &doc.links)
@@ -646,7 +641,9 @@ fn markdown_view(
     let mut rows = Drawn::default();
     rows.push(head.clone(), None);
     for row in page.rows() {
-        let sources = row_sources(row, in_reply);
+        let sources = text_sources(row)
+            .map(|byte| byte.and_then(in_reply))
+            .collect();
         let mut spans = vec![Span::styled("│ ", gutter)];
         spans.extend(
             row.pieces
@@ -666,12 +663,22 @@ fn markdown_view(
 
 /// The format of markdown drawn in a box `width` wide: every code block
 /// wraps and every table rules its rows.
-fn wrapped_format(width: usize) -> cmr::Format {
+fn wrapped_format(width: usize) -> cmr::FormatBuilder {
     cmr::Format::builder()
         .width(width)
         .code(cmr::Overflow::Wrap)
         .table_rules(true)
-        .build()
+}
+
+/// The format of a reply's block laid out alone at `width`: every table
+/// rules its rows, its columns between `COLUMN_FLOOR` and `COLUMN_CAP`, and
+/// one too wide at the floor keeps its columns and pans.
+fn block_format(width: usize) -> cmr::FormatBuilder {
+    cmr::Format::builder()
+        .width(width)
+        .table_rules(true)
+        .columns(COLUMN_FLOOR..=COLUMN_CAP)
+        .tables(cmr::Overflow::Keep)
 }
 
 /// Whether a code block fenced with `lang` wraps by default: one with no
@@ -704,52 +711,12 @@ const COPY_ROOM: usize = 2;
 /// The copy glyph, one column wide in every font.
 const COPY_GLYPH: &str = "\u{29c9}";
 
-/// The widest a table is laid out when measuring it.
-const TABLE_WIDTH: usize = 1000;
-
 /// The widest a table column is laid out, past which its cells wrap.
 const COLUMN_CAP: usize = 40;
 
 /// The narrowest a table column is squeezed to fit the box, past which the
 /// table pans.
 const COLUMN_FLOOR: usize = 16;
-
-/// The width to lay `table` out at: no column wider than `COLUMN_CAP`, and
-/// the columns squeezed toward `COLUMN_FLOOR` to fit `width`.
-fn table_width(table: &cmr::Block, width: usize) -> usize {
-    let columns = column_widths(table);
-    if columns.is_empty() {
-        return TABLE_WIDTH;
-    }
-
-    // cmr narrows the widest column a cell at a time, so laid out at
-    // this sum each column comes out at min(natural, limit), and a
-    // floor above its MIN_COLUMN keeps it from stacking the rows
-    let gaps = 3 * (columns.len() - 1);
-    let total = |limit: usize| columns.iter().map(|&c| c.min(limit)).sum::<usize>() + gaps;
-    total(COLUMN_CAP).min(width.max(total(COLUMN_FLOOR)))
-}
-
-/// The natural width of each column of `table`, read from the rule under
-/// its header, or none when the table is too wide to draw as columns.
-fn column_widths(table: &cmr::Block) -> Vec<usize> {
-    let rule = render_block(table, &[], TABLE_WIDTH)
-        .rows()
-        .iter()
-        .map(cmr::Row::text)
-        .find(|row| {
-            let row = row.trim_end();
-            !row.is_empty() && row.chars().all(|ch| ch == '─' || ch == '┼')
-        });
-    match rule {
-        Some(rule) => rule
-            .trim_end()
-            .split("─┼─")
-            .map(|run| run.chars().count())
-            .collect(),
-        None => Vec::new(),
-    }
-}
 
 impl Rendered {
     /// The text a copy of block `key` (an entry and a block within it) takes.
@@ -825,10 +792,7 @@ impl Rendered {
 fn markdown(text: &str, width: usize) -> Vec<Part> {
     let mut parts: Vec<Part> = Vec::new();
     let doc = cmr::parse(text);
-
-    // a link's index counts across the entry's blocks, and a block laid out
-    // alone keeps the index the whole parse gave it
-    let cmr::Document { blocks, links } = &doc;
+    let blocks = &doc.blocks;
     let mut block = 0;
     while block < blocks.len() {
         if block > 0 {
@@ -848,7 +812,7 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
         if !names.is_empty() {
             let end = block + names.len();
             let tabs = (block..end)
-                .filter_map(|n| kept_whole(n, &blocks[n], width, links))
+                .filter_map(|n| kept_whole(&doc, n, width))
                 .collect();
             parts.push(Part::Tabs {
                 first: block,
@@ -858,15 +822,10 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
             block = end;
             continue;
         }
-        let item = &blocks[block];
-        match kept_whole(block, item, width, links) {
+        match kept_whole(&doc, block, width) {
             Some(kept) => parts.push(Part::Block(kept)),
             None => {
-                let at = match item {
-                    cmr::Block::Table { .. } => table_width(item, width),
-                    _ => width,
-                };
-                let (rows, runs) = block_rows(item, at, links);
+                let (rows, runs) = block_rows(&doc, block, block_format(width).build());
                 let (flow_rows, flow_runs) = flow(&mut parts);
                 let base = flow_rows.len();
                 flow_runs.extend(runs.into_iter().map(|run| Run {
@@ -879,21 +838,6 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
         block += 1;
     }
     parts
-}
-
-/// `block` laid out alone at `width`, its link numbers indexing `links`,
-/// a table with a rule between its rows.
-fn render_block(block: &cmr::Block, links: &[cmr::Link], width: usize) -> cmr::Page {
-    let doc = cmr::Document {
-        blocks: vec![block.clone()],
-        links: links.to_vec(),
-    };
-    doc.render_with(
-        cmr::Format::builder()
-            .width(width)
-            .table_rules(true)
-            .build(),
-    )
 }
 
 fn flow(parts: &mut Vec<Part>) -> (&mut Drawn, &mut Vec<Run>) {
@@ -909,14 +853,15 @@ fn flow(parts: &mut Vec<Part>) -> (&mut Drawn, &mut Vec<Run>) {
     }
 }
 
-/// The rows of one block, and where the links that act on a click sit in
-/// them. `links` are the links of the whole entry.
-fn block_rows(block: &cmr::Block, width: usize, links: &[cmr::Link]) -> (Drawn, Vec<Run>) {
-    let page = render_block(block, links, width);
+/// The rows of block `index` of `doc` laid out alone, and where the links
+/// that act on a click sit in them.
+fn block_rows(doc: &cmr::Document, index: usize, format: cmr::Format) -> (Drawn, Vec<Run>) {
+    let page = doc.render_block(index, format);
+    let links = &doc.links;
     let runs = link_runs(page.rows(), links);
     let mut lines = Drawn::default();
     for row in page.rows() {
-        let sources = row_sources(row, Some);
+        let sources = text_sources(row).collect();
         let line = row
             .pieces
             .iter()
@@ -964,13 +909,8 @@ fn link_runs(rows: &[cmr::Row], links: &[cmr::Link]) -> Vec<Run> {
 
 /// A code block, or a table wider than `width`, as block number `index`
 /// kept whole.
-fn kept_whole(
-    index: usize,
-    block: &cmr::Block,
-    width: usize,
-    links: &[cmr::Link],
-) -> Option<KeptBlock> {
-    match block {
+fn kept_whole(doc: &cmr::Document, index: usize, width: usize) -> Option<KeptBlock> {
+    match &doc.blocks[index] {
         cmr::Block::Code {
             lang,
             lines,
@@ -1002,12 +942,19 @@ fn kept_whole(
 
             // a wide block with no language gets an empty one, so its
             // header row has room for the toggle
-            let headed = |wrap| cmr::Block::Code {
-                lang: Some(lang.clone().unwrap_or_default()),
-                lines: lines.clone(),
-                sources: sources.clone(),
-                wrap,
-                tab: None,
+            let headed = (wide && lang.is_none()).then(|| cmr::Document {
+                blocks: vec![cmr::Block::Code {
+                    lang: Some(String::new()),
+                    lines: lines.clone(),
+                    sources: sources.clone(),
+                    wrap: false,
+                    tab: None,
+                }],
+                links: doc.links.clone(),
+            });
+            let (laid, at) = match &headed {
+                Some(headed) => (headed, 0),
+                None => (doc, index),
             };
             let header = |toggles: &[Toggle]| {
                 let gap = if toggles.is_empty() {
@@ -1022,11 +969,7 @@ fn kept_whole(
                 }
             };
             let natural = longest.max(header(&toggles)) + 2 + COPY_ROOM;
-            let (mut rows, runs) = if wide && lang.is_none() {
-                block_rows(&headed(false), natural, links)
-            } else {
-                block_rows(block, natural, links)
-            };
+            let (mut rows, runs) = block_rows(laid, at, block_format(natural).build());
 
             // the header row holds the language and the toggles, which a
             // copy leaves out
@@ -1037,7 +980,9 @@ fn kept_whole(
                 markdown_view(&rows.lines[0], lines, sources, header(&toggles[..1]), width)
             });
             let wrapped = wide.then(|| {
-                let mut rows = block_rows(&headed(true), width.saturating_sub(COPY_ROOM), links).0;
+                let format =
+                    block_format(width.saturating_sub(COPY_ROOM)).code(cmr::Overflow::Wrap);
+                let mut rows = block_rows(laid, at, format.build()).0;
                 rows.texts[0] = None;
                 Wrapped {
                     rows,
@@ -1056,7 +1001,7 @@ fn kept_whole(
             })
         }
         cmr::Block::Table { .. } => {
-            let (rows, runs) = block_rows(block, table_width(block, width), links);
+            let (rows, runs) = block_rows(doc, index, block_format(width).build());
             let natural = rows.lines.iter().map(Line::width).max().unwrap_or(0);
             (natural > width).then_some(KeptBlock {
                 block: index,
@@ -1345,20 +1290,11 @@ fn line_text(line: &Line, lead: usize, join: cmr::Join) -> LineText {
     }
 }
 
-/// The source byte of each character of `row` after its lead, as `at` maps
-/// the byte of the text cmr parsed.
-fn row_sources(row: &cmr::Row, at: impl Fn(usize) -> Option<usize>) -> Vec<Option<usize>> {
-    let mut col = 0;
-    let mut sources = Vec::new();
-    for (text, style) in &row.pieces {
-        for (byte, ch) in text.char_indices() {
-            if col >= row.lead {
-                sources.push(style.source.and_then(|start| at(start + byte)));
-            }
-            col += ch.width().unwrap_or(0);
-        }
-    }
-    sources
+/// The source byte of each character of `row` after its lead.
+fn text_sources(row: &cmr::Row) -> impl Iterator<Item = Option<usize>> {
+    // cmr counts a column per char, and its leads are gutters and
+    // indents one column wide per char, so `lead` chars are `lead` columns
+    row.sources().into_iter().skip(row.lead)
 }
 
 /// `text` as a block panned by `offset` that shows `visible` columns shows
@@ -3879,12 +3815,6 @@ mod tests {
     fn a_table_that_fits_the_width_is_laid_out_with_the_prose() {
         let parts = markdown("| a | b |\n|---|---|\n| 1 | 2 |\n\nafter", 20);
         assert!(matches!(&parts[..], [Part::Flow { .. }]));
-    }
-
-    #[test]
-    fn a_table_has_the_natural_width_of_each_column() {
-        let doc = cmr::parse("| a | bbb |\n|---|---|\n| cc dd | e |");
-        assert_eq!(column_widths(&doc.blocks[0]), [5, 3]);
     }
 
     #[test]
