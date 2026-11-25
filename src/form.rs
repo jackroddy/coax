@@ -28,6 +28,10 @@ pub struct Field {
     pub description: Option<String>,
     pub required: bool,
     pub kind: Kind,
+
+    /// The question this text field takes a typed answer to, for the
+    /// `<key>_custom` field the Claude adapter sends after question `<key>`.
+    pub other_of: Option<usize>,
 }
 
 pub enum Kind {
@@ -81,11 +85,20 @@ pub enum Row {
 impl Form {
     pub fn new(message: String, schema: &ElicitationSchema) -> Form {
         let required = schema.required.clone().unwrap_or_default();
-        let fields = schema
+        let mut fields: Vec<Field> = schema
             .properties
             .iter()
             .map(|(key, property)| field(key, property, required.contains(key)))
             .collect();
+        for index in 0..fields.len() {
+            let Some(question) = fields[index].key.strip_suffix("_custom") else {
+                continue;
+            };
+            fields[index].other_of = fields.iter().position(|field| {
+                field.key == question
+                    && matches!(field.kind, Kind::Choice { .. } | Kind::Many { .. })
+            });
+        }
         Form {
             message,
             fields,
@@ -136,11 +149,11 @@ impl Form {
                 Row::Option(field, option) => {
                     self.pick(field, option);
                     if matches!(self.fields[field].kind, Kind::Choice { .. }) {
-                        self.cursor = next_field_row(&rows, self.cursor);
+                        self.cursor = self.next_question_row(&rows, self.cursor);
                     }
                 }
                 Row::Toggle(field) => self.flip(field),
-                Row::Text(_) => self.cursor = next_field_row(&rows, self.cursor),
+                Row::Text(_) => self.cursor = self.next_question_row(&rows, self.cursor),
             },
             KeyCode::Char(' ') if !matches!(row, Row::Text(_)) => match row {
                 Row::Option(field, option) => self.pick(field, option),
@@ -164,6 +177,19 @@ impl Form {
             _ => {}
         }
         None
+    }
+
+    /// The first row after `at` that belongs neither to `at`'s field nor to
+    /// that field's other field, or the submit row.
+    fn next_question_row(&self, rows: &[Row], at: usize) -> usize {
+        let field = row_field(rows[at]);
+        rows.iter()
+            .skip(at)
+            .position(|row| match row_field(*row) {
+                Some(next) => Some(next) != field && self.fields[next].other_of != field,
+                None => true,
+            })
+            .map_or(at, |offset| at + offset)
     }
 
     fn pick(&mut self, field: usize, option: usize) {
@@ -277,6 +303,7 @@ fn field(key: &str, property: &ElicitationPropertySchema, required: bool) -> Fie
         description,
         required,
         kind,
+        other_of: None,
     }
 }
 
@@ -354,16 +381,6 @@ pub fn row_field(row: Row) -> Option<usize> {
     }
 }
 
-/// The first row of the field after the one row `at` belongs to, or the
-/// submit row.
-fn next_field_row(rows: &[Row], at: usize) -> usize {
-    let field = row_field(rows[at]);
-    rows.iter()
-        .skip(at)
-        .position(|row| row_field(*row) != field)
-        .map_or(at, |offset| at + offset)
-}
-
 #[cfg(test)]
 mod tests {
     use crossterm::event::KeyModifiers;
@@ -411,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_a_choice_picks_it_and_moves_to_the_next_field() {
+    fn enter_on_a_choice_picks_it_and_moves_past_its_other_field_to_the_next_question() {
         let mut form = questions();
         press(&mut form, KeyCode::Down);
         assert_eq!(press(&mut form, KeyCode::Enter), None);
@@ -422,7 +439,18 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(form.rows()[form.cursor], Row::Option(2, 0));
+        press(&mut form, KeyCode::Up);
         assert_eq!(form.rows()[form.cursor], Row::Text(1));
+        press(&mut form, KeyCode::Enter);
+        assert_eq!(form.rows()[form.cursor], Row::Option(2, 0));
+    }
+
+    #[test]
+    fn each_custom_field_belongs_to_the_question_it_is_named_for() {
+        let form = questions();
+        let other_of: Vec<Option<usize>> = form.fields.iter().map(|f| f.other_of).collect();
+        assert_eq!(other_of, [None, Some(0), None, Some(2)]);
     }
 
     #[test]
@@ -448,6 +476,7 @@ mod tests {
         let mut form = questions();
         press(&mut form, KeyCode::Down);
         press(&mut form, KeyCode::Enter);
+        press(&mut form, KeyCode::Up);
         for ch in "on SSD".chars() {
             press(&mut form, KeyCode::Char(ch));
         }

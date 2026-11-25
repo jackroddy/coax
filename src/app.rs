@@ -3916,14 +3916,16 @@ mod tests {
         let rows: Vec<&str> = screen.lines().collect();
         assert!(rows[8].starts_with(" waiting for you"), "{screen}");
         assert!(
-            rows[9].starts_with("── Please answer the following questions. ─"),
+            rows[9].starts_with("╭──") && rows[9].ends_with("─╮"),
             "{screen}"
         );
         assert!(
-            rows[9].ends_with(" 1 more   enter pick   esc dismiss ──"),
+            rows[10].starts_with("│ Please answer the following questions. "),
             "{screen}"
         );
-        assert_eq!(rows[10], format!("{:<100}", "  Storage"));
+        assert!(rows[12].starts_with("│   Storage · 1 of 2 "), "{screen}");
+        assert!(rows[24].starts_with("╰ 1 more ─"), "{screen}");
+        assert!(rows[24].ends_with(" esc dismiss ╯"), "{screen}");
         assert!(rows[25].starts_with("━━━━"), "{screen}");
         assert!(rows[..8].iter().all(|row| !row.contains("Storage")));
     }
@@ -3938,11 +3940,47 @@ mod tests {
         let screen = header_rows_all(&mut app, 100);
         let rows: Vec<&str> = screen.lines().collect();
         let disk = rows.iter().position(|row| row.contains("○ Disk")).unwrap();
-        assert!(rows[disk + 1].starts_with("  ╭──"), "{screen}");
-        assert!(rows[disk + 2].starts_with("  │ state/ "), "{screen}");
-        assert!(rows[disk + 4].starts_with("  │     index.db │"), "{screen}");
+        assert!(rows[disk + 1].starts_with("│   ╭──"), "{screen}");
+        assert!(rows[disk + 2].starts_with("│   │ state/ "), "{screen}");
+        assert!(
+            rows[disk + 4].starts_with("│   │     index.db │"),
+            "{screen}"
+        );
         press(&mut app, KeyCode::Down);
         assert!(!header_rows_all(&mut app, 100).contains("index.db"));
+    }
+
+    #[test]
+    fn long_form_text_and_typed_text_wrap_inside_the_box() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        ask_form(&mut app);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Up);
+        type_text(&mut app, "keep it on the fast disk and evict old blobs");
+        let screen = header_rows_all(&mut app, 40);
+        let rows: Vec<&str> = screen.lines().collect();
+        let form = &rows[9..25];
+        assert!(
+            form.iter()
+                .all(|row| row.starts_with('│') || row.starts_with('╭') || row.starts_with('╰')),
+            "{screen}"
+        );
+        assert!(form.iter().all(|row| !row.contains('…')), "{screen}");
+        let disk = form.iter().position(|row| row.contains("● Disk")).unwrap();
+        assert!(
+            form[disk + 1].starts_with("│     kept under the state directory "),
+            "{screen}"
+        );
+        assert!(
+            form[disk + 2].starts_with("│ ▌ › keep it on the fast disk and "),
+            "{screen}"
+        );
+        assert!(
+            form[disk + 3].starts_with("│ ▌   evict old blobs"),
+            "{screen}"
+        );
     }
 
     #[test]

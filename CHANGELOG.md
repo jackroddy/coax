@@ -22,6 +22,13 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- coax draws an agent's question form in a box with an accent border. Long
+  text in the form wraps inside the box, where coax used to cut it short.
+  The text typed into a field wraps too. Each question's header shows its
+  number, as in "Storage · 1 of 2".
+- A question's Other field is drawn as the question's last row. Enter on a
+  single choice moves to the next question and passes over that Other
+  field. Down still reaches it.
 - coax lays out a table column at most 40 cells wide. Longer text in the
   column wraps. When a table is still wider than the box, coax narrows its
   widest columns first, down to 16 cells each. Only a table still too wide at

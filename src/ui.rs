@@ -43,12 +43,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         0
     };
-    let form = app
-        .form
-        .as_ref()
-        .map(|asked| form_lines(&asked.form, app.prompt_width));
+    let form = app.form.as_ref().map(|asked| {
+        form_lines(
+            &asked.form,
+            (area.width as usize).saturating_sub(FORM_FRAME),
+        )
+    });
     let bottom_rows = match &form {
-        Some((lines, _)) => lines.len().clamp(1, (area.height / 2) as usize),
+        Some((lines, _)) => (lines.len() + 1).clamp(2, (area.height / 2) as usize),
         None => input.height(),
     };
     let now = Instant::now();
@@ -105,7 +107,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(line), working_area);
     }
     match form {
-        Some((lines, focus)) => draw_form(frame, upper_rule, prompt_area, app, lines, focus),
+        Some((lines, focus)) => {
+            let area = Rect {
+                height: prompt_area.height + 1,
+                ..upper_rule
+            };
+            draw_form(frame, area, app, lines, focus);
+        }
         None => {
             draw_rule(frame, upper_rule, THIN);
             draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
@@ -2489,104 +2497,143 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// The open form in the prompt's place, scrolled to keep the `focus` lines in
-/// view, under a rule carrying its message and keys.
+/// The open form in a box over the prompt's rows and the rule above them,
+/// scrolled to keep the `focus` lines in view, with its keys on the bottom
+/// border.
 fn draw_form(
     frame: &mut Frame,
-    rule: Rect,
     area: Rect,
     app: &App,
     lines: Vec<Line<'static>>,
     focus: Range<usize>,
 ) {
-    let Some(asked) = &app.form else {
+    if app.form.is_none() {
         return;
-    };
-    let keys = match app.forms.len() {
-        0 => "enter pick   esc dismiss".to_string(),
-        more => format!("{more} more   enter pick   esc dismiss"),
-    };
-    let width = rule.width as usize;
-    let title = cut(&asked.form.message, width.saturating_sub(keys.width() + 9));
-    let rest = width.saturating_sub(title.width() + keys.width() + 8);
-    let title_style = Style::new()
-        .fg(palette::get().blue)
-        .add_modifier(Modifier::BOLD);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("── ", dim()),
-            Span::styled(title, title_style),
-            Span::styled(format!(" {} ", "─".repeat(rest)), dim()),
-            Span::styled(keys, dim()),
-            Span::styled(" ──", dim()),
-        ])),
-        rule,
-    );
+    }
+    let accent = Style::new().fg(palette::get().accent);
+    let mut block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(accent)
+        .padding(Padding::horizontal(1))
+        .title_bottom(Line::styled(" ↑↓ move · enter pick · esc dismiss ", dim()).right_aligned());
+    if !app.forms.is_empty() {
+        block = block.title_bottom(Line::styled(format!(" {} more ", app.forms.len()), accent));
+    }
+    let body = block.inner(area);
     let skip = focus
         .end
-        .saturating_sub(area.height as usize)
+        .saturating_sub(body.height as usize)
         .min(focus.start);
     let lines: Vec<Line> = lines.into_iter().skip(skip).collect();
-    let lead = PROMPT_LEAD.len() as u16;
-    let body = Rect {
-        x: area.x + lead.min(area.width),
-        width: area.width.saturating_sub(lead),
-        ..area
-    };
-    frame.render_widget(Paragraph::new(lines), body);
+    clear(frame, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
+
+/// The columns the form's box takes from the screen's width: two borders and
+/// a column of padding inside each.
+const FORM_FRAME: usize = 4;
+
+/// The columns before each row's text, where the cursor's bar is drawn.
+const FORM_LEAD: usize = 2;
 
 /// The form's lines at `width`, and the lines to keep in view: the cursor's
 /// row through the end of the preview it shows.
 fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, Range<usize>) {
     let rows = form.rows();
     let preview = form.focused_preview();
-    let mut lines: Vec<Line> = Vec::new();
+    let room = width.saturating_sub(FORM_LEAD);
+    let indent = " ".repeat(FORM_LEAD);
+    let questions = form.fields.iter().filter(|f| f.other_of.is_none()).count();
+    let title_style = Style::new()
+        .fg(palette::get().blue)
+        .add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line> = wrap(&form.message, width)
+        .into_iter()
+        .map(|piece| Line::styled(piece, title_style))
+        .collect();
     let mut focus = 0..0;
     let mut shown_field = None;
+    let mut number = 0;
     for (index, row) in rows.iter().enumerate() {
         let field = form::row_field(*row);
-        if field != shown_field {
-            if !lines.is_empty() {
-                lines.push(Line::default());
-            }
+        let other = field.is_some_and(|field| form.fields[field].other_of.is_some());
+        if field != shown_field && !other {
+            lines.push(Line::default());
             if let Some(field) = field.map(|field| &form.fields[field]) {
-                lines.push(Line::styled(cut(&field.title, width), bold()));
-                for piece in field
-                    .description
-                    .iter()
-                    .flat_map(|text| textwrap::wrap(text, width))
-                {
-                    lines.push(Line::styled(piece.into_owned(), dim()));
+                number += 1;
+                let count = if questions > 1 {
+                    format!(" · {number} of {questions}")
+                } else {
+                    String::new()
+                };
+                let mut title = wrap(&field.title, room.saturating_sub(count.width()));
+                let last = title.pop().unwrap_or_default();
+                for piece in title {
+                    lines.push(Line::styled(format!("{indent}{piece}"), bold()));
+                }
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{indent}{last}"), bold()),
+                    Span::styled(count, dim()),
+                ]));
+                for piece in field.description.iter().flat_map(|text| wrap(text, room)) {
+                    lines.push(Line::styled(format!("{indent}{piece}"), dim()));
                 }
             }
-            shown_field = field;
         }
-        if index == form.cursor {
-            focus = lines.len()..lines.len() + 1;
+        shown_field = field;
+        let focused = index == form.cursor;
+        let row_lines = form_row(form, *row, room, focused);
+        if focused {
+            focus = lines.len()..lines.len() + row_lines.len();
         }
-        let line = form_row(form, *row, width);
-        lines.push(if index == form.cursor {
-            line.style(Style::new().bg(palette::get().selection))
-        } else {
-            line
-        });
+        for line in row_lines {
+            let lead = if focused {
+                Span::styled("▌ ", Style::new().fg(palette::get().accent))
+            } else {
+                Span::raw(indent.clone())
+            };
+            let mut spans = vec![lead];
+            spans.extend(line.spans);
+            let line = Line::from(spans).style(line.style);
+            lines.push(if focused {
+                line.patch_style(Style::new().bg(palette::get().selection))
+            } else {
+                line
+            });
+        }
         let last_of_field = rows.get(index + 1).and_then(|next| form::row_field(*next)) != field;
         if let Some((previewed, text)) = preview
             && field == Some(previewed)
             && last_of_field
         {
-            lines.extend(preview_lines(text, width));
+            for line in preview_lines(text, room) {
+                let mut spans = vec![Span::raw(indent.clone())];
+                spans.extend(line.spans);
+                lines.push(Line::from(spans).style(line.style));
+            }
             focus.end = lines.len();
         }
     }
     if let Some(error) = &form.error {
-        lines.push(Line::styled(
-            cut(error, width),
-            Style::new().fg(palette::get().yellow),
-        ));
+        let yellow = Style::new().fg(palette::get().yellow);
+        for piece in wrap(error, room) {
+            lines.push(Line::styled(format!("{indent}{piece}"), yellow));
+        }
     }
     (lines, focus)
+}
+
+/// `text` broken into lines of at most `width` columns, at least one.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let pieces: Vec<String> = textwrap::wrap(text, width.max(1))
+        .into_iter()
+        .map(|piece| piece.into_owned())
+        .collect();
+    if pieces.is_empty() {
+        vec![String::new()]
+    } else {
+        pieces
+    }
 }
 
 /// An option's preview in a dim box at most `width` wide, each line cut to
@@ -2609,54 +2656,100 @@ fn preview_lines(preview: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-fn form_row(form: &Form, row: Row, width: usize) -> Line<'static> {
+/// A row's lines, at most `width` wide.
+fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'static>> {
     let accent = Style::new().fg(palette::get().accent);
+    let green = Style::new().fg(palette::get().green);
+    let mark_style = |on: bool| if on { green } else { dim() };
     match row {
         Row::Option(field, option) => {
-            let (choice, mark) = match &form.fields[field].kind {
+            let (choice, mark, on) = match &form.fields[field].kind {
                 FormKind::Choice { options, picked } => {
-                    let mark = if *picked == Some(option) {
-                        "● "
-                    } else {
-                        "○ "
-                    };
-                    (&options[option], mark)
+                    let on = *picked == Some(option);
+                    (&options[option], if on { "● " } else { "○ " }, on)
                 }
                 FormKind::Many { options, picked } => {
-                    let mark = if picked[option] { "[x] " } else { "[ ] " };
-                    (&options[option], mark)
+                    let on = picked[option];
+                    (&options[option], if on { "[x] " } else { "[ ] " }, on)
                 }
-                _ => return Line::default(),
+                _ => return Vec::new(),
             };
-            let title = cut(&choice.title, width.saturating_sub(mark.width()));
-            let mut spans = vec![Span::styled(mark, accent), Span::raw(title.clone())];
+            let indent = " ".repeat(mark.width());
+            let room = width.saturating_sub(mark.width());
+            let title = wrap(&choice.title, room);
+            let last_width = title.last().map_or(0, |piece| piece.width());
+            let mut lines: Vec<Line> = title
+                .into_iter()
+                .enumerate()
+                .map(|(n, piece)| {
+                    let lead = if n == 0 {
+                        Span::styled(mark, mark_style(on))
+                    } else {
+                        Span::raw(indent.clone())
+                    };
+                    Line::from(vec![lead, Span::raw(piece)])
+                })
+                .collect();
             if let Some(description) = &choice.description {
-                let room = width.saturating_sub(mark.width() + title.width() + 2);
-                if room > 1 {
-                    spans.push(Span::styled(format!("  {}", cut(description, room)), dim()));
+                if lines.len() == 1 && last_width + 2 + description.width() <= room {
+                    lines[0]
+                        .spans
+                        .push(Span::styled(format!("  {description}"), dim()));
+                } else {
+                    for piece in wrap(description, room) {
+                        lines.push(Line::styled(format!("{indent}{piece}"), dim()));
+                    }
                 }
             }
-            Line::from(spans)
+            lines
         }
         Row::Text(field) => {
-            let FormKind::Text { text, .. } = &form.fields[field].kind else {
-                return Line::default();
+            let field = &form.fields[field];
+            let FormKind::Text { text, .. } = &field.kind else {
+                return Vec::new();
             };
-            let shown = if text.is_empty() {
-                Span::styled("type here", dim())
+            let room = width.saturating_sub(2);
+            let mut pieces: Vec<Vec<Span>> = if text.is_empty() {
+                let placeholder = match (&field.description, field.other_of) {
+                    (Some(description), Some(_)) => description.as_str(),
+                    _ => "type here",
+                };
+                wrap(placeholder, room)
+                    .into_iter()
+                    .map(|piece| vec![Span::styled(piece, dim())])
+                    .collect()
             } else {
-                Span::raw(cut(text, width.saturating_sub(2)))
+                prompt::wrap_rows(text, room)
+                    .into_iter()
+                    .map(|range| vec![Span::raw(text[range].to_string())])
+                    .collect()
             };
-            Line::from(vec![Span::styled("› ", accent), shown])
+            if focused {
+                let block = Span::styled(" ", Style::new().add_modifier(Modifier::REVERSED));
+                if text.is_empty() {
+                    pieces[0].insert(0, block);
+                } else if let Some(last) = pieces.last_mut() {
+                    last.push(block);
+                }
+            }
+            pieces
+                .into_iter()
+                .enumerate()
+                .map(|(n, mut spans)| {
+                    let lead = if n == 0 { "› " } else { "  " };
+                    spans.insert(0, Span::styled(lead, accent));
+                    Line::from(spans)
+                })
+                .collect()
         }
         Row::Toggle(field) => {
             let FormKind::Toggle(on) = form.fields[field].kind else {
-                return Line::default();
+                return Vec::new();
             };
             let mark = if on { "[x] yes" } else { "[ ] no" };
-            Line::styled(mark, accent)
+            vec![Line::styled(mark, mark_style(on))]
         }
-        Row::Submit => Line::styled("submit", accent.add_modifier(Modifier::BOLD)),
+        Row::Submit => vec![Line::styled("submit", accent.add_modifier(Modifier::BOLD))],
     }
 }
 
