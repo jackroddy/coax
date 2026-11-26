@@ -341,7 +341,9 @@ dependencies = [
 
 [[package]]
 name = "cmr"
-version = "0.2.0"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1f1531c6dbdb7fbf467730f51f7e4e4700f7b3c780bd46d2cf1c9dad0bb82d2"
 
 [[package]]
 name = "coax"
@@ -503,7 +505,9 @@ dependencies = [
 
 [[package]]
 name = "decade-channel"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91972343c15226ba1f1c1a83c24f2df55def7a2fe817f8ec0f4ecfdf9c4206a1"
 dependencies = [
  "serde",
  "serde_json",
