@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T20:37:00.691022739Z",
   "defer_until": null,
   "created_at": "2026-11-26T07:41:03.76782635Z",
-  "updated_at": "2026-11-26T20:22:00.691022739Z",
+  "updated_at": "2026-11-26T20:22:00.70185418Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/df584c97",
       "text": "The status line's spinner, `◐◓◑◒` in `header::SPINNER`, is missing from JetBrainsMono Nerd Font, so ghostty draws it from a fallback font, like the old `▰▱` bar. The picker's new spinner is braille and is in the font. Its glyphs sit together in constants at the top of `src/picker.rs`.",
       "commit": "a5ec44a",
+      "branch": "dev"
+    },
+    {
+      "id": "5f50863a",
+      "at": "2026-11-26T20:22:00.70185352Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Jack decided: under `glyphs = \"ascii\"` the rounded message borders become `+`, `-` and `|` boxes. He left the other stand-ins to the implementer.",
+      "commit": "e30bc1d",
       "branch": "dev"
     }
   ],
