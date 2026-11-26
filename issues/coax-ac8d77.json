@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T22:11:58.062113137Z",
   "defer_until": null,
   "created_at": "2026-11-26T21:39:17.839565399Z",
-  "updated_at": "2026-11-26T22:04:38.138772938Z",
+  "updated_at": "2026-11-26T22:07:34.084440612Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -39,6 +39,14 @@
       "at": "2026-11-26T22:04:38.138771798Z",
       "author": "Jack Roddy/df584c97",
       "text": "Jack reversed the `send = true` opt-in: it goes entirely. No template sends by itself. Finishing the form, or choosing a template with no blanks, puts the text in the prompt, and Enter sends it.",
+      "commit": "14c84b0",
+      "branch": "dev"
+    },
+    {
+      "id": "aa80239e",
+      "at": "2026-11-26T22:07:34.084439862Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Labelled options and no sending landed, uncommitted:\n\n- An option in `options` is a string or a table `{ label = \"…\", text = \"…\" }`, and the two mix in one list. `Opt` in `src/template.rs` holds both, and `Form::template` gives the form's `Choice` the label as its `title` and the text as its `value`, so answers carry the text. `default` names options by label, and a default naming no option is a config error. An option table missing `label` or `text`, or with another key, is a config error naming the file.\n- At Jack's word the template-level `send` key is gone. `send = …` is now an unknown key, so it is a config error. No path sends a template: finishing the form with Enter, with Ctrl+Enter or after choosing from the `/t` box puts the filled text in the prompt, and Enter sends it. A template with no blanks puts its text in the prompt too, where it used to send at once.\n- On the send Jack saw: in the event loop, finishing the form never sent unless the template set `send`, and his `away` did not. The one path that sent on its own was the no-blank template. Jack's `away` sent after a second Enter, so the likely cause was Enter on the old questions toggle finishing the form when he meant to flip it, followed by Enter in the prompt.\n- Jack's `away` now asks \"should the agent ask questions before you go?\" as a `choice` of yes and no, default yes, with option texts.",
       "commit": "14c84b0",
       "branch": "dev"
     }
