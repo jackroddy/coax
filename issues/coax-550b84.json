@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T20:37:42.452059279Z",
-  "updated_at": "2026-11-26T01:29:12.390372413Z",
+  "updated_at": "2026-11-26T01:44:58.006692059Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/c836bb27",
       "text": "coax builds against cmr's Document, Format and Page API and draws italics, in bbf0880. The path dependency on ../cmr stays until cmr 0.3.0 is on crates.io, which is what is left of this issue.",
       "commit": "bbf0880",
+      "branch": "dev"
+    },
+    {
+      "id": "e60f2db8",
+      "at": "2026-11-26T01:44:58.006691359Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "`Cargo.toml` takes `cmr = \"0.3.0\"` from crates.io, with no `path`, and `Cargo.lock` resolves it from the registry. `cargo fmt --check`, `cargo clippy --all-targets --all-features` and `cargo test --all-features` pass against it. The change is uncommitted on `dev` and goes in with the 0.2.1 release batch. Close this issue with that commit's hash.",
+      "commit": "4468c62",
       "branch": "dev"
     }
   ],
