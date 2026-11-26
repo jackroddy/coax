@@ -1,0 +1,28 @@
+{
+  "id": "coax-b633ab",
+  "title": "coax draws ASCII stand-ins for its symbols when the config or terminal asks",
+  "body": "coax draws many characters outside ASCII and assumes the terminal's font has every one:\n\n- the rounded message borders\n- the context bar's `━` and `─`\n- the fold markers `▸` and `▾`\n- `COPY_GLYPH` (`⧉`) and the thought mark `✻`\n- `◆`, `●` and `◐` on the status line, from `icon` in `src/header.rs`\n- `↑` and `↓` on the token counts\n- the circled chip numbers such as `①`\n- `⋯` and the spinner\n- the tool-call icons from coax-d1bcb7\n\nWhen a font lacks one, the terminal draws it from a fallback font that may not fit the cell. coax-01ebbd was one such case: JetBrainsMono Nerd Font has no `▰` or `▱`. A terminal cannot tell a program which characters its font lacks.\n\n## Proposal\n\n- A `glyphs` key in `config.toml`, `\"unicode\"` or `\"ascii\"`. Under `\"ascii\"`, every character in the list above has an ASCII stand-in. The tool-call icons have theirs settled already: `=` read, `?` search, `+` edit, `x` delete, `>` move, `$` run, `v` fetch, `:` think, `~` mode, `*` agent and other.\n- When the key is absent, coax uses `\"ascii\"` if the locale is not UTF-8 or `TERM` is `linux`, the Linux console, and `\"unicode\"` otherwise.\n\n## Open\n\n- The ASCII stand-ins for the borders, the bar, the chips and the spinner.\n- Whether the `[palette]` table and `glyphs` belong under one display section of the config.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T07:41:03.76782635Z",
+  "updated_at": "2026-11-26T07:41:03.76782635Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
