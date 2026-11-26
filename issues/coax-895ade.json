@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": "2027-03-01T00:00:00Z",
   "created_at": "2026-11-11T04:37:04.178393112Z",
-  "updated_at": "2026-11-26T20:21:29.236799871Z",
+  "updated_at": "2026-11-26T20:21:29.247207373Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "e3573ac6",
+      "at": "2026-11-26T20:21:29.247206563Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Deferred to 2027-03-01. The issue waits on the Claude adapter exposing a way to move a running tool call to the background, and v0.101.0, still the installed build, has none.",
+      "commit": "e30bc1d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "f4e9b89",
