@@ -3,7 +3,7 @@
   "title": "How could coax sessions get Claude Code's coding guidelines?",
   "body": "Claude Code builds one of two system prompts. The full prompt has a section headed `# Doing tasks`. It covers scoping changes, comments, security, checking UI work in a browser, and keeping what was verified apart from what was assumed. The lean prompt replaces the whole body of the full prompt with one section named `lean_body`, and that section goes with it. Sessions in coax run the lean prompt, so they get none of this guidance.\n\nThis was read in the `claude` binary bundled with the adapter's v0.101.0 release. When the `lean` trait is set, the prompt builder uses `lean_body`. Otherwise it uses the list of full sections: `intro`, `system`, `doing_tasks`, `actions`, `tools`, `tone` and a few more. `doing_tasks` is included when no output style is set, or when the style sets `keep-coding-instructions: true`. So that line in `styles/coax.md` does nothing while the prompt is lean.\n\nThe function that sets `lean` checks these in order:\n\n1. `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT` set true makes the prompt lean.\n2. The same variable set false, such as `0`, keeps the full prompt.\n3. A model name Claude Code does not recognize makes it lean.\n4. The feature flag `tengu_velvet_tide` makes it lean.\n5. Otherwise a per-model setting, `simple_system_prompt`, decides.\n\nThe coax entry does not set the variable. It runs Opus 5.5, which Claude Code recognizes. So the flag or the per-model setting makes its prompt lean. The minified code did not show which of the two.\n\nThe section's items as of v0.101.0, word for word:\n\n```text\n- The user will primarily request you to perform software engineering tasks. These may include solving bugs, adding new functionality, refactoring code, explaining code, and more. When given an unclear or generic instruction, consider it in the context of these software engineering tasks and the current working directory. For example, if the user asks you to change \"methodName\" to snake case, do not reply with just \"method_name\", instead find the method in the code and modify the code.\n- You are highly capable and often allow users to complete ambitious tasks that would otherwise be too complex or take too long. You should defer to user judgement about whether a task is too large to attempt.\n- For exploratory questions (\"what could we do about X?\", \"how should we approach this?\", \"what do you think?\"), respond in 2-3 sentences with a recommendation and the main tradeoff. Present it as something the user can redirect, not a decided plan. Don't implement until the user agrees.\n- Prefer editing existing files to creating new ones.\n- Be careful not to introduce security vulnerabilities such as command injection, XSS, SQL injection, and other OWASP top 10 vulnerabilities. If you notice that you wrote insecure code, immediately fix it. Prioritize writing safe, secure, and correct code.\n- Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction. No half-finished implementations either.\n- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs). Don't use feature flags or backwards-compatibility shims when you can just change the code.\n- Default to writing no comments. Only add one when the WHY is non-obvious: a hidden constraint, a subtle invariant, a workaround for a specific bug, behavior that would surprise a reader. If removing the comment wouldn't confuse a future reader, don't write it.\n- Don't explain WHAT the code does, since well-named identifiers already do that. Don't reference the current task, fix, or callers (\"used by X\", \"added for the Y flow\", \"handles the case from issue #123\"), since those belong in the PR description and rot as the codebase evolves.\n- For UI or frontend changes, start the dev server and use the feature in a browser before reporting the task as complete. Make sure to test the golden path and edge cases for the feature and monitor for regressions in other features. Type checking and test suites verify code correctness, not feature correctness - if you can't test the UI, say so explicitly rather than claiming success.\n- Avoid backwards-compatibility hacks like renaming unused _vars, re-exporting types, adding // removed comments for removed code, etc. If you are certain that something is unused, you can delete it completely.\n- When reporting results, be accurate about what you verified vs. what you assumed. Distinguish between what you confirmed (ran a command, read a file) and what you believe but did not check. Do not assert assumptions as facts.\n- If the user asks for help or wants to give feedback inform them of the following:\n  - /help: Get help with using Claude Code\n  - To give feedback, users should <filled in at run time>\n```\n\nThe item on verified and assumed is included only when a flag passed to the builder is on.\n\n## To look into\n\n- What `lean_body` says. It may carry some of the same guidance in other words. Nobody has read it yet.\n- How the full prompt behaves on Opus 5.5. Setting `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=0` in the entry's `env` turns it on, and Claude Code's output styles page names that switch. It swaps the whole prompt, not one section.\n- Which items, if any, belong in `CLAUDE.md` or the coax style. Items placed there would apply under either prompt. Some already overlap with Jack's `CLAUDE.md` and his `rust-comments` and `concrete-first` skills, such as no comments by default and no abstraction beyond the task.\n- Whether a newer adapter changes any of this. v0.112.0 is out.",
   "type": "spike",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T04:53:49.279007464Z",
-  "updated_at": "2026-11-26T20:22:31.096152048Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T22:24:06.360444332Z",
+  "closed_at": "2026-11-26T22:24:06.360444332Z",
+  "close_reason": "Jack does not want Claude Code's coding guidelines in coax sessions. The research notes stay here, and they cover coax-413c4b's question about the system prompt field too.",
+  "resolution": "dropped",
   "notes": [
     {
       "id": "14909bb5",
@@ -40,6 +40,9 @@
       "commit": "4468c62",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "51b776c",
+      "branch": "dev"
+    }
   }
 }
