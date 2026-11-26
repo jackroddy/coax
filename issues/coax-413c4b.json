@@ -1,0 +1,28 @@
+{
+  "id": "coax-413c4b",
+  "title": "coax sends its style to the agent as an appended system prompt",
+  "body": "coax's style lives in `styles/coax.md` as a Claude Code output style. It reaches the agent only through the trial profile, whose `settings.json` sets `outputStyle` to `Coax`. So only Claude gets it, and only when it runs in that profile. The style describes what coax draws, which every agent needs to know.\n\nACP has an unstable field for this. `agent-client-protocol-schema` 1.15.1, which coax already depends on, gives `NewSessionRequest` and `LoadSessionRequest` a `system_prompt` behind the feature `unstable_session_system_prompt`. A client may send it only when the agent advertises `sessionCapabilities.systemPrompt`. Its `SystemPromptMode` has two named modes:\n\n- `append` adds the client's text to the agent's own instructions. The schema asks agents to give it system-level precedence. Every agent that advertises the capability supports it.\n- `override` replaces the agent's default instructions. It needs a separate capability, and coax has no use for it.\n\nOn `session/load` the schema says clients SHOULD send the same value they used when the session was created.\n\n## Proposal\n\nWhen the agent advertises `sessionCapabilities.systemPrompt`, coax sends the style as `system_prompt` in `append` mode on `session/new` and `session/load`. When it does not, coax sends nothing, and the agent's own setup decides how it writes. coax needs no code that knows which agent is on the other end.\n\nThis reverses the rejection in coax-3d286f, which turned down text sent at session start in favour of a real output style. Its reasons were these:\n\n- Two styles fighting, Dense plus coax's text. Jack no longer runs Claude Code outside coax, so Dense is out of the picture.\n- Keeping the style through long sessions and compaction. An append sits in the system prompt, which compaction does not rewrite. Nobody has tried it in a long session yet.\n\nA real output style can drop Claude Code's `# Doing tasks` section, and an append cannot. `styles/coax.md` keeps that section anyway, with `keep-coding-instructions: true`. Under the lean prompt the section is missing either way (coax-7643d1).\n\n## Cost\n\n- The profile the Claude entry runs in must stop setting `outputStyle`. Otherwise the style arrives twice.\n- `styles/coax.md` carries output style frontmatter, which coax would strip or the file would drop.\n- coax turns on an unstable ACP feature, which may change or go away.\n\n## Open\n\n- Whether adapter v0.101.0 advertises `sessionCapabilities.systemPrompt`. Its source reads an ACP `systemPrompt` and prefers it over `_meta.systemPrompt`, but the advertisement was not checked. v0.112.0 is out.\n- Whether the adapter adds an `append` to Claude Code's own prompt or replaces that prompt.\n- Where the text comes from. It could be compiled into coax from `styles/coax.md`, so the style always matches the build that draws it. Or it could be a path in `config.toml`, so a person can change it without rebuilding.\n- guise-2407d6 in guise's tracker manages Claude logins and setup per account. Once coax sends the style, guise no longer needs to carry it for coax.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T04:55:15.705367527Z",
+  "updated_at": "2026-11-26T04:55:15.705367527Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
