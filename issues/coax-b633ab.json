@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T07:41:03.76782635Z",
-  "updated_at": "2026-11-26T07:41:03.76782635Z",
+  "updated_at": "2026-11-26T19:40:30.415291955Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "37e48cf6",
+      "at": "2026-11-26T19:40:30.415291145Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "The status line's spinner, `◐◓◑◒` in `header::SPINNER`, is missing from JetBrainsMono Nerd Font, so ghostty draws it from a fallback font, like the old `▰▱` bar. The picker's new spinner is braille and is in the font. Its glyphs sit together in constants at the top of `src/picker.rs`.",
+      "commit": "a5ec44a",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4468c62",
