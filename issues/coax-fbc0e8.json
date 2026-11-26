@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T20:42:33.543226835Z",
   "defer_until": null,
   "created_at": "2026-11-25T21:42:36.303795033Z",
-  "updated_at": "2026-11-26T20:32:54.85333912Z",
+  "updated_at": "2026-11-26T21:02:59.122674043Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -31,6 +31,14 @@
       "at": "2026-11-26T20:32:54.85333838Z",
       "author": "Jack Roddy/df584c97",
       "text": "Prompt templates are built, uncommitted on `dev`:\n\n- `src/template.rs` holds `Template` (`text`, and an optional `description`). `Template::fill` turns `{{` and `}}` into single braces and lists the blank names in the order they first appear. `spots` finds where each blank sits in the prompt's text.\n- `config.toml` reads `[templates.<name>]` tables. A missing `text` or an unknown key is an error naming the file.\n- `/t` is a built-in coax command. Enter on `/t` fills `/t `, and the command list then shows the templates with their description, or with the text's first line when there is none. As with the other commands, the first Enter fills a template's name and the second chooses it. `/t <name>` with no such template shows \"no template <name>\".\n- Choosing a template replaces the prompt with its text. The template's blanks are drawn underlined in the accent colour, and the cursor sits on the first one. `App::chosen_blank` records the blank the cursor is on. A typed character or a paste replaces that blank, and Backspace or Delete removes it whole. Tab and Shift+Tab go to the next and the previous blank, coming round at either end. Any other key leaves the blank as it is.\n- Enter while a blank is unfilled sends nothing. It shows \"fill in {name} first\" and puts the cursor on that blank. A template with no blanks is sent as soon as it is chosen. Ctrl+U and a send forget the template's blanks.\n\n## Open\n\n- An escaped `{{x}}` whose `x` is also one of the template's blanks becomes `{x}` in the prompt and counts as that blank.\n- A list blank is ordinary text, typed one item per line with Alt+Enter. Nothing shapes it into a list.\n- The README does not mention templates. Its config section is Jack's.",
+      "commit": "e30bc1d",
+      "branch": "dev"
+    },
+    {
+      "id": "aad6b60c",
+      "at": "2026-11-26T21:02:59.122673273Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Jack asked for a second way in, and for two changes that reach every command:\n\n- `/t` then Enter opens a list box of every template with its description, like `/history`'s. `j`/`k` or the arrow keys move, Enter chooses and Esc closes.\n- Tab completes a command name from the command list. Tab again cycles through the matches in list order, and Shift+Tab goes back. This holds for every `/` and `//` command, template names after `/t ` included.\n- Enter on a complete command name runs it at once, where it used to take one Enter to fill in the name and a second to run it. Enter on a prefix that matches exactly one command runs that one. `//` agent commands still open their confirmation box before anything is sent.\n\nThe single Enter changes how an existing key behaves, so the next release moves the minor.",
       "commit": "e30bc1d",
       "branch": "dev"
     }
