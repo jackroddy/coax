@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T20:37:00.691022739Z",
   "defer_until": null,
   "created_at": "2026-11-26T07:41:03.76782635Z",
-  "updated_at": "2026-11-26T20:22:00.70185418Z",
+  "updated_at": "2026-11-26T20:27:10.031351238Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -31,6 +31,14 @@
       "at": "2026-11-26T20:22:00.70185352Z",
       "author": "Jack Roddy/df584c97",
       "text": "Jack decided: under `glyphs = \"ascii\"` the rounded message borders become `+`, `-` and `|` boxes. He left the other stand-ins to the implementer.",
+      "commit": "e30bc1d",
+      "branch": "dev"
+    },
+    {
+      "id": "e9e39bf2",
+      "at": "2026-11-26T20:27:10.031350428Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Landed uncommitted in the tree. `src/glyphs.rs` holds a `Glyphs` enum, `Unicode` or `Ascii`, set once at startup like the palette: `glyphs::init` takes `detect(config.glyphs, env)`, and `glyphs::get` reads it. The config's `glyphs` key wins. Without it, coax looks at the first non-empty of `LC_ALL`, `LC_CTYPE` and `LANG`, and draws ASCII unless that names UTF-8 or utf8. `TERM=linux` draws ASCII in any locale. A raw agent command reads no config, so only the environment decides there.\n\nRather than a second glyph set threaded through every drawing function, `glyphs::fold` rewrites each finished frame's cells through one table, `glyphs::stand_in`, just before the terminal shows it. That one pass covers coax's own symbols, ratatui's rounded borders and cmr's markdown, which draws `─ │ ┼ • ┌ … ┆ ▪`. Every stand-in is one column, so no width math changes. The chips stay `①` to `⑳` in the prompt's text and in what is sent, and only their cells are drawn as `1` to `9`, then `A` to `K`. Text an agent sends that holds one of the table's characters is drawn folded too.\n\n| stand-in | characters |\n|---|---|\n| `+` | `╭ ╮ ╰ ╯ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼`, the edit icon `±`, the mode setting `◆`, a finished run's `✓` |\n| `-` | `─ ┄ ┈`, the minus `−` |\n| `=` | `━` (context bar fill, scroll and pan thumbs, the prompt rule), the read icon `≡` |\n| `\\|` | `│ ┆ ▌` |\n| `#` | `┃` (the conversation's scroll thumb), a checked `■` |\n| `?` | the search icon `◎` |\n| `x` | the delete icon `⌫`, a failure `✗` |\n| `>` | `➜ › ▸` |\n| `$` | the run icon `❯` |\n| `v` | `↓ ▾` |\n| `^` | `↑` |\n| `:` | the think icon `∴` |\n| `~` | the mode icon `◇` |\n| `*` | `• ▪ ● ✻` |\n| `o` | `○` |\n| `_` | an unchecked `□` |\n| `c` | the copy button `⧉` |\n| `.` | `⋯ … ·` |\n| spinner frames | `◐ ◓ ◑ ◒`, `◴ ◷ ◶ ◵` and the braille frames each map to one of `\\| / - \\` in turn |\n| `1`–`9`, `A`–`K` | the chips `①`–`⑳` |\n\nKnown rough edges. `◐` is both a status-spinner frame and the effort setting's icon, so the effort setting shows `|`. `◷` is both an agent-spinner frame and the \"last turn\" mark, so that mark shows `/`. A scenario's mouse steps aim at the text on screen, so `scenarios/readme/tour.json`, which clicks `⧉`, plays only in Unicode. The README does not mention the key yet. Its config section is Jack's.",
       "commit": "e30bc1d",
       "branch": "dev"
     }
