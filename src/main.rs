@@ -9,6 +9,8 @@ use coax::config::Config;
 use coax::links::LinksConfig;
 use coax::log;
 use coax::picker::Choice;
+use coax::playback::Player;
+use coax::scenario::Scenario;
 use coax::{acp, app, picker, report};
 use serde_json::json;
 use tokio::task::LocalSet;
@@ -22,6 +24,7 @@ struct Options {
     auto_allow: bool,
     launch: Launch,
     session: Option<String>,
+    input: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -36,6 +39,8 @@ fn parse(mut args: Vec<String>) -> Option<Options> {
     let mut auto_allow = false;
     let mut agent = None;
     let mut session = None;
+    #[cfg_attr(not(feature = "fake-agent"), allow(unused_mut))]
+    let mut input = None;
     loop {
         match args.first().map(String::as_str) {
             Some("--prompt") if args.len() > 1 => {
@@ -53,6 +58,11 @@ fn parse(mut args: Vec<String>) -> Option<Options> {
             Some("--allow") => {
                 auto_allow = true;
                 args.remove(0);
+            }
+            #[cfg(feature = "fake-agent")]
+            Some("--input") if args.len() > 1 => {
+                input = Some(args[1].clone());
+                args.drain(..2);
             }
             _ => break,
         }
@@ -72,6 +82,7 @@ fn parse(mut args: Vec<String>) -> Option<Options> {
         auto_allow,
         launch,
         session,
+        input,
     })
 }
 
@@ -99,12 +110,24 @@ fn logged_args(mut args: Vec<String>) -> Vec<String> {
                 args[at + 1] = "<prompt>".to_string();
                 at += 2;
             }
-            "--agent" | "--session" => at += 2,
+            "--agent" | "--session" | "--input" => at += 2,
             "--allow" => at += 1,
             _ => break,
         }
     }
     args
+}
+
+/// The keys a scenario file's `input` types in.
+fn player(path: Option<&str>) -> Player {
+    let Some(path) = path else {
+        return Player::default();
+    };
+    let json =
+        std::fs::read_to_string(path).unwrap_or_else(|error| fail(2, &format!("{path}: {error}")));
+    let scenario =
+        Scenario::parse(&json).unwrap_or_else(|error| fail(2, &format!("{path}: {error}")));
+    Player::new(scenario.input).unwrap_or_else(|error| fail(2, &format!("{path}: {error}")))
 }
 
 fn fail(code: i32, message: &str) -> ! {
@@ -139,6 +162,7 @@ async fn main() {
         first_prompt: options.first_prompt,
         auto_allow: options.auto_allow,
         keys: app::key_thread(),
+        player: player(options.input.as_deref()),
         links: LinksConfig::default(),
         registry: None,
         resume_args,
@@ -202,9 +226,15 @@ async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), 
     opening.links = config.links.clone();
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
     let mut agents = Agents::start(config, &cwd);
-    let choice = picker::pick(config, path, &mut agents.listings, &mut opening.keys)
-        .await
-        .map_err(Error::into_internal_error)?;
+    let choice = picker::pick(
+        config,
+        path,
+        &mut agents.listings,
+        &mut opening.keys,
+        &mut opening.player,
+    )
+    .await
+    .map_err(Error::into_internal_error)?;
     match &choice {
         Choice::Quit => log::info("picker", json!({"choice": "quit"})),
         Choice::Agent(name) => log::info("picker", json!({"choice": "new", "agent": name})),

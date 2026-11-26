@@ -19,6 +19,7 @@ use crate::app::Keys;
 use crate::config::Config;
 use crate::header;
 use crate::palette;
+use crate::playback::Player;
 use crate::ui;
 
 /// How long the picker waits for the agents' session lists before its first
@@ -443,6 +444,7 @@ pub async fn pick<'a>(
     path: &'a Path,
     listings: &mut UnboundedReceiver<Listing>,
     keys: &mut Keys,
+    player: &mut Player,
 ) -> io::Result<Choice<'a>> {
     let mut picker = Picker::new(config, path);
     let mut reported = HashSet::new();
@@ -458,10 +460,14 @@ pub async fn pick<'a>(
     }
     let mut terminal = ratatui::init();
     let mut listing_open = true;
+    let mut screen = ratatui::buffer::Buffer::default();
     let result = loop {
-        if let Err(error) = terminal.draw(|frame| picker.draw(frame, now())) {
-            break Err(error);
+        match terminal.draw(|frame| picker.draw(frame, now())) {
+            Ok(frame) if player.due().is_some() => screen = frame.buffer.clone(),
+            Ok(_) => {}
+            Err(error) => break Err(error),
         }
+        let played = player.due();
         tokio::select! {
             key = keys.recv() => match key {
                 Some(Ok(Event::Key(key))) => {
@@ -472,6 +478,13 @@ pub async fn pick<'a>(
                 Some(Ok(_)) => {}
                 Some(Err(error)) => break Err(error),
                 None => break Ok(Choice::Quit),
+            },
+            () = async { tokio::time::sleep_until(played.unwrap().into()).await }, if played.is_some() => {
+                if let Some(Event::Key(key)) = player.next(std::time::Instant::now(), true, &screen)
+                    && let Some(choice) = picker.key(key)
+                {
+                    break Ok(choice);
+                }
             },
             listing = listings.recv(), if listing_open => match listing {
                 Some(listing) => picker.listing(listing),

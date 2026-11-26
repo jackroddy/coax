@@ -1391,8 +1391,53 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
         .map(|(key, _)| *key);
     let today = Time::now();
     let mut starts = Vec::new();
+    let runs = tool_runs(&app.transcript.entries);
+    let spin = app.spinner;
+    let mut folded_until = 0;
+    let mut open_run: Option<Range<usize>> = None;
     for (index, entry) in app.transcript.entries.iter().enumerate() {
         starts.push(lines.len());
+        if index < folded_until {
+            continue;
+        }
+        if open_run.as_ref().is_some_and(|run| index >= run.end) {
+            open_run = None;
+        }
+        if let Some(run) = runs.iter().find(|run| run.start == index) {
+            let tools: Vec<&Tool> = app.transcript.entries[run.clone()]
+                .iter()
+                .filter_map(|entry| match entry {
+                    Entry::Tool(tool) => Some(tool),
+                    _ => None,
+                })
+                .collect();
+            let id = group_id(tools[0]);
+            let expanded = app.expanded.contains(&id);
+            let hovered = app.hover_fold.as_ref() == Some(&id);
+            folds.push(Fold {
+                id,
+                first: lines.len(),
+                height: 1,
+                rows: 1,
+            });
+            lines.push_text(
+                group_row(&tools, usable, spin, expanded, hovered),
+                MARKER_WIDTH + 2,
+                cmr::Join::Break,
+            );
+            if !expanded {
+                lines.push_text(Line::default(), 0, cmr::Join::Break);
+                folded_until = run.end;
+                continue;
+            }
+            open_run = Some(run.clone());
+        }
+        let indent = if open_run.is_some() {
+            RUN_INDENT.len()
+        } else {
+            0
+        };
+        let first_row = lines.len();
         match entry {
             Entry::User(prompt) => {
                 let drawn = bubble(prompt, today, width);
@@ -1663,8 +1708,15 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
             Entry::Tool(tool) => {
                 let expanded = app.expanded.contains(&tool.id);
                 let hovered = app.hover_fold.as_ref() == Some(&tool.id);
-                let (rows, head) =
-                    tool_view(tool, &app.cwd, usable, expanded, hovered, &mut app.rendered);
+                let (rows, head) = tool_view(
+                    tool,
+                    &app.cwd,
+                    usable.saturating_sub(indent),
+                    spin,
+                    expanded,
+                    hovered,
+                    &mut app.rendered,
+                );
                 if expandable(tool) {
                     folds.push(Fold {
                         id: tool.id.clone(),
@@ -1676,7 +1728,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 lines.append(rows);
             }
             Entry::Permission { choice, .. } => {
-                let pad = width.saturating_sub(choice.width());
+                let pad = width.saturating_sub(indent + choice.width());
                 let line = Line::from(vec![
                     Span::raw(" ".repeat(pad)),
                     Span::styled(choice.clone(), Style::new().fg(palette::get().accent)),
@@ -1691,7 +1743,18 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 lines.push_text(line, pad, cmr::Join::Break);
             }
         }
-        lines.push_text(Line::default(), 0, cmr::Join::Break);
+        if indent > 0 {
+            for row in &mut lines.lines[first_row..] {
+                row.spans.insert(0, Span::raw(RUN_INDENT));
+            }
+            for text in lines.texts[first_row..].iter_mut().flatten() {
+                text.col += indent;
+            }
+        }
+        let inside = open_run.as_ref().is_some_and(|run| index + 1 < run.end);
+        if !inside {
+            lines.push_text(Line::default(), 0, cmr::Join::Break);
+        }
     }
     Built {
         lines,
@@ -2234,84 +2297,98 @@ fn wrapped(
     }
 }
 
-fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> Drawn {
-    let word = if tool.agent {
+fn tool_block(tool: &Tool, cwd: &Path, width: usize, spin: usize) -> Drawn {
+    tool_rows(tool, cwd, width, spin, "")
+}
+
+/// A tool call's row: its icon, its kind, its title, then where it acted,
+/// its diff and how it ended, as far as they fit. `suffix` goes dim after
+/// the title. `spin` is the spinner's frame count.
+fn tool_rows(tool: &Tool, cwd: &Path, width: usize, spin: usize, suffix: &str) -> Drawn {
+    let (glyph, style) = tool_icon(tool);
+    let palette = palette::get();
+    let icon = if tool.cancelled {
+        Span::styled(format!("{glyph} "), dim())
+    } else {
+        match tool.status {
+            ToolCallStatus::InProgress => {
+                let frame = header::SPINNER[spin % header::SPINNER.len()];
+                Span::styled(format!("{frame} "), style)
+            }
+            ToolCallStatus::Completed => Span::styled(format!("{glyph} "), style),
+            ToolCallStatus::Failed => Span::styled("✗ ", Style::new().fg(palette.red)),
+            _ => Span::styled(format!("{glyph} "), dim()),
+        }
+    };
+    let mark = icon.width();
+    let word = if tool.agent || !tool.children.is_empty() {
         "agent"
     } else {
         kind_word(tool.kind)
     };
-    tool_rows(tool, cwd, width, word, "")
-}
-
-/// A tool call's head: the dot row, and a row under it unless the call is
-/// done with nothing to add. `word` goes in the kind column and `suffix` dim
-/// after the title.
-fn tool_rows(tool: &Tool, cwd: &Path, width: usize, word: &str, suffix: &str) -> Drawn {
-    let (dot, status, status_style) = match tool.status {
-        ToolCallStatus::InProgress => (
-            Style::new().fg(palette::get().yellow),
-            "running…",
-            Style::new().fg(palette::get().yellow),
-        ),
-        ToolCallStatus::Completed => (Style::new().fg(palette::get().green), "done", dim()),
-        ToolCallStatus::Failed => (
-            Style::new().fg(palette::get().red),
-            "failed",
-            Style::new().fg(palette::get().red),
-        ),
-        _ => (dim(), "pending", dim()),
-    };
-    let (dot, status, status_style) = if tool.cancelled {
-        (dim(), "cancelled", dim())
-    } else {
-        (dot, status, status_style)
-    };
-    let dot = Span::styled("● ", dot);
-    let mark = dot.width();
-    let head = [
-        dot,
-        Span::styled(format!("{word:<6}"), bold()),
+    let mut row = vec![
+        icon,
+        Span::styled(format!("{word:<6}"), style.add_modifier(Modifier::BOLD)),
         Span::raw(" "),
     ];
-    let room = width.saturating_sub(head.iter().map(Span::width).sum::<usize>() + suffix.width());
-    let mut first = head.to_vec();
-    first.push(Span::raw(cut(&tool.title, room)));
-    first.push(Span::styled(suffix.to_string(), dim()));
 
-    let lead = Span::styled("  ⎿  ", dim());
-    let lead_width = lead.width();
-    let room = width.saturating_sub(lead_width);
-    let mut second = vec![lead];
-    let mut detail = Vec::new();
+    let mut tail = Vec::new();
     let (added, removed) = tool.changed;
-    let mut used = 0;
     if added + removed > 0 {
-        let plus = format!("+{added}");
-        let minus = format!(" −{removed}");
-        used = plus.width() + minus.width();
-        detail.push(Span::styled(plus, Style::new().fg(palette::get().green)));
-        detail.push(Span::styled(minus, Style::new().fg(palette::get().red)));
+        tail.push(Span::raw("  "));
+        tail.push(Span::styled(
+            format!("+{added}"),
+            Style::new().fg(palette.green),
+        ));
+        tail.push(Span::styled(
+            format!(" −{removed}"),
+            Style::new().fg(palette.red),
+        ));
     }
+    if tool.cancelled {
+        tail.push(Span::styled("  cancelled", dim()));
+    } else if matches!(tool.status, ToolCallStatus::Pending) {
+        tail.push(Span::styled("  pending", dim()));
+    }
+    let fixed = row.iter().map(Span::width).sum::<usize>()
+        + suffix.width()
+        + tail.iter().map(Span::width).sum::<usize>();
+    let room = width.saturating_sub(fixed);
+    let title = cut(&tool.title, room);
 
     // the location gives way when the row cannot hold it
-    let place = location(tool, cwd).filter(|place| place.width() + 2 + used <= room);
+    let left = room.saturating_sub(title.width());
+    let place = location(tool, cwd).filter(|place| place.width() + 2 <= left);
+    row.push(Span::raw(title));
     if let Some(place) = place {
-        second.push(Span::styled(place, dim()));
-        if used > 0 {
-            second.push(Span::raw("  "));
-        }
+        row.push(Span::styled(format!("  {place}"), dim()));
     }
-    second.extend(detail);
+    row.push(Span::styled(suffix.to_string(), dim()));
+    row.extend(tail);
     let mut rows = Drawn::default();
-    rows.push_text(Line::from(first), mark, cmr::Join::Break);
-    if second.len() == 1 {
-        if tool.status == ToolCallStatus::Completed {
-            return rows;
-        }
-        second.push(Span::styled(status, status_style));
-    }
-    rows.push_text(Line::from(second), lead_width, cmr::Join::Break);
+    rows.push_text(Line::from(row), mark, cmr::Join::Break);
     rows
+}
+
+/// A call's icon and the colour its icon and kind share.
+fn tool_icon(tool: &Tool) -> (&'static str, Style) {
+    let palette = palette::get();
+    let colour = |colour| Style::new().fg(colour);
+    if tool.agent || !tool.children.is_empty() {
+        return ("•", dim());
+    }
+    match tool.kind {
+        ToolKind::Read => ("≡", colour(palette.blue)),
+        ToolKind::Search => ("◎", colour(palette.cyan)),
+        ToolKind::Edit => ("±", colour(palette.yellow)),
+        ToolKind::Delete => ("⌫", colour(palette.orange)),
+        ToolKind::Move => ("➜", colour(palette.blue)),
+        ToolKind::Execute => ("❯", colour(palette.magenta)),
+        ToolKind::Fetch => ("↓", colour(palette.cyan)),
+        ToolKind::Think => ("∴", dim()),
+        ToolKind::SwitchMode => ("◇", colour(palette.accent)),
+        _ => ("•", dim()),
+    }
 }
 
 /// Whether a click on the call shows more of it: a subagent's work, an edit's
@@ -2350,53 +2427,186 @@ fn tool_view(
     tool: &Tool,
     cwd: &Path,
     width: usize,
+    spin: usize,
     expanded: bool,
     hovered: bool,
     rendered: &mut Rendered,
 ) -> (Drawn, usize) {
+    let room = width.saturating_sub(MARKER_WIDTH);
     if !expandable(tool) {
-        let lines = tool_block(tool, cwd, width);
+        let mut lines = tool_block(tool, cwd, room, spin);
         let head = lines.len();
+        behind_marker(&mut lines, None);
         return (lines, head);
     }
 
-    // two columns go to the marker at the end of the title row
-    let room = width.saturating_sub(2);
     let (mut lines, head) = if tool.children.is_empty() {
-        let lines = tool_block(tool, cwd, room);
+        let lines = tool_block(tool, cwd, room, spin);
         let head = lines.len();
         (lines, head)
     } else {
-        let head = subagent_head(tool, cwd, room).len();
-        (subagent_block(tool, cwd, room, expanded), head)
+        let head = subagent_head(tool, cwd, room, spin).len();
+        (subagent_block(tool, cwd, room, spin, expanded), head)
     };
-    lines.lines[0] = with_marker(lines.lines[0].clone(), width, expanded, hovered);
     if expanded && tool.children.is_empty() {
-        let inner = width.saturating_sub(SUBAGENT_INDENT.len());
+        let inner = room.saturating_sub(SUBAGENT_INDENT.len());
         lines.extend(rendered.expanded(tool, inner));
     }
+    behind_marker(&mut lines, Some(marker(expanded, hovered)));
     (lines, head)
 }
 
-/// `title` with the fold marker in column `width`: `▸` folded, `▾` expanded,
-/// dim until the block is hovered.
-fn with_marker(
-    mut title: Line<'static>,
+/// The runs of two or more tool calls in a row, as ranges of entries from
+/// the first call to the last. A permission row stays inside a run, and any
+/// other entry ends it.
+fn tool_runs(entries: &[Entry]) -> Vec<Range<usize>> {
+    let mut runs = Vec::new();
+    let mut run: Option<(usize, usize, usize)> = None;
+    for (index, entry) in entries.iter().enumerate() {
+        match entry {
+            Entry::Tool(_) => {
+                let (start, _, count) = run.unwrap_or((index, index, 0));
+                run = Some((start, index, count + 1));
+            }
+            Entry::Permission { .. } => {}
+            _ => {
+                if let Some((start, last, count)) = run.take()
+                    && count > 1
+                {
+                    runs.push(start..last + 1);
+                }
+            }
+        }
+    }
+    if let Some((start, last, count)) = run
+        && count > 1
+    {
+        runs.push(start..last + 1);
+    }
+    runs
+}
+
+/// The fold key of the run that starts with `first`, apart from the key of
+/// `first`'s own fold.
+fn group_id(first: &Tool) -> ToolCallId {
+    ToolCallId::new(format!("group:{}", first.id.0))
+}
+
+/// A run of tool calls folded into one row: how the run stands, the number
+/// of calls, a count of each kind in its colour, their diffs added up, the
+/// failures, and the call in progress. `spin` is the spinner's frame count.
+fn group_row(
+    tools: &[&Tool],
     width: usize,
+    spin: usize,
     expanded: bool,
     hovered: bool,
 ) -> Line<'static> {
+    let palette = palette::get();
+    let running = tools.iter().find(|tool| {
+        !tool.cancelled
+            && matches!(
+                tool.status,
+                ToolCallStatus::InProgress | ToolCallStatus::Pending
+            )
+    });
+    let failed = tools
+        .iter()
+        .filter(|tool| tool.status == ToolCallStatus::Failed)
+        .count();
+    let icon = if failed > 0 {
+        Span::styled("✗ ", Style::new().fg(palette.red))
+    } else if running.is_some() {
+        let frame = header::SPINNER[spin % header::SPINNER.len()];
+        Span::styled(format!("{frame} "), Style::new().fg(palette.yellow))
+    } else {
+        Span::styled("✓ ", Style::new().fg(palette.green))
+    };
+    let mut kinds: Vec<(&str, Style, usize)> = Vec::new();
+    for tool in tools {
+        let word = if tool.agent || !tool.children.is_empty() {
+            "agent"
+        } else {
+            kind_word(tool.kind)
+        };
+        match kinds.iter_mut().find(|(seen, _, _)| *seen == word) {
+            Some((_, _, count)) => *count += 1,
+            None => kinds.push((word, tool_icon(tool).1, 1)),
+        }
+    }
+    let mut spans = vec![
+        icon,
+        Span::styled(format!("{} tools", tools.len()), bold()),
+        Span::raw("  "),
+    ];
+    let added: usize = tools.iter().map(|tool| tool.changed.0).sum();
+    let removed: usize = tools.iter().map(|tool| tool.changed.1).sum();
+    for (at, (word, style, count)) in kinds.iter().enumerate() {
+        if at > 0 {
+            spans.push(Span::styled(" · ", dim()));
+        }
+        spans.push(Span::styled(format!("{word} "), *style));
+        spans.push(Span::styled(
+            count.to_string(),
+            Style::new().fg(palette.foreground),
+        ));
+        if *word == "edit" && added + removed > 0 {
+            spans.push(Span::raw(" ("));
+            spans.push(Span::styled(
+                format!("+{added}"),
+                Style::new().fg(palette.green),
+            ));
+            spans.push(Span::styled(
+                format!(" −{removed}"),
+                Style::new().fg(palette.red),
+            ));
+            spans.push(Span::raw(")"));
+        }
+    }
+    if failed > 0 {
+        spans.push(Span::styled(
+            format!(" · {failed} failed"),
+            Style::new().fg(palette.red),
+        ));
+    }
+    if let Some(tool) = running {
+        let used = MARKER_WIDTH + spans.iter().map(Span::width).sum::<usize>() + 3;
+        let room = width.saturating_sub(used);
+        spans.push(Span::styled(
+            format!(" · {}", cut(&tool.title, room)),
+            dim(),
+        ));
+    }
+    spans.insert(0, marker(expanded, hovered));
+    Line::from(spans)
+}
+
+/// The columns the fold marker and the space after it take.
+const MARKER_WIDTH: usize = 2;
+
+/// The fold marker that leads a foldable row: `▸` folded, `▾` expanded,
+/// dim until the row is hovered.
+fn marker(expanded: bool, hovered: bool) -> Span<'static> {
     let style = if hovered {
         Style::new().fg(palette::get().accent)
     } else {
         dim()
     };
-    let gap = width.saturating_sub(1 + title.width());
-    title.spans.push(Span::raw(" ".repeat(gap)));
-    title
-        .spans
-        .push(Span::styled(if expanded { "▾" } else { "▸" }, style));
-    title
+    Span::styled(if expanded { "▾ " } else { "▸ " }, style)
+}
+
+/// Shift `lines` right by the marker's columns, with `marker` on the first
+/// row, or blank when the call does not fold.
+fn behind_marker(lines: &mut Drawn, marker: Option<Span<'static>>) {
+    let blank = || Span::raw(" ".repeat(MARKER_WIDTH));
+    for (at, row) in lines.lines.iter_mut().enumerate() {
+        let lead = match (&marker, at) {
+            (Some(marker), 0) => marker.clone(),
+            _ => blank(),
+        };
+        row.spans.insert(0, lead);
+    }
+    lines.indent(MARKER_WIDTH);
 }
 
 /// The unchanged lines kept either side of a change in a diff.
@@ -2482,15 +2692,15 @@ fn output_rows(content: &[ToolCallContent], width: usize) -> Drawn {
 
 /// A subagent's call: folded to its two rows, or expanded with what the
 /// subagent did indented under it.
-fn subagent_block(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> Drawn {
-    let mut lines = subagent_head(tool, cwd, width);
+fn subagent_block(tool: &Tool, cwd: &Path, width: usize, spin: usize, expanded: bool) -> Drawn {
+    let mut lines = subagent_head(tool, cwd, width, spin);
     if !expanded {
         return lines;
     }
     let inner = width.saturating_sub(SUBAGENT_INDENT.len());
     for child in &tool.children {
         let mut rows = match child {
-            Child::Tool(call) => tool_block(call, cwd, inner),
+            Child::Tool(call) => tool_block(call, cwd, inner, spin),
             Child::Text(text) => {
                 let mut rows = Drawn::default();
                 wrapped(
@@ -2524,13 +2734,16 @@ fn subagent_block(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> Draw
     lines
 }
 
-fn subagent_head(tool: &Tool, cwd: &Path, width: usize) -> Drawn {
+fn subagent_head(tool: &Tool, cwd: &Path, width: usize, spin: usize) -> Drawn {
     let count = tool.tool_count();
     let noun = if count == 1 { "tool" } else { "tools" };
-    tool_rows(tool, cwd, width, "agent", &format!("  {count} {noun}"))
+    tool_rows(tool, cwd, width, spin, &format!("  {count} {noun}"))
 }
 
 const SUBAGENT_INDENT: &str = "    ";
+
+/// How far an unfolded run's calls sit in from its row.
+const RUN_INDENT: &str = "    ";
 
 fn kind_word(kind: ToolKind) -> &'static str {
     match kind {
@@ -3392,7 +3605,7 @@ mod tests {
     }
 
     fn rows(tool: &Tool, width: usize) -> Vec<String> {
-        tool_block(tool, Path::new("/work"), width)
+        tool_block(tool, Path::new("/work"), width, 0)
             .lines
             .into_iter()
             .map(|line| line.to_string())
@@ -3403,40 +3616,62 @@ mod tests {
     fn a_tool_title_too_long_for_the_row_is_cut_with_an_ellipsis() {
         let tool = tool("Read a/very/long/path/to/some/file.rs", "/work/x.rs", None);
         let rows = rows(&tool, 30);
-        assert_eq!(rows[0], "● read   Read a/very/long/pat…");
+        assert_eq!(rows, ["≡ read   Read a/very/long/pat…"]);
         assert_eq!(rows[0].chars().count(), 30);
-        assert_eq!(rows[1], "  ⎿  x.rs");
+    }
+
+    #[test]
+    fn each_kind_of_call_has_its_own_icon_and_its_name_takes_the_icon_colour() {
+        let palette = palette::get();
+        let mut call = tool("x", "/work/x", None);
+        call.locations.clear();
+        for (kind, glyph, colour) in [
+            (ToolKind::Read, "≡", Some(palette.blue)),
+            (ToolKind::Search, "◎", Some(palette.cyan)),
+            (ToolKind::Edit, "±", Some(palette.yellow)),
+            (ToolKind::Delete, "⌫", Some(palette.orange)),
+            (ToolKind::Move, "➜", Some(palette.blue)),
+            (ToolKind::Execute, "❯", Some(palette.magenta)),
+            (ToolKind::Fetch, "↓", Some(palette.cyan)),
+            (ToolKind::Think, "∴", dim().fg),
+            (ToolKind::SwitchMode, "◇", Some(palette.accent)),
+            (ToolKind::Other, "•", dim().fg),
+        ] {
+            call.kind = kind;
+            let line = &tool_block(&call, Path::new("/work"), 60, 0).lines[0];
+            assert_eq!(line.spans[0].content, format!("{glyph} "));
+            assert_eq!(line.spans[0].style.fg, colour, "{kind:?}");
+            assert_eq!(line.spans[1].style.fg, colour, "{kind:?}");
+        }
     }
 
     #[test]
     fn the_location_is_dropped_when_the_title_already_names_the_file() {
         let shown = tool("Read src/main.rs", "/work/src/main.rs", Some(3));
-        assert_eq!(rows(&shown, 80), ["● read   Read src/main.rs"]);
+        assert_eq!(rows(&shown, 80), ["≡ read   Read src/main.rs"]);
         let other = tool("Read the entry point", "/work/src/main.rs", Some(3));
-        assert_eq!(rows(&other, 80)[1], "  ⎿  src/main.rs:3");
+        assert_eq!(
+            rows(&other, 80),
+            ["≡ read   Read the entry point  src/main.rs:3"]
+        );
     }
 
     #[test]
     fn the_location_gives_way_when_the_row_cannot_hold_it() {
         let tool = tool("Read the entry point", "/work/src/main.rs", Some(3));
-        assert_eq!(rows(&tool, 15), ["● read   Read …"]);
+        assert_eq!(rows(&tool, 15), ["≡ read   Read …"]);
     }
 
     #[test]
-    fn an_edit_shows_its_size_after_the_location() {
+    fn an_edit_shows_its_location_and_its_size_on_its_own_row() {
         let mut edit = tool("Write the notes", "/work/NOTES.md", None);
+        edit.kind = ToolKind::Edit;
         edit.content = vec![ToolCallContent::Diff(Diff::new("NOTES.md", "a\nb\n"))];
         edit.changed = crate::diff::size(&edit.content);
-        assert_eq!(rows(&edit, 80)[1], "  ⎿  NOTES.md  +2 −0");
-    }
-
-    #[test]
-    fn a_tool_with_nothing_to_show_names_its_status() {
-        let mut pending = tool("Read src/main.rs", "/work/src/main.rs", None);
-        pending.status = ToolCallStatus::InProgress;
-        assert_eq!(rows(&pending, 80)[1], "  ⎿  running…");
-        pending.status = ToolCallStatus::Failed;
-        assert_eq!(rows(&pending, 80)[1], "  ⎿  failed");
+        assert_eq!(
+            rows(&edit, 80),
+            ["± edit   Write the notes  NOTES.md  +2 −0"]
+        );
     }
 
     #[test]
@@ -4344,13 +4579,13 @@ mod tests {
         edit.content = diff_of(Some("a"), "b");
         edit.changed = crate::diff::size(&edit.content);
         let cwd = Path::new("/work");
-        let (folded, head) = tool_view(&edit, cwd, 60, false, false, &mut Rendered::default());
+        let (folded, head) = tool_view(&edit, cwd, 60, 0, false, false, &mut Rendered::default());
         let folded = folded.lines;
-        assert_eq!((folded.len(), head), (2, 2));
-        let (open, head) = tool_view(&edit, cwd, 60, true, false, &mut Rendered::default());
+        assert_eq!((folded.len(), head), (1, 1));
+        let (open, head) = tool_view(&edit, cwd, 60, 0, true, false, &mut Rendered::default());
         let open = open.lines;
-        assert_eq!(head, 2);
-        assert_eq!(&plain(&open)[2..], ["    - a", "    + b"]);
+        assert_eq!(head, 1);
+        assert_eq!(&plain(&open)[1..], ["      - a", "      + b"]);
     }
 
     fn text_content(text: &str) -> Vec<ToolCallContent> {
@@ -4367,6 +4602,7 @@ mod tests {
             &run,
             Path::new("/work"),
             60,
+            0,
             true,
             false,
             &mut Rendered::default(),
@@ -4375,17 +4611,83 @@ mod tests {
         assert_eq!(head, 1);
         assert_eq!(
             &plain(&open)[1..],
-            ["    ┌ console", "    │ $ cargo run", "    │ hello"]
+            ["      ┌ console", "      │ $ cargo run", "      │ hello"]
         );
     }
 
-    fn last_cell(line: &Line) -> (String, Style) {
-        let span = line.spans.last().unwrap();
-        (span.content.chars().last().unwrap().to_string(), span.style)
+    fn read(id: &str) -> Entry {
+        let mut call = tool("Read src/a.rs", "/work/src/a.rs", None);
+        call.id = ToolCallId::new(id.to_string());
+        Entry::Tool(call)
     }
 
     #[test]
-    fn a_folded_expandable_call_ends_its_title_row_with_a_dim_right_marker() {
+    fn a_run_is_two_or_more_calls_in_a_row_and_a_thought_or_a_reply_ends_it() {
+        let entries = vec![
+            read("a"),
+            read("b"),
+            Entry::Thought("blah".to_string()),
+            read("c"),
+            Entry::Agent(Message::new("blah".into(), None)),
+            read("d"),
+            Entry::Permission {
+                title: "Read".to_string(),
+                choice: "Allow once".to_string(),
+            },
+            read("e"),
+        ];
+        assert_eq!(tool_runs(&entries), [0..2, 5..8]);
+    }
+
+    #[test]
+    fn a_finished_run_folds_into_its_count_and_its_kinds_with_the_diff_beside_the_edits() {
+        let mut edit = tool("Edit src/a.rs", "/work/src/a.rs", None);
+        edit.kind = ToolKind::Edit;
+        edit.changed = (2, 1);
+        let mut run = tool("cargo run", "/work", None);
+        run.kind = ToolKind::Execute;
+        let first = tool("Read src/a.rs", "/work/src/a.rs", None);
+        let calls = [&first, &first, &edit, &run];
+        let line = group_row(&calls, 60, 0, false, false).to_string();
+        assert_eq!(line, "▸ ✓ 4 tools  read 2 · edit 1 (+2 −1) · run 1");
+    }
+
+    #[test]
+    fn a_runs_counts_are_in_the_foreground_and_their_kinds_in_the_kind_colour() {
+        let mut edit = tool("Edit src/a.rs", "/work/src/a.rs", None);
+        edit.kind = ToolKind::Edit;
+        let read = tool("Read src/a.rs", "/work/src/a.rs", None);
+        let line = group_row(&[&read, &edit], 60, 0, false, false);
+        let palette = palette::get();
+        let colour = |text: &str| {
+            line.spans
+                .iter()
+                .find(|span| span.content == text)
+                .and_then(|span| span.style.fg)
+        };
+        assert_eq!(colour("read "), Some(palette.blue));
+        assert_eq!(colour("edit "), Some(palette.yellow));
+        assert_eq!(colour("1"), Some(palette.foreground));
+    }
+
+    #[test]
+    fn a_running_run_names_the_call_in_progress_and_counts_its_failures() {
+        let mut failed = tool("Read src/a.rs", "/work/src/a.rs", None);
+        failed.status = ToolCallStatus::Failed;
+        let mut running = tool("Read src/b.rs", "/work/src/b.rs", None);
+        running.status = ToolCallStatus::InProgress;
+        let line = group_row(&[&failed, &running], 60, 0, false, false).to_string();
+        assert!(line.starts_with("▸ ✗ 2 tools  read 2 · 1 failed"), "{line}");
+        assert!(line.contains("read 2 · 1 failed · Read src/b.rs"), "{line}");
+    }
+
+    fn first_cell(line: &Line) -> (String, Style) {
+        let span = line.spans.first().unwrap();
+        (span.content.chars().next().unwrap().to_string(), span.style)
+    }
+
+    #[test]
+    fn a_folded_expandable_call_starts_its_title_row_with_a_dim_marker() {
         let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
@@ -4394,13 +4696,14 @@ mod tests {
             &edit,
             Path::new("/work"),
             40,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        assert_eq!(rows[0].width(), 40);
-        assert_eq!(last_cell(&rows[0]), ("▸".to_string(), dim()));
+        assert_eq!(first_cell(&rows[0]), ("▸".to_string(), dim()));
+        assert!(rows[0].to_string().starts_with("▸ ± edit"), "{}", rows[0]);
     }
 
     #[test]
@@ -4413,45 +4716,47 @@ mod tests {
             &edit,
             Path::new("/work"),
             40,
+            0,
             true,
             true,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        let (glyph, style) = last_cell(&rows[0]);
+        let (glyph, style) = first_cell(&rows[0]);
         assert_eq!(glyph, "▾");
         assert_eq!(style.fg, Some(palette::get().accent));
     }
 
     #[test]
-    fn a_subagent_call_has_the_marker_and_a_call_with_nothing_to_expand_has_none() {
+    fn a_subagent_call_has_the_marker_and_a_call_with_nothing_to_expand_has_two_blank_columns() {
         let (rows, head) = tool_view(
             &task(),
             Path::new("/work"),
             60,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        assert_eq!(head, 2);
-        assert!(rows[0].to_string().ends_with('▸'));
-        assert_eq!(rows[0].width(), 60);
+        assert_eq!(head, 1);
+        assert!(rows[0].to_string().starts_with("▸ "), "{}", rows[0]);
         let read = tool("Read src/main.rs", "/work/src/main.rs", None);
         let (rows, _) = tool_view(
             &read,
             Path::new("/work"),
             60,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        assert!(!rows[0].to_string().ends_with(['▸', '▾']));
+        assert!(rows[0].to_string().starts_with("  ≡ read"), "{}", rows[0]);
     }
 
     #[test]
-    fn a_long_title_is_cut_before_the_marker() {
+    fn a_long_title_is_cut_to_the_width_after_the_marker() {
         let mut edit = tool("Edit a/very/long/path/to/some/file.rs", "/work/x", None);
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
@@ -4460,14 +4765,15 @@ mod tests {
             &edit,
             Path::new("/work"),
             24,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        assert_eq!(rows[0].width(), 24);
+        assert!(rows[0].width() <= 24, "{}", rows[0]);
         assert!(rows[0].to_string().contains('…'));
-        assert!(rows[0].to_string().ends_with('▸'));
+        assert!(rows[0].to_string().starts_with('▸'));
     }
 
     #[test]
@@ -4493,24 +4799,26 @@ mod tests {
     }
 
     #[test]
-    fn a_done_call_with_nothing_to_add_has_no_status_row() {
+    fn a_done_call_is_one_row_led_by_its_kind_icon() {
         let mut quiet = tool("Read the entry point", "/work/x", None);
         quiet.locations.clear();
-        assert_eq!(rows(&quiet, 80), ["● read   Read the entry point"]);
+        assert_eq!(rows(&quiet, 80), ["≡ read   Read the entry point"]);
     }
 
     #[test]
-    fn a_call_that_is_not_done_keeps_its_status_row() {
+    fn a_running_call_shows_the_spinner_and_a_failed_call_a_cross_in_place_of_its_icon() {
         let mut call = tool("Read the entry point", "/work/x", None);
         call.locations.clear();
-        for (status, word) in [
-            (ToolCallStatus::InProgress, "running…"),
-            (ToolCallStatus::Failed, "failed"),
-            (ToolCallStatus::Pending, "pending"),
-        ] {
-            call.status = status;
-            assert_eq!(rows(&call, 80)[1], format!("  ⎿  {word}"));
-        }
+        let frame = header::SPINNER[0];
+        call.status = ToolCallStatus::InProgress;
+        assert_eq!(
+            rows(&call, 80),
+            [format!("{frame} read   Read the entry point")]
+        );
+        call.status = ToolCallStatus::Failed;
+        assert_eq!(rows(&call, 80), ["✗ read   Read the entry point"]);
+        call.status = ToolCallStatus::Pending;
+        assert_eq!(rows(&call, 80), ["≡ read   Read the entry point  pending"]);
     }
 
     fn task() -> Tool {
@@ -4527,22 +4835,18 @@ mod tests {
 
     #[test]
     fn a_folded_subagent_block_shows_its_title_its_tool_count_and_its_status() {
-        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, false).lines);
-        assert_eq!(
-            lines,
-            ["● agent  Survey the entry point  1 tool", "  ⎿  running…"]
-        );
+        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, 0, false).lines);
+        assert_eq!(lines, ["◐ agent  Survey the entry point  1 tool"]);
     }
 
     #[test]
     fn an_expanded_subagent_block_draws_its_children_indented_four_columns() {
-        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, true).lines);
+        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, 0, true).lines);
         assert_eq!(
             lines,
             [
-                "● agent  Survey the entry point  1 tool",
-                "  ⎿  running…",
-                "    ● read   Read src/main.rs",
+                "◐ agent  Survey the entry point  1 tool",
+                "    ≡ read   Read src/main.rs",
                 "    main.rs is a stub.",
             ]
         );
@@ -4569,13 +4873,14 @@ mod tests {
             &replayed,
             Path::new("/work"),
             60,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let lines = lines.lines;
         let text = plain(&lines);
-        assert!(text[0].starts_with("● agent"), "{text:?}");
+        assert!(text[0].starts_with("  • agent"), "{text:?}");
         assert!(!text[0].contains('▸'), "{text:?}");
         assert_eq!(head, lines.len());
         assert!(!expandable(&replayed));
@@ -4585,12 +4890,13 @@ mod tests {
             &replayed,
             Path::new("/work"),
             60,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let lines = lines.lines;
-        assert!(plain(&lines)[0].starts_with("● think"));
+        assert!(plain(&lines)[0].starts_with("  ∴ think"));
     }
 
     #[test]
@@ -4623,9 +4929,9 @@ mod tests {
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
         let cwd = Path::new("/work");
-        let (rows, _) = tool_view(&edit, cwd, 60, false, false, &mut Rendered::default());
+        let (rows, _) = tool_view(&edit, cwd, 60, 0, false, false, &mut Rendered::default());
         let head = rows.texts[0].as_ref().unwrap();
-        assert_eq!(head.col, 2);
+        assert_eq!(head.col, 4);
         assert_eq!(head.text, "edit   Edit src/main.rs");
     }
 

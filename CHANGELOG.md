@@ -12,6 +12,24 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Added
 
+- Two or more tool calls in a row, with no reply, thought or message
+  between them, fold into one line. The line starts with `✓` when every
+  call is done, the spinner while one runs, and a red `✗` when one failed.
+  It then gives the number of calls and a count of each kind, as in
+  `read 4 · edit 2 (+3 −2)`. Each kind's name is in that kind's colour and
+  its count in the text colour, and the edits carry their diffs added up.
+  Any failures and the call in progress follow. A click unfolds the calls,
+  indented under the line with no blank lines between them. A second click
+  folds them again.
+- A scenario can carry an `input` list, the person's side of the
+  conversation: text to type, keys to press, pauses, and waits for the
+  agent's turn to end. `coax --input <scenario.json>` types it into coax
+  through the same path as the keyboard, in the picker and in the
+  conversation. The flag exists only in a build with the `fake-agent`
+  feature. A key can carry modifiers, as in `Alt+Enter`. The list can also
+  move the mouse, click, double-click and drag. Each mouse step names text,
+  and coax aims at that text in the last frame it drew, counting matches
+  from the bottom when `nth` is negative.
 - Text between single `*` or `_` in a reply is drawn in italics.
 - A double click on transcript text selects and copies the word under the
   pointer. A triple click selects and copies its line, joined across the
@@ -45,6 +63,24 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- Each tool call takes one line. Its location and an edit's `+N −M`
+  follow the title, where they used to sit on a second line. The `●`
+  before a call is now an icon for its kind, and the kind's name takes the
+  icon's colour: `≡` read, `◎` search, `±` edit, `⌫` delete, `➜` move,
+  `❯` run, `↓` fetch, `∴` think, `◇` mode, and `•` for an agent or any
+  other call. The spinner takes the icon's place while the call runs, and
+  a red `✗` when it fails.
+- The fold arrow of a call, a run of calls or a sub-agent sits at the start
+  of its line, where it sat at the right edge. A call that cannot unfold
+  keeps the arrow's two columns blank, so the icons line up. The plan row's
+  `▶` is now `▸` while the plan is hidden and `▾` while it shows.
+- The context bar draws its used part as `━` and the rest as `─`, where it
+  drew `▰` and `▱`. Many fonts lack those two, and the terminal's fallback
+  glyphs overlapped their neighbours or lost their outline. The bar turns
+  yellow at 25%, orange at 50% and red at 75%. It used to turn yellow past
+  80% and red past 95%.
+- `cargo install coax` installs `coax` alone. `coax-fake-agent` builds only
+  with the `fake-agent` feature, as in `cargo build --features fake-agent`.
 - A notice is drawn as one line, with its newlines as spaces. coax no
   longer aborts when a notice holding newlines, such as a rate-limit error
   from the agent, is cut to fit the screen.

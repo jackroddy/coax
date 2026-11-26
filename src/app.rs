@@ -31,6 +31,7 @@ use crate::editor;
 use crate::form::Form;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
+use crate::playback::Player;
 use crate::prompt;
 use crate::registry;
 use crate::report::{self, Reporter, Snapshot};
@@ -1731,6 +1732,9 @@ pub struct Opening {
     pub first_prompt: Option<String>,
     pub auto_allow: bool,
     pub keys: Keys,
+
+    /// Keys a scenario types in, after the person's own.
+    pub player: Player,
     pub links: LinksConfig,
 
     /// The agent's id in the ACP registry, for the new-version check.
@@ -1778,6 +1782,7 @@ async fn session(
         first_prompt,
         auto_allow,
         mut keys,
+        mut player,
         links,
         registry: registry_id,
         resume_args,
@@ -1951,14 +1956,24 @@ async fn session(
     let mut edge = tokio::time::interval(EDGE_SCROLL_INTERVAL);
     edge.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut redraw = true;
+    let mut screen = ratatui::buffer::Buffer::default();
     let result = loop {
-        if redraw && let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
-            break Err(Error::into_internal_error(error));
+        if redraw {
+            let drawn = terminal.draw(|frame| {
+                ui::draw(frame, &mut app);
+                if player.due().is_some() {
+                    screen = frame.buffer_mut().clone();
+                }
+            });
+            if let Err(error) = drawn {
+                break Err(Error::into_internal_error(error));
+            }
         }
         redraw = true;
         report_to_decade(&mut reporter, &mut app);
         let expiry = app.guard.map(|guard| guard.until);
         let copied_until = app.copied.map(|(_, until)| until);
+        let played = player.due();
         let action = tokio::select! {
             event = link.events.recv() => match event {
                 Some(event) => {
@@ -1985,6 +2000,17 @@ async fn session(
             () = async { tokio::time::sleep_until(expiry.unwrap().into()).await }, if expiry.is_some() => {
                 app.guard = None;
                 Action::None
+            },
+            () = async { tokio::time::sleep_until(played.unwrap().into()).await }, if played.is_some() => {
+                let now = Instant::now();
+                match player.next(now, !app.transcript.in_flight, &screen) {
+                    Some(TermEvent::Key(key)) => app.key(key, now),
+                    Some(TermEvent::Mouse(mouse)) => app.pointer(mouse).0,
+                    _ => {
+                        redraw = false;
+                        Action::None
+                    }
+                }
             },
             _ = spin.tick(), if app.transcript.in_flight || app.guard.is_some() || app.transcript.running_agents(Instant::now()) > 0 => {
                 app.spinner = app.spinner.wrapping_add(1);
@@ -2197,6 +2223,46 @@ mod tests {
 
     fn prompt(text: impl Into<String>) -> Entry {
         Entry::User(Message::new(text.into(), None))
+    }
+
+    #[test]
+    fn played_input_sends_a_prompt_and_types_the_next_only_after_the_turn_ends() {
+        let scenario = crate::scenario::Scenario::parse(
+            r#"{"acts": [], "input": [
+                {"type": "hi", "per_char_ms": 10},
+                {"key": "Enter"},
+                {"wait": "idle"},
+                {"type": "yo", "per_char_ms": 10},
+                {"key": "Enter"}
+            ]}"#,
+        )
+        .unwrap();
+        let mut player = Player::new(scenario.input).unwrap();
+        let mut app = app();
+        let mut now = Instant::now();
+        let mut sent = Vec::new();
+        let blank = ratatui::buffer::Buffer::default();
+        let mut play = |app: &mut App, now: Instant, sent: &mut Vec<String>| {
+            if let Some(TermEvent::Key(key)) = player.next(now, !app.transcript.in_flight, &blank)
+                && let Action::Prompt(text) = app.key(key, now)
+            {
+                sent.push(text);
+            }
+        };
+        for _ in 0..10 {
+            now += Duration::from_millis(10);
+            play(&mut app, now, &mut sent);
+        }
+        assert_eq!(sent, ["hi"]);
+        assert!(app.transcript.in_flight);
+        assert!(app.input.is_empty());
+        app.transcript
+            .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
+        for _ in 0..10 {
+            now += Duration::from_millis(60);
+            play(&mut app, now, &mut sent);
+        }
+        assert_eq!(sent, ["hi", "yo"]);
     }
 
     fn app() -> App {
@@ -2949,6 +3015,121 @@ mod tests {
         assert!(!rows(&mut app).contains("old line"));
     }
 
+    #[test]
+    fn a_run_of_calls_draws_folded_and_a_click_on_it_unfolds_and_folds_it() {
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{ToolCallStatus, ToolKind};
+
+        let read = |id: &str, title: &str| {
+            Entry::Tool(Tool {
+                id: agent_client_protocol::v1::schema::ToolCallId::new(id.to_string()),
+                title: title.to_string(),
+                kind: ToolKind::Read,
+                status: ToolCallStatus::Completed,
+                locations: Vec::new(),
+                content: Vec::new(),
+                cancelled: false,
+                changed: (0, 0),
+                revision: 0,
+                agent: false,
+                children: Vec::new(),
+                last_child_update: None,
+            })
+        };
+        let mut app = drawn_with(vec![read("r1", "Read one.rs"), read("r2", "Read two.rs")]);
+        let rows = |app: &mut App| header_rows_all(app, 80);
+        assert!(rows(&mut app).contains("2 tools"));
+        assert!(!rows(&mut app).contains("Read one.rs"));
+        let fold = &app.folds[0];
+        let (x, y) = (fold.area.x, fold.area.y);
+        click(&mut app, x, y);
+        let open = rows(&mut app);
+        assert!(
+            open.contains("2 tools") && open.contains("Read one.rs"),
+            "{open}"
+        );
+        assert!(open.contains("Read two.rs"), "{open}");
+        click(&mut app, x, y);
+        assert!(!rows(&mut app).contains("Read one.rs"));
+    }
+
+    #[test]
+    fn a_played_click_on_a_folded_runs_text_unfolds_it() {
+        use crate::scenario::{InputStep, Target};
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{ToolCallStatus, ToolKind};
+
+        let read = |id: &str, title: &str| {
+            Entry::Tool(Tool {
+                id: agent_client_protocol::v1::schema::ToolCallId::new(id.to_string()),
+                title: title.to_string(),
+                kind: ToolKind::Read,
+                status: ToolCallStatus::Completed,
+                locations: Vec::new(),
+                content: Vec::new(),
+                cancelled: false,
+                changed: (0, 0),
+                revision: 0,
+                agent: false,
+                children: Vec::new(),
+                last_child_update: None,
+            })
+        };
+        let mut app = drawn_with(vec![read("r1", "Read one.rs"), read("r2", "Read two.rs")]);
+        let click = InputStep::Click {
+            click: Target::Text("2 tools".to_string()),
+            ms: Some(50),
+        };
+        let mut player = Player::new(vec![click]).unwrap();
+        let mut now = Instant::now();
+        while let Some(due) = player.due() {
+            now = due.max(now);
+            let screen = header_buffer(&mut app, 80);
+            if let Some(TermEvent::Mouse(mouse)) = player.next(now, true, &screen) {
+                app.pointer(mouse);
+            }
+        }
+        assert!(header_rows_all(&mut app, 80).contains("Read one.rs"));
+    }
+
+    #[test]
+    fn an_unfolded_run_draws_its_calls_indented_under_its_row_with_no_blank_rows_between() {
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{ToolCallStatus, ToolKind};
+
+        let read = |id: &str, title: &str| {
+            Entry::Tool(Tool {
+                id: agent_client_protocol::v1::schema::ToolCallId::new(id.to_string()),
+                title: title.to_string(),
+                kind: ToolKind::Read,
+                status: ToolCallStatus::Completed,
+                locations: Vec::new(),
+                content: Vec::new(),
+                cancelled: false,
+                changed: (0, 0),
+                revision: 0,
+                agent: false,
+                children: Vec::new(),
+                last_child_update: None,
+            })
+        };
+        let mut app = drawn_with(vec![read("r1", "Read one.rs"), read("r2", "Read two.rs")]);
+        header_rows_all(&mut app, 80);
+        let fold = &app.folds[0];
+        let (x, y) = (fold.area.x, fold.area.y);
+        click(&mut app, x, y);
+        let open = header_rows_all(&mut app, 80);
+        let lines: Vec<&str> = open.lines().map(str::trim_end).collect();
+        let row = lines
+            .iter()
+            .position(|line| line.contains("2 tools"))
+            .unwrap();
+        assert!(lines[row].starts_with("▾ ✓ 2 tools  read 2"), "{open}");
+        assert_eq!(lines[row + 1], "      ≡ read   Read one.rs", "{open}");
+        assert_eq!(lines[row + 2], "      ≡ read   Read two.rs", "{open}");
+        assert_eq!(lines[row + 3], "", "{open}");
+    }
+
     fn unfolded_edit(app: &mut App) -> ui::FoldArea {
         use crate::session::Tool;
         use agent_client_protocol::v1::schema::{Diff, ToolCallContent, ToolCallStatus, ToolKind};
@@ -3519,8 +3700,8 @@ mod tests {
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
         let context = screen_row(&mut app, 120, CONTEXT_ROW);
-        assert!(context.starts_with(" context: 3%  ▰▰▰▱▱"), "{context}");
-        assert_eq!(context.chars().filter(|ch| *ch == '▰').count(), 3);
+        assert!(context.starts_with(" context: 3%  ━━━──"), "{context}");
+        assert_eq!(context.chars().filter(|ch| *ch == '━').count(), 3);
         assert_eq!(context.chars().count(), 120);
         let status = status_row(&mut app, 120);
         assert!(
@@ -3687,7 +3868,7 @@ mod tests {
             plan_entry("write it up", PlanEntryStatus::Pending),
         ];
         let row = progress_row(&mut app, 100);
-        assert_eq!(row.trim_end(), " ▶ plan 1/3 · run the tests");
+        assert_eq!(row.trim_end(), " ▸ plan 1/3 · run the tests");
         let buffer = header_buffer(&mut app, 100);
         assert_eq!(buffer[(1, PROGRESS_ROW)].fg, palette.yellow);
         let step = column(&mut app, 100, PROGRESS_ROW, "run");
@@ -3695,13 +3876,24 @@ mod tests {
 
         app.transcript.plan[1].status = PlanEntryStatus::Completed;
         let row = progress_row(&mut app, 100);
-        assert_eq!(row.trim_end(), " ▶ plan 2/3 · write it up");
+        assert_eq!(row.trim_end(), " ▸ plan 2/3 · write it up");
 
         app.transcript.plan[2].status = PlanEntryStatus::Completed;
         let row = progress_row(&mut app, 100);
-        assert_eq!(row.trim_end(), " ▶ plan 3/3");
+        assert_eq!(row.trim_end(), " ▸ plan 3/3");
         let buffer = header_buffer(&mut app, 100);
         assert_eq!(buffer[(1, PROGRESS_ROW)].fg, palette.green);
+    }
+
+    #[test]
+    fn the_plan_rows_arrow_points_down_while_the_plan_is_shown() {
+        use agent_client_protocol::v1::schema::PlanEntryStatus;
+
+        let mut app = with_settings();
+        app.transcript.plan = vec![plan_entry("read the code", PlanEntryStatus::Pending)];
+        assert!(progress_row(&mut app, 100).starts_with(" ▸ plan 0/1"));
+        app.show_plan = true;
+        assert!(progress_row(&mut app, 100).starts_with(" ▾ plan 0/1"));
     }
 
     #[test]
@@ -3725,7 +3917,7 @@ mod tests {
             PlanEntryStatus::InProgress,
         )];
         let row = progress_row(&mut app, 60);
-        assert!(row.starts_with(" ▶ plan 0/1 · a step with"), "{row}");
+        assert!(row.starts_with(" ▸ plan 0/1 · a step with"), "{row}");
         assert!(row.contains("…  "), "{row}");
         assert!(row.ends_with(" Read src/main.rs "), "{row}");
 

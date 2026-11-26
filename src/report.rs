@@ -138,13 +138,14 @@ pub fn changes(sent: &Snapshot, now: &Snapshot) -> Option<AgentUpdate> {
 }
 
 /// The launch arguments decade passes back to start coax again on a
-/// session: `args` without `--prompt` and `--session` and their values.
+/// session: `args` without `--prompt`, `--session` and `--input` and their
+/// values.
 pub fn resume_args(args: &[String]) -> Vec<String> {
     let mut kept = Vec::new();
     let mut at = 0;
     while at < args.len() {
         match args[at].as_str() {
-            "--prompt" | "--session" => at += 2,
+            "--prompt" | "--session" | "--input" => at += 2,
             "--agent" => {
                 kept.extend(args[at..].iter().take(2).cloned());
                 at += 2;
@@ -306,6 +307,14 @@ mod tests {
         assert_eq!(
             resume_args(&words("--prompt hi --agent claude --session 7f3a --allow")),
             words("--agent claude --allow")
+        );
+    }
+
+    #[test]
+    fn the_resume_args_drop_played_input_so_a_restart_types_nothing() {
+        assert_eq!(
+            resume_args(&words("--input a.json --allow coax-fake-agent a.json")),
+            words("--allow coax-fake-agent a.json")
         );
     }
 

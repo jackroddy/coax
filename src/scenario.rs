@@ -24,6 +24,89 @@ pub struct Scenario {
     /// Earlier sessions the agent lists and can load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<SavedSession>,
+
+    /// The person's side, which `coax --input` types into coax.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<InputStep>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InputStep {
+    Type {
+        r#type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        per_char_ms: Option<u64>,
+    },
+
+    /// A key by name, such as `Enter`, `Esc`, `Up` or `j`.
+    Key {
+        key: String,
+    },
+    Delay {
+        delay_ms: u64,
+    },
+    Wait {
+        wait: Wait,
+    },
+    Move {
+        r#move: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ms: Option<u64>,
+    },
+    Click {
+        click: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ms: Option<u64>,
+    },
+    Double {
+        double: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ms: Option<u64>,
+    },
+    Drag {
+        drag: Drag,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ms: Option<u64>,
+    },
+}
+
+/// Text on the screen a mouse step aims at: a string, taken at the middle of
+/// its first match, or the `nth` match taken `at` one end. A negative `nth`
+/// counts back from the last match.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Target {
+    Text(String),
+    Match {
+        text: String,
+        #[serde(default)]
+        nth: i64,
+        #[serde(default)]
+        at: Anchor,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    Start,
+    #[default]
+    Middle,
+    End,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Drag {
+    pub from: Target,
+    pub to: Target,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Wait {
+    /// Until the agent's turn has ended.
+    Idle,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -95,5 +178,90 @@ pub struct Elicitation {
 impl Scenario {
     pub fn parse(json: &str) -> Result<Scenario, serde_json::Error> {
         serde_json::from_str(json)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_scenario_without_input_still_parses_with_an_empty_input() {
+        let scenario = Scenario::parse(r#"{"acts": []}"#).unwrap();
+        assert!(scenario.input.is_empty());
+    }
+
+    #[test]
+    fn each_kind_of_input_step_parses_from_its_own_key() {
+        let scenario = Scenario::parse(
+            r#"{"acts": [], "input": [
+                {"type": "hi", "per_char_ms": 80},
+                {"type": "yo"},
+                {"key": "Enter"},
+                {"delay_ms": 300},
+                {"wait": "idle"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            scenario.input,
+            [
+                InputStep::Type {
+                    r#type: "hi".to_string(),
+                    per_char_ms: Some(80),
+                },
+                InputStep::Type {
+                    r#type: "yo".to_string(),
+                    per_char_ms: None,
+                },
+                InputStep::Key {
+                    key: "Enter".to_string(),
+                },
+                InputStep::Delay { delay_ms: 300 },
+                InputStep::Wait { wait: Wait::Idle },
+            ]
+        );
+    }
+
+    #[test]
+    fn each_kind_of_mouse_step_parses_with_a_plain_or_a_placed_target() {
+        let scenario = Scenario::parse(
+            r#"{"acts": [], "input": [
+                {"move": "mark"},
+                {"click": {"text": "raw", "nth": 1}, "ms": 300},
+                {"double": {"text": "blah", "at": "end"}},
+                {"drag": {"from": {"text": "first", "at": "start"}, "to": "blah."}}
+            ]}"#,
+        )
+        .unwrap();
+        let placed = |text: &str, nth, at| Target::Match {
+            text: text.to_string(),
+            nth,
+            at,
+        };
+        assert_eq!(
+            scenario.input,
+            [
+                InputStep::Move {
+                    r#move: Target::Text("mark".to_string()),
+                    ms: None,
+                },
+                InputStep::Click {
+                    click: placed("raw", 1, Anchor::Middle),
+                    ms: Some(300),
+                },
+                InputStep::Double {
+                    double: placed("blah", 0, Anchor::End),
+                    ms: None,
+                },
+                InputStep::Drag {
+                    drag: Drag {
+                        from: placed("first", 0, Anchor::Start),
+                        to: Target::Text("blah.".to_string()),
+                    },
+                    ms: None,
+                },
+            ]
+        );
     }
 }
