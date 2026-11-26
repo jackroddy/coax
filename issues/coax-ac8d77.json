@@ -1,0 +1,28 @@
+{
+  "id": "coax-ac8d77",
+  "title": "A prompt template opens a form described in its config",
+  "body": "A prompt template today (`src/template.rs`, `[templates.<name>]` in `config.toml`) is a `text` with `{blank}` placeholders. `/t <name>` puts the text in the prompt with each blank marked, and Tab moves between them. That suits one-word blanks but not a list of tasks or a choice among a few answers.\n\ncoax already draws a form for Claude's `AskUserQuestion`: `Form` in `src/form.rs`. Its field kinds are `Choice` (one option, with an optional typed Other), `Many` (any number of options), `Text` (optionally a number) and `Toggle`. A template form reuses that box, filled from the config instead of from the agent.\n\n## Proposal\n\nFiring a template that has any blanks opens its form, always. A template with no blanks sends at once, as now. The in-place blank editing in the prompt goes away.\n\nA blank with no table of its own is a one-line text field labelled with its name. A blank that needs more gets a table under `fields`:\n\n```toml\n[templates.away]\ndescription = \"a list of tasks before stepping away\"\npreview = true\ntext = \"\"\"\n{tasks}\n\ni'm stepping away for {time}, so get through as much of this as you can.\n{questions}\"\"\"\n\n[templates.away.fields.tasks]\nlabel = \"what should get done?\"\nkind = \"list\"\nitem = \"- {}\"\n\n[templates.away.fields.time]\nlabel = \"how long?\"\nkind = \"choice\"\noptions = [\"an hour\", \"a few hours\", \"the night\"]\nother = true\n\n[templates.away.fields.questions]\nlabel = \"want questions first?\"\nkind = \"toggle\"\non = \"ask any questions now and we'll review when i return\"\noff = \"don't wait on me for questions\"\n```\n\n| `kind` | the form shows | goes into the text as |\n|---|---|---|\n| `line`, the default | a one-line input | what was typed |\n| `text` | a multi-line input | what was typed |\n| `list` | a multi-line input, one item per line | each line through `item` (default `{}`), joined by newlines |\n| `choice` | one option, plus a typed Other when `other = true` | the option, or the Other text |\n| `many` | any number of options | the ticked options joined by `join` (default `\", \"`) |\n| `toggle` | yes or no | `on` or `off` |\n\nEvery field also takes `label`, `help` (a dim line under the label), `default` and `optional = true`. An optional field left empty puts nothing into the text, and a required one blocks finishing the form.\n\nThe form shows every field on one page, in the order the blanks appear in the text. Tab and Shift+Tab move between fields. Enter in a `list` or `text` field adds a line, and Enter elsewhere, or Ctrl+Enter anywhere, finishes the form. Esc cancels it.\n\nThese are Jack's decisions:\n\n- Finishing the form puts the filled text in the prompt for a last edit. A template with `send = true` sends at once instead.\n- A live preview of the filled text sits under the fields when the template sets `preview = true`. A button in the form toggles it.\n- One column only. Layout control waits until a template needs it.\n- Every template with blanks opens the form, even when all its fields are plain lines.\n\n## Out of scope\n\n- Filling blanks from words after the name on `/t`, which is coax-d8f50e.\n\n## Open\n\n- How a `list` field draws its lines in the form: as a bordered text area, or as lines marked with the `item` prefix.\n- Whether `default` on a `list` takes an array.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T21:39:17.839565399Z",
+  "updated_at": "2026-11-26T21:39:17.839565399Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "14c84b0",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
