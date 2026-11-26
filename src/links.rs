@@ -14,6 +14,9 @@ pub const HOVER_TIMEOUT: Duration = Duration::from_secs(2);
 /// The most lines of a command's output a popup shows.
 pub const POPUP_LINES: usize = 15;
 
+/// The column a marked passage wraps at in its popup.
+const POPUP_WIDTH: usize = 70;
+
 /// The `[links]` table of `config.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -57,9 +60,12 @@ pub enum Kind<'a> {
     Color(&'a str),
     File {
         path: &'a str,
-        line: Option<u32>,
+        at: Option<At<'a>>,
     },
     Url,
+
+    /// A mark chip in a sent prompt, whose title is the marked passage.
+    Mark,
     Scheme {
         scheme: &'a str,
         rest: &'a str,
@@ -67,6 +73,16 @@ pub enum Kind<'a> {
 
     /// A target with no scheme.
     Inert,
+}
+
+/// The place in a file a `file:` link names after its `#`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum At<'a> {
+    Line(u32),
+
+    /// A function's name, as in `Link::prompt`, which the pane showing the
+    /// file looks up.
+    Symbol(&'a str),
 }
 
 pub fn classify(target: &str) -> Kind<'_> {
@@ -84,20 +100,30 @@ pub fn classify(target: &str) -> Kind<'_> {
         "color" => Kind::Color(rest),
         "file" => file(rest),
         "http" | "https" => Kind::Url,
+        "mark" => Kind::Mark,
         _ => Kind::Scheme { scheme, rest },
     }
 }
 
 fn file(rest: &str) -> Kind<'_> {
     let rest = rest.strip_prefix("//").unwrap_or(rest);
-    let (path, line) = match rest.rsplit_once('#') {
-        Some((path, at)) => (path, at.strip_prefix('L').unwrap_or(at).parse().ok()),
+    let (path, at) = match rest.rsplit_once('#') {
+        Some((path, at)) => (path, place(at)),
         None => (rest, None),
     };
     if path.is_empty() {
         Kind::Inert
     } else {
-        Kind::File { path, line }
+        Kind::File { path, at }
+    }
+}
+
+fn place(at: &str) -> Option<At<'_>> {
+    let line = at.strip_prefix('L').unwrap_or(at).parse();
+    match line {
+        Ok(line) => Some(At::Line(line)),
+        Err(_) if at.is_empty() => None,
+        Err(_) => Some(At::Symbol(at)),
     }
 }
 
@@ -123,7 +149,63 @@ pub fn hover_command(target: &str, config: &LinksConfig) -> Option<Vec<String>> 
     let Kind::Scheme { scheme, rest } = classify(target) else {
         return None;
     };
+    if scheme.eq_ignore_ascii_case("foam") {
+        return substitute(&FOAM_HOVER.map(str::to_string), rest);
+    }
     substitute(&scheme_config(scheme, config)?.hover, rest)
+}
+
+/// The hover command of a `foam:` link, whatever `config.toml` says, so its
+/// popup can lay out the issue's fields.
+const FOAM_HOVER: [&str; 4] = ["foam", "show", "{target}", "--json"];
+
+#[derive(Deserialize)]
+struct FoamIssue {
+    title: String,
+    #[serde(rename = "type")]
+    kind: String,
+    status: String,
+    priority: u8,
+    body: Option<String>,
+    #[serde(default)]
+    notes: Vec<FoamNote>,
+}
+
+#[derive(Deserialize)]
+struct FoamNote {
+    author: String,
+    at: String,
+    text: String,
+}
+
+/// The markdown a `foam:` link's popup lays out, from the issue `foam show
+/// --json` gave, or `None` for any other link or an output that is not one.
+pub fn markdown_popup(target: &str, cache: &HashMap<String, Loaded>) -> Option<String> {
+    let Kind::Scheme { scheme, .. } = classify(target) else {
+        return None;
+    };
+    if !scheme.eq_ignore_ascii_case("foam") {
+        return None;
+    }
+    let Some(Loaded::Text(json)) = cache.get(target) else {
+        return None;
+    };
+    let issue: FoamIssue = serde_json::from_str(json).ok()?;
+    let mut text = format!(
+        "**{}**\n\n[{} · {} · P{}](color:muted)\n",
+        issue.title, issue.kind, issue.status, issue.priority
+    );
+    if let Some(body) = issue.body.filter(|body| !body.trim().is_empty()) {
+        text.push_str(&format!("\n{body}\n"));
+    }
+    for note in issue.notes {
+        let day = note.at.get(..10).unwrap_or(&note.at);
+        text.push_str(&format!(
+            "\n---\n\n[{} · {day}](color:muted)\n\n{}\n",
+            note.author, note.text
+        ));
+    }
+    Some(text)
 }
 
 /// What a click on a link does.
@@ -138,12 +220,15 @@ pub enum Click {
 
 pub fn click(target: &str, config: &LinksConfig, cwd: &Path) -> Option<Click> {
     match classify(target) {
-        Kind::File { path, line } => Some(Click::Show {
+        Kind::File { path, at } => Some(Click::Show {
             to: config.decade_pane.clone(),
             show: Show {
                 kind: "file".to_string(),
                 target: cwd.join(path).to_string_lossy().into_owned(),
-                at: line.map(|line| json!(line)),
+                at: at.map(|at| match at {
+                    At::Line(line) => json!(line),
+                    At::Symbol(name) => json!({ "symbol": name }),
+                }),
             },
         }),
         Kind::Url if config.open_urls => {
@@ -174,15 +259,27 @@ pub fn popup(
     cache: &HashMap<String, Loaded>,
 ) -> Option<Vec<String>> {
     let mut lines = match classify(target) {
-        Kind::File { path, line } => {
+        Kind::File { path, at } => {
             let full = cwd.join(path);
             let shown = full.strip_prefix(cwd).unwrap_or(&full).display();
-            vec![match line {
-                Some(line) => format!("{shown}:{line}"),
+            vec![match at {
+                Some(At::Line(line)) => format!("{shown}:{line}"),
+                Some(At::Symbol(name)) => format!("{shown} · {name}"),
                 None => shown.to_string(),
             }]
         }
         Kind::Url => vec![target.to_string()],
+        Kind::Mark => {
+            let passage = title?;
+            return Some(
+                passage
+                    .lines()
+                    .flat_map(|line| textwrap::wrap(line, POPUP_WIDTH))
+                    .take(POPUP_LINES)
+                    .map(|piece| piece.into_owned())
+                    .collect(),
+            );
+        }
         Kind::Scheme { .. } => {
             hover_command(target, config)?;
             return Some(match cache.get(target) {
@@ -337,33 +434,40 @@ mod tests {
     }
 
     #[test]
-    fn a_file_target_has_a_path_and_an_optional_line() {
+    fn a_file_target_has_a_path_and_an_optional_line_or_function() {
         assert_eq!(
             classify("file:src/ui.rs#40"),
             Kind::File {
                 path: "src/ui.rs",
-                line: Some(40)
+                at: Some(At::Line(40))
             }
         );
         assert_eq!(
             classify("file:src/ui.rs"),
             Kind::File {
                 path: "src/ui.rs",
-                line: None
+                at: None
             }
         );
         assert_eq!(
             classify("file:///etc/hosts#L3"),
             Kind::File {
                 path: "/etc/hosts",
-                line: Some(3)
+                at: Some(At::Line(3))
             }
         );
         assert_eq!(
-            classify("file:a.rs#top"),
+            classify("file:src/acp.rs#Link::prompt"),
+            Kind::File {
+                path: "src/acp.rs",
+                at: Some(At::Symbol("Link::prompt"))
+            }
+        );
+        assert_eq!(
+            classify("file:a.rs#"),
             Kind::File {
                 path: "a.rs",
-                line: None
+                at: None
             }
         );
         assert_eq!(classify("file:"), Kind::Inert);
@@ -372,8 +476,12 @@ mod tests {
     #[test]
     fn the_hover_command_has_the_part_after_the_scheme_in_place_of_target() {
         assert_eq!(
+            hover_command("note:todo.md", &config()).unwrap(),
+            ["cat", "todo.md"]
+        );
+        assert_eq!(
             hover_command("foam:coax-1", &config()).unwrap(),
-            ["foam", "show", "coax-1", "--plain"]
+            ["foam", "show", "coax-1", "--json"]
         );
         assert_eq!(hover_command("other:x", &config()), None);
         assert_eq!(hover_command("file:x", &config()), None);
@@ -383,6 +491,43 @@ mod tests {
     fn a_target_that_would_pass_a_flag_runs_nothing() {
         assert_eq!(hover_command("foam:--help", &config()), None);
         assert_eq!(hover_command("foam:", &config()), None);
+    }
+
+    #[test]
+    fn a_foam_links_popup_lays_out_the_issue_from_its_json() {
+        assert_eq!(
+            hover_command("foam:coax-1", &LinksConfig::default()).unwrap(),
+            ["foam", "show", "coax-1", "--json"]
+        );
+        let mut cache = HashMap::new();
+        let json = r#"{"title": "A title", "type": "bug", "status": "open", "priority": 2,
+            "body": "Some `code`.", "notes": [{"author": "Jack", "at": "2026-11-24T10:00:00Z",
+            "text": "A note."}], "id": "coax-1"}"#;
+        cache.insert("foam:coax-1".to_string(), Loaded::Text(json.to_string()));
+        assert_eq!(
+            markdown_popup("foam:coax-1", &cache).unwrap(),
+            "**A title**\n\n[bug · open · P2](color:muted)\n\nSome `code`.\n\n---\n\n\
+             [Jack · 2026-11-24](color:muted)\n\nA note.\n"
+        );
+        cache.insert(
+            "foam:coax-2".to_string(),
+            Loaded::Text("not json".to_string()),
+        );
+        assert_eq!(markdown_popup("foam:coax-2", &cache), None);
+    }
+
+    #[test]
+    fn a_mark_chips_popup_shows_its_passage() {
+        let cache = HashMap::new();
+        let lines = popup(
+            "mark:1",
+            Some("one\ntwo"),
+            &config(),
+            Path::new("."),
+            &cache,
+        );
+        assert_eq!(lines, Some(vec!["one".to_string(), "two".to_string()]));
+        assert_eq!(click("mark:1", &config(), Path::new(".")), None);
     }
 
     #[test]
@@ -400,6 +545,19 @@ mod tests {
         };
         assert_eq!(show.target, "/abs/a.rs");
         assert_eq!(show.at, None);
+    }
+
+    #[test]
+    fn a_function_click_sends_the_name_for_the_pane_to_look_up() {
+        let cwd = PathBuf::from("/work/coax");
+        let target = "file:src/acp.rs#Link::prompt";
+        let Some(Click::Show { show, .. }) = click(target, &config(), &cwd) else {
+            panic!("no show");
+        };
+        assert_eq!(show.target, "/work/coax/src/acp.rs");
+        assert_eq!(show.at, Some(json!({ "symbol": "Link::prompt" })));
+        let popup = popup(target, None, &config(), &cwd, &HashMap::new());
+        assert_eq!(popup, Some(vec!["src/acp.rs · Link::prompt".to_string()]));
     }
 
     #[test]

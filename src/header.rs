@@ -178,11 +178,11 @@ fn state(app: &App) -> Option<Item> {
     })
 }
 
-const FILLED: char = '▰';
-const EMPTY: char = '▱';
+const FILLED: char = '━';
+const EMPTY: char = '─';
 
 /// The row above the status line: `context:`, the share of the context
-/// window in use, and a bar of parallelograms across the rest of the row.
+/// window in use, and a bar across the rest of the row.
 pub fn draw_context(frame: &mut Frame, area: Rect, app: &App) {
     let width = area.width as usize;
     let line = context_line(app.settings.context.as_ref(), width);
@@ -196,8 +196,9 @@ fn context_line(context: Option<&settings::Context>, width: usize) -> Line<'stat
     });
     let percent = share.map(|share| (share * 100.0).round() as u64);
     let style = match percent {
-        Some(percent) if percent > 95 => Style::new().fg(palette::get().red),
-        Some(percent) if percent > 80 => Style::new().fg(palette::get().yellow),
+        Some(percent) if percent >= 75 => Style::new().fg(palette::get().red),
+        Some(percent) if percent >= 50 => Style::new().fg(palette::get().orange),
+        Some(percent) if percent >= 25 => Style::new().fg(palette::get().yellow),
         Some(_) => Style::new().fg(palette::get().green),
         None => dim(),
     };
@@ -307,7 +308,12 @@ pub fn draw_progress(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         last_turn(transcript).map(|took| format!("◷ last turn {}", ui::elapsed_text(took)))
     };
-    let line = progress_line(&transcript.plan, note.as_deref(), area.width as usize);
+    let line = progress_line(
+        &transcript.plan,
+        app.show_plan,
+        note.as_deref(),
+        area.width as usize,
+    );
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -353,7 +359,12 @@ fn current_step(plan: &[PlanEntry]) -> Option<&str> {
         .map(|entry| entry.content.as_str())
 }
 
-fn progress_line(plan: &[PlanEntry], note: Option<&str>, width: usize) -> Line<'static> {
+fn progress_line(
+    plan: &[PlanEntry],
+    shown: bool,
+    note: Option<&str>,
+    width: usize,
+) -> Line<'static> {
     let palette = palette::get();
     let inner = width.saturating_sub(2);
     let mut spans = vec![Span::raw(" ")];
@@ -367,7 +378,8 @@ fn progress_line(plan: &[PlanEntry], note: Option<&str>, width: usize) -> Line<'
         } else {
             palette.yellow
         };
-        let head = format!("▶ plan {done}/{}", plan.len());
+        let arrow = if shown { "▾" } else { "▸" };
+        let head = format!("{arrow} plan {done}/{}", plan.len());
         spans.push(Span::styled(head, Style::new().fg(colour)));
     }
     let head: usize = spans.iter().map(Span::width).sum::<usize>() - 1;
@@ -429,18 +441,18 @@ mod tests {
                 .collect::<String>()
         };
         let empty = text(context_line(None, 40));
-        assert_eq!(empty, format!(" context:   {}", "▱".repeat(27)));
+        assert_eq!(empty, format!(" context:   {}", "─".repeat(27)));
         let half = settings::Context {
             used: 50,
             size: 100,
         };
         let line = text(context_line(Some(&half), 40));
-        assert!(line.starts_with(" context: 50%  ▰▰▰▰▰▰▰▰▰▰▰▰▱"), "{line}");
+        assert!(line.starts_with(" context: 50%  ━━━━━━━━━━━━─"), "{line}");
         assert_eq!(line.chars().count(), 39);
     }
 
     #[test]
-    fn the_context_bar_is_green_then_yellow_past_80_then_red_past_95() {
+    fn the_context_bar_turns_yellow_at_25_orange_at_50_and_red_at_75() {
         let colours = |used| {
             let context = settings::Context { used, size: 100 };
             let line = context_line(Some(&context), 40);
@@ -449,15 +461,13 @@ mod tests {
         };
         let palette = palette::get();
         let muted = dim().fg;
-        assert_eq!(
-            colours(50),
-            (Some(palette.green), Some(palette.green), muted)
-        );
-        assert_eq!(
-            colours(85),
-            (Some(palette.yellow), Some(palette.yellow), muted)
-        );
-        assert_eq!(colours(97), (Some(palette.red), Some(palette.red), muted));
+        let both = |colour| (Some(colour), Some(colour), muted);
+        assert_eq!(colours(24), both(palette.green));
+        assert_eq!(colours(25), both(palette.yellow));
+        assert_eq!(colours(49), both(palette.yellow));
+        assert_eq!(colours(50), both(palette.orange));
+        assert_eq!(colours(74), both(palette.orange));
+        assert_eq!(colours(75), both(palette.red));
         let empty = context_line(None, 40);
         assert!(empty.spans.iter().all(|span| span.style == dim()));
     }

@@ -48,7 +48,14 @@ Put code in a fenced block, and always name the language on the fence.
 When a sentence mentions a command, a function, a flag or another name
 from the code, put the name in inline code.
 
-Do not wrap prose by hand. coax wraps it.
+Lay out code in a programming language as the language's standard
+formatter would. For Rust that is rustfmt, for Go gofmt, and for Python
+black. Keep each line under 80 columns. Break a longer line where the
+formatter would. Code quoted from a file stays as the file has it.
+
+Do not wrap prose by hand. coax wraps it. This holds inside a `markdown`
+or `text` fence too, such as a draft PR or issue body. The one exception
+is a draft commit message: wrap its body at 72 columns.
 
 # Commands for the person to run
 

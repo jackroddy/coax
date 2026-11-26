@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ use crate::links::{self, Kind};
 use crate::palette;
 use crate::prompt;
 use crate::select::{self, LineText};
-use crate::session::{Child, Entry, Message, Tool};
+use crate::session::{self, Child, Entry, Message, Tool};
 use crate::settings::{self, Control};
 
 const MAX_PLAN_ROWS: usize = 6;
@@ -43,12 +43,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         0
     };
-    let form = app
-        .form
-        .as_ref()
-        .map(|asked| form_lines(&asked.form, app.prompt_width));
+    let form = app.form.as_ref().map(|asked| {
+        form_lines(
+            &asked.form,
+            (area.width as usize).saturating_sub(FORM_FRAME),
+        )
+    });
     let bottom_rows = match &form {
-        Some((lines, _)) => lines.len().clamp(1, (area.height / 2) as usize),
+        Some((lines, _)) => (lines.len() + 1).clamp(2, (area.height / 2) as usize),
         None => input.height(),
     };
     let now = Instant::now();
@@ -85,7 +87,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_transcript(frame, transcript_area, app);
     draw_permission(frame, transcript_area, app);
     draw_plan(frame, plan_area, app);
-    let waiting = waiting_lines(&app.waiting, waiting_area.width as usize);
+    let texts: Vec<&str> = app
+        .waiting
+        .iter()
+        .map(|queued| queued.text.as_str())
+        .collect();
+    let waiting = waiting_lines(&texts, waiting_area.width as usize);
     frame.render_widget(Paragraph::new(waiting), waiting_area);
     let turn = app.transcript.in_flight.then(|| {
         let elapsed = app
@@ -105,7 +112,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(line), working_area);
     }
     match form {
-        Some((lines, focus)) => draw_form(frame, upper_rule, prompt_area, app, lines, focus),
+        Some((lines, focus)) => {
+            let area = Rect {
+                height: prompt_area.height + 1,
+                ..upper_rule
+            };
+            draw_form(frame, area, app, lines, focus);
+        }
         None => {
             draw_rule(frame, upper_rule, THIN);
             draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
@@ -126,7 +139,7 @@ const MAX_WAITING_ROWS: usize = 3;
 
 /// One row per prompt waiting for its turn, each its first line, and a last
 /// row counting the rest when they do not all fit.
-fn waiting_lines(waiting: &VecDeque<String>, width: usize) -> Vec<Line<'static>> {
+fn waiting_lines(waiting: &[&str], width: usize) -> Vec<Line<'static>> {
     let lead = " queued  ";
     let room = width.saturating_sub(lead.width() + 1);
     let shown = if waiting.len() > MAX_WAITING_ROWS {
@@ -233,26 +246,30 @@ fn draw_link_popup(frame: &mut Frame, app: &App) {
     let Some(hover) = &app.hover_link else {
         return;
     };
-    let shown = links::popup(
-        &hover.target,
-        hover.title.as_deref(),
-        &app.links,
-        &app.cwd,
-        &app.link_cache,
-    );
-    let Some(lines) = shown else {
-        return;
-    };
     let screen = frame.area();
-    let inner = lines
-        .iter()
-        .map(|line| line.width())
-        .max()
-        .unwrap_or(0)
-        .min(72)
-        .min((screen.width as usize).saturating_sub(4));
+    let room = 72.min((screen.width as usize).saturating_sub(4));
+    let rows = match links::markdown_popup(&hover.target, &app.link_cache) {
+        Some(source) => markdown_popup_rows(&source, room),
+        None => {
+            let shown = links::popup(
+                &hover.target,
+                hover.title.as_deref(),
+                &app.links,
+                &app.cwd,
+                &app.link_cache,
+            );
+            let Some(lines) = shown else {
+                return;
+            };
+            lines
+                .iter()
+                .map(|line| Line::raw(cut(line, room)))
+                .collect()
+        }
+    };
+    let inner = rows.iter().map(Line::width).max().unwrap_or(0);
     let width = (inner as u16 + 4).min(screen.width);
-    let height = (lines.len() as u16 + 2).min(screen.height);
+    let height = (rows.len() as u16 + 2).min(screen.height);
     let x = hover.at.x.min(screen.width - width);
     let y = if hover.at.y + 1 + height <= screen.height {
         hover.at.y + 1
@@ -260,15 +277,30 @@ fn draw_link_popup(frame: &mut Frame, app: &App) {
         hover.at.y.saturating_sub(height)
     };
     let area = Rect::new(x, y, width, height);
-    let rows: Vec<Line> = lines
-        .iter()
-        .map(|line| Line::raw(cut(line, inner)))
-        .collect();
     let block = Block::bordered()
         .border_style(dim())
         .padding(Padding::horizontal(1));
     clear(frame, area);
     frame.render_widget(Paragraph::new(rows).block(block), area);
+}
+
+/// `source` laid out as markdown at most `width` wide, cut to
+/// `links::POPUP_LINES` rows with a last row of `…` when it runs longer.
+fn markdown_popup_rows(source: &str, width: usize) -> Vec<Line<'static>> {
+    let doc = cmr::parse(source);
+    let format = wrapped_format(width.max(1)).max_height(links::POPUP_LINES);
+    doc.render_with(format.build())
+        .rows()
+        .iter()
+        .map(|row| {
+            let spans: Vec<Span> = row
+                .pieces
+                .iter()
+                .map(|(text, style)| Span::styled(text.clone(), link_style(*style, &doc.links)))
+                .collect();
+            trim_end(Line::from(spans))
+        })
+        .collect()
 }
 
 /// A screen that says only `message`, centred and dim, while a session opens.
@@ -566,22 +598,39 @@ fn fitting_tabs(names: &[String], shown: usize, room: usize) -> Vec<usize> {
         .unwrap_or_default()
 }
 
-/// A `markdown` block's `source` drawn as markdown under its `head` row, in
-/// a box no wider than `width`. `header` is the width the head row takes
-/// after its gutter.
-fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize) -> MarkdownView {
-    let mut blocks = cmr::parse(source);
-    wrap_code(&mut blocks);
-    let links = cmr::links(&blocks);
+/// A `markdown` block's `lines` drawn as markdown under its `head` row, in
+/// a box no wider than `width`. `starts` holds the reply's byte each line
+/// starts at, and `header` is the width the head row takes after its gutter.
+fn markdown_view(
+    head: &Line<'static>,
+    lines: &[String],
+    starts: &[usize],
+    header: usize,
+    width: usize,
+) -> MarkdownView {
+    let source = lines.join("\n");
+    let mut joined = Vec::with_capacity(lines.len());
+    let mut at = 0;
+    for line in lines {
+        joined.push(at);
+        at += line.len() + 1;
+    }
+    let in_reply = |byte: usize| {
+        let line = joined
+            .partition_point(|&start| start <= byte)
+            .checked_sub(1)?;
+        Some(starts.get(line)? + byte - joined[line])
+    };
+    let doc = cmr::parse(&source);
     let gutter = head
         .spans
         .first()
         .map_or(Style::default(), |span| span.style);
     let inner = width.saturating_sub(2 + COPY_ROOM).max(1);
-    let laid = cmr::layout_marked(&blocks, inner);
+    let page = doc.render_with(wrapped_format(inner).build());
 
     // the head row comes first, and `│ ` starts every row after it
-    let runs = link_runs(&laid, &links)
+    let runs = link_runs(page.rows(), &doc.links)
         .into_iter()
         .map(|run| Run {
             row: run.row + 1,
@@ -591,13 +640,17 @@ fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize
         .collect();
     let mut rows = Drawn::default();
     rows.push(head.clone(), None);
-    for (row, mark) in laid {
+    for row in page.rows() {
+        let sources = text_sources(row)
+            .map(|byte| byte.and_then(in_reply))
+            .collect();
         let mut spans = vec![Span::styled("│ ", gutter)];
         spans.extend(
-            row.into_iter()
-                .map(|(text, style)| Span::styled(text, link_style(style, &links))),
+            row.pieces
+                .iter()
+                .map(|(text, style)| Span::styled(text.clone(), link_style(*style, &doc.links))),
         );
-        rows.push_text(trim_end(Line::from(spans)), 2 + mark.lead, mark.join);
+        rows.push_sourced(trim_end(Line::from(spans)), 2 + row.lead, row.join, sources);
     }
     let widest = rows.lines[1..].iter().map(Line::width).max().unwrap_or(0);
     let natural = widest.max(header + 2) + COPY_ROOM;
@@ -608,15 +661,24 @@ fn markdown_view(head: &Line<'static>, source: &str, header: usize, width: usize
     }
 }
 
-/// Set every code block in `blocks`, quoted ones included, to wrap.
-fn wrap_code(blocks: &mut [cmr::Block]) {
-    for block in blocks {
-        match block {
-            cmr::Block::Code { wrap, .. } => *wrap = true,
-            cmr::Block::Quote(inner) => wrap_code(inner),
-            _ => {}
-        }
-    }
+/// The format of markdown drawn in a box `width` wide: every code block
+/// wraps and every table rules its rows.
+fn wrapped_format(width: usize) -> cmr::FormatBuilder {
+    cmr::Format::builder()
+        .width(width)
+        .code(cmr::Overflow::Wrap)
+        .table_rules(true)
+}
+
+/// The format of a reply's block laid out alone at `width`: every table
+/// rules its rows, its columns between `COLUMN_FLOOR` and `COLUMN_CAP`, and
+/// one too wide at the floor keeps its columns and pans.
+fn block_format(width: usize) -> cmr::FormatBuilder {
+    cmr::Format::builder()
+        .width(width)
+        .table_rules(true)
+        .columns(COLUMN_FLOOR..=COLUMN_CAP)
+        .tables(cmr::Overflow::Keep)
 }
 
 /// Whether a code block fenced with `lang` wraps by default: one with no
@@ -649,8 +711,12 @@ const COPY_ROOM: usize = 2;
 /// The copy glyph, one column wide in every font.
 const COPY_GLYPH: &str = "\u{29c9}";
 
-/// The widest a table is laid out when measuring it.
-const TABLE_WIDTH: usize = 1000;
+/// The widest a table column is laid out, past which its cells wrap.
+const COLUMN_CAP: usize = 40;
+
+/// The narrowest a table column is squeezed to fit the box, past which the
+/// table pans.
+const COLUMN_FLOOR: usize = 16;
 
 impl Rendered {
     /// The text a copy of block `key` (an entry and a block within it) takes.
@@ -719,16 +785,14 @@ impl Rendered {
 }
 
 /// `text` laid out one block at a time. Prose goes at `width`. A code block
-/// keeps its natural width, as does a table wider than `width`. Either is a
+/// keeps its natural width, as does a table whose columns cannot be
+/// squeezed to fit `width`. Either is a
 /// `Part::Block`, and the screen windows one wider than `width`. Adjacent
 /// code blocks that each name a tab are one `Part::Tabs`.
 fn markdown(text: &str, width: usize) -> Vec<Part> {
     let mut parts: Vec<Part> = Vec::new();
-    let blocks = cmr::parse(text);
-
-    // a link's index counts across the entry's blocks, and a block laid out
-    // alone keeps the index the whole parse gave it
-    let links = cmr::links(&blocks);
+    let doc = cmr::parse(text);
+    let blocks = &doc.blocks;
     let mut block = 0;
     while block < blocks.len() {
         if block > 0 {
@@ -748,7 +812,7 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
         if !names.is_empty() {
             let end = block + names.len();
             let tabs = (block..end)
-                .filter_map(|n| kept_whole(n, &blocks[n], width, &links))
+                .filter_map(|n| kept_whole(&doc, n, width))
                 .collect();
             parts.push(Part::Tabs {
                 first: block,
@@ -758,11 +822,10 @@ fn markdown(text: &str, width: usize) -> Vec<Part> {
             block = end;
             continue;
         }
-        let item = &blocks[block];
-        match kept_whole(block, item, width, &links) {
+        match kept_whole(&doc, block, width) {
             Some(kept) => parts.push(Part::Block(kept)),
             None => {
-                let (rows, runs) = block_rows(item, width, &links);
+                let (rows, runs) = block_rows(&doc, block, block_format(width).build());
                 let (flow_rows, flow_runs) = flow(&mut parts);
                 let base = flow_rows.len();
                 flow_runs.extend(runs.into_iter().map(|run| Run {
@@ -790,29 +853,32 @@ fn flow(parts: &mut Vec<Part>) -> (&mut Drawn, &mut Vec<Run>) {
     }
 }
 
-/// The rows of one block, and where the links that act on a click sit in
-/// them. `links` are the links of the whole entry.
-fn block_rows(block: &cmr::Block, width: usize, links: &[cmr::Link]) -> (Drawn, Vec<Run>) {
-    let rows = cmr::layout_marked(std::slice::from_ref(block), width);
-    let runs = link_runs(&rows, links);
+/// The rows of block `index` of `doc` laid out alone, and where the links
+/// that act on a click sit in them.
+fn block_rows(doc: &cmr::Document, index: usize, format: cmr::Format) -> (Drawn, Vec<Run>) {
+    let page = doc.render_block(index, format);
+    let links = &doc.links;
+    let runs = link_runs(page.rows(), links);
     let mut lines = Drawn::default();
-    for (row, mark) in rows {
+    for row in page.rows() {
+        let sources = text_sources(row).collect();
         let line = row
-            .into_iter()
-            .map(|(text, style)| Span::styled(text, link_style(style, links)))
+            .pieces
+            .iter()
+            .map(|(text, style)| Span::styled(text.clone(), link_style(*style, links)))
             .collect();
-        lines.push_text(trim_end(line), mark.lead, mark.join);
+        lines.push_sourced(trim_end(line), row.lead, row.join, sources);
     }
     (lines, runs)
 }
 
 /// Where the links that act on a click sit in laid out `rows`, whose link
 /// numbers index `links`.
-fn link_runs(rows: &[(cmr::Row, cmr::Mark)], links: &[cmr::Link]) -> Vec<Run> {
+fn link_runs(rows: &[cmr::Row], links: &[cmr::Link]) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
-    for (row, (pieces, _)) in rows.iter().enumerate() {
+    for (row, laid) in rows.iter().enumerate() {
         let mut col = 0;
-        for (text, style) in pieces {
+        for (text, style) in &laid.pieces {
             let piece = text.width();
             if let Some(index) = style.link
                 && let Some(link) = links.get(index)
@@ -843,16 +909,20 @@ fn link_runs(rows: &[(cmr::Row, cmr::Mark)], links: &[cmr::Link]) -> Vec<Run> {
 
 /// A code block, or a table wider than `width`, as block number `index`
 /// kept whole.
-fn kept_whole(
-    index: usize,
-    block: &cmr::Block,
-    width: usize,
-    links: &[cmr::Link],
-) -> Option<KeptBlock> {
-    match block {
-        cmr::Block::Code { lang, lines, .. } => {
+fn kept_whole(doc: &cmr::Document, index: usize, width: usize) -> Option<KeptBlock> {
+    match &doc.blocks[index] {
+        cmr::Block::Code {
+            lang,
+            lines,
+            sources,
+            ..
+        } => {
             let markdown = lang.as_deref().is_some_and(is_markdown);
-            let longest = lines.iter().map(|line| line.width()).max().unwrap_or(0);
+            let longest = lines
+                .iter()
+                .map(|line| line.replace('\t', "    ").width())
+                .max()
+                .unwrap_or(0);
 
             // the gutter is two columns: `│ ` on a line, `┌ ` before the language
             let wide = longest + 2 + COPY_ROOM > width;
@@ -872,11 +942,19 @@ fn kept_whole(
 
             // a wide block with no language gets an empty one, so its
             // header row has room for the toggle
-            let headed = |wrap| cmr::Block::Code {
-                lang: Some(lang.clone().unwrap_or_default()),
-                lines: lines.clone(),
-                wrap,
-                tab: None,
+            let headed = (wide && lang.is_none()).then(|| cmr::Document {
+                blocks: vec![cmr::Block::Code {
+                    lang: Some(String::new()),
+                    lines: lines.clone(),
+                    sources: sources.clone(),
+                    wrap: false,
+                    tab: None,
+                }],
+                links: doc.links.clone(),
+            });
+            let (laid, at) = match &headed {
+                Some(headed) => (headed, 0),
+                None => (doc, index),
             };
             let header = |toggles: &[Toggle]| {
                 let gap = if toggles.is_empty() {
@@ -891,22 +969,20 @@ fn kept_whole(
                 }
             };
             let natural = longest.max(header(&toggles)) + 2 + COPY_ROOM;
-            let (mut rows, runs) = if wide && lang.is_none() {
-                block_rows(&headed(false), natural, links)
-            } else {
-                block_rows(block, natural, links)
-            };
+            let (mut rows, runs) = block_rows(laid, at, block_format(natural).build());
 
             // the header row holds the language and the toggles, which a
             // copy leaves out
             if lang.is_some() || wide {
                 rows.texts[0] = None;
             }
-            let source = lines.join("\n");
-            let rendered = markdown
-                .then(|| markdown_view(&rows.lines[0], &source, header(&toggles[..1]), width));
+            let rendered = markdown.then(|| {
+                markdown_view(&rows.lines[0], lines, sources, header(&toggles[..1]), width)
+            });
             let wrapped = wide.then(|| {
-                let mut rows = block_rows(&headed(true), width.saturating_sub(COPY_ROOM), links).0;
+                let format =
+                    block_format(width.saturating_sub(COPY_ROOM)).code(cmr::Overflow::Wrap);
+                let mut rows = block_rows(laid, at, format.build()).0;
                 rows.texts[0] = None;
                 Wrapped {
                     rows,
@@ -918,14 +994,14 @@ fn kept_whole(
                 block: index,
                 rows,
                 natural,
-                copy: Some(source),
+                copy: Some(lines.join("\n")),
                 runs,
                 rendered,
                 wrapped,
             })
         }
         cmr::Block::Table { .. } => {
-            let (rows, runs) = block_rows(block, TABLE_WIDTH, links);
+            let (rows, runs) = block_rows(doc, index, block_format(width).build());
             let natural = rows.lines.iter().map(Line::width).max().unwrap_or(0);
             (natural > width).then_some(KeptBlock {
                 block: index,
@@ -1129,6 +1205,9 @@ fn screen_style(style: cmr::Style) -> Style {
             _ => out.add_modifier(Modifier::DIM),
         };
     }
+    if style.italic {
+        out = out.add_modifier(Modifier::ITALIC);
+    }
     if style.underline {
         out = out.add_modifier(Modifier::UNDERLINED);
     }
@@ -1151,6 +1230,20 @@ impl Drawn {
     /// Push `line`, which holds text after its first `lead` columns.
     fn push_text(&mut self, line: Line<'static>, lead: usize, join: cmr::Join) {
         let text = line_text(&line, lead, join);
+        self.push(line, Some(text));
+    }
+
+    /// `push_text`, with the source byte of each character after `lead`.
+    fn push_sourced(
+        &mut self,
+        line: Line<'static>,
+        lead: usize,
+        join: cmr::Join,
+        mut sources: Vec<Option<usize>>,
+    ) {
+        let mut text = line_text(&line, lead, join);
+        sources.truncate(text.text.chars().count());
+        text.sources = sources;
         self.push(line, Some(text));
     }
 
@@ -1193,7 +1286,15 @@ fn line_text(line: &Line, lead: usize, join: cmr::Join) -> LineText {
         text,
         join,
         whole: None,
+        sources: Vec::new(),
     }
+}
+
+/// The source byte of each character of `row` after its lead.
+fn text_sources(row: &cmr::Row) -> impl Iterator<Item = Option<usize>> {
+    // cmr counts a column per char, and its leads are gutters and
+    // indents one column wide per char, so `lead` chars are `lead` columns
+    row.sources().into_iter().skip(row.lead)
 }
 
 /// `text` as a block panned by `offset` that shows `visible` columns shows
@@ -1202,11 +1303,13 @@ fn windowed(text: &LineText, offset: usize, visible: usize) -> LineText {
     let mut col = text.col;
     let mut first = None;
     let mut kept = String::new();
-    for ch in text.text.chars() {
+    let mut sources = Vec::new();
+    for (n, ch) in text.text.chars().enumerate() {
         let width = ch.width().unwrap_or(0);
         if col >= offset && col + width <= offset + visible {
             first.get_or_insert(col);
             kept.push(ch);
+            sources.push(text.sources.get(n).copied().flatten());
         }
         col += width;
     }
@@ -1216,12 +1319,14 @@ fn windowed(text: &LineText, offset: usize, visible: usize) -> LineText {
         text: kept,
         join: text.join,
         whole,
+        sources,
     }
 }
 
 /// The transcript laid out at one width.
 struct Built {
     lines: Drawn,
+    starts: Vec<usize>,
     wides: Vec<Wide>,
     copies: Vec<Copy>,
     folds: Vec<Fold>,
@@ -1285,9 +1390,81 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
         .filter(|(_, until)| *until > Instant::now())
         .map(|(key, _)| *key);
     let today = Time::now();
+    let mut starts = Vec::new();
+    let runs = tool_runs(&app.transcript.entries);
+    let spin = app.spinner;
+    let mut folded_until = 0;
+    let mut open_run: Option<Range<usize>> = None;
     for (index, entry) in app.transcript.entries.iter().enumerate() {
+        starts.push(lines.len());
+        if index < folded_until {
+            continue;
+        }
+        if open_run.as_ref().is_some_and(|run| index >= run.end) {
+            open_run = None;
+        }
+        if let Some(run) = runs.iter().find(|run| run.start == index) {
+            let tools: Vec<&Tool> = app.transcript.entries[run.clone()]
+                .iter()
+                .filter_map(|entry| match entry {
+                    Entry::Tool(tool) => Some(tool),
+                    _ => None,
+                })
+                .collect();
+            let id = group_id(tools[0]);
+            let expanded = app.expanded.contains(&id);
+            let hovered = app.hover_fold.as_ref() == Some(&id);
+            folds.push(Fold {
+                id,
+                first: lines.len(),
+                height: 1,
+                rows: 1,
+            });
+            lines.push_text(
+                group_row(&tools, usable, spin, expanded, hovered),
+                MARKER_WIDTH + 2,
+                cmr::Join::Break,
+            );
+            if !expanded {
+                lines.push_text(Line::default(), 0, cmr::Join::Break);
+                folded_until = run.end;
+                continue;
+            }
+            open_run = Some(run.clone());
+        }
+        let indent = if open_run.is_some() {
+            RUN_INDENT.len()
+        } else {
+            0
+        };
+        let first_row = lines.len();
         match entry {
-            Entry::User(prompt) => lines.append(bubble(prompt, today, width)),
+            Entry::User(prompt) => {
+                let drawn = bubble(prompt, today, width);
+                let top = lines.len();
+                for (row, text) in drawn.texts.iter().enumerate() {
+                    let Some(text) = text else { continue };
+                    let mut col = text.col;
+                    for ch in text.text.chars() {
+                        let mark = session::chip_number(ch)
+                            .and_then(|n| prompt.marks.iter().find(|mark| mark.number == n));
+                        if let Some(mark) = mark {
+                            spots.push(LinkSpot {
+                                key: (index, None, usize::MAX - mark.number),
+                                line: top + row,
+                                col: col.saturating_sub(2),
+                                width: 1,
+                                link: cmr::Link {
+                                    target: format!("mark:{}", mark.number),
+                                    title: Some(mark.text.clone()),
+                                },
+                            });
+                        }
+                        col += ch.width().unwrap_or(0);
+                    }
+                }
+                lines.append(drawn);
+            }
             Entry::Agent(reply) => {
                 let widest = (width * 9 / 10).max(5);
                 let visible_width = widest - 4;
@@ -1531,8 +1708,15 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
             Entry::Tool(tool) => {
                 let expanded = app.expanded.contains(&tool.id);
                 let hovered = app.hover_fold.as_ref() == Some(&tool.id);
-                let (rows, head) =
-                    tool_view(tool, &app.cwd, usable, expanded, hovered, &mut app.rendered);
+                let (rows, head) = tool_view(
+                    tool,
+                    &app.cwd,
+                    usable.saturating_sub(indent),
+                    spin,
+                    expanded,
+                    hovered,
+                    &mut app.rendered,
+                );
                 if expandable(tool) {
                     folds.push(Fold {
                         id: tool.id.clone(),
@@ -1544,7 +1728,7 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 lines.append(rows);
             }
             Entry::Permission { choice, .. } => {
-                let pad = width.saturating_sub(choice.width());
+                let pad = width.saturating_sub(indent + choice.width());
                 let line = Line::from(vec![
                     Span::raw(" ".repeat(pad)),
                     Span::styled(choice.clone(), Style::new().fg(palette::get().accent)),
@@ -1552,16 +1736,29 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 lines.push_text(line, pad, cmr::Join::Break);
             }
             Entry::Notice(text) => {
-                let text = cut(text, width);
-                let pad = (width - text.width()) / 2;
+                let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                let text = cut(&flat, width);
+                let pad = width.saturating_sub(text.width()) / 2;
                 let line = Line::from(format!("{}{text}", " ".repeat(pad))).style(dim());
                 lines.push_text(line, pad, cmr::Join::Break);
             }
         }
-        lines.push_text(Line::default(), 0, cmr::Join::Break);
+        if indent > 0 {
+            for row in &mut lines.lines[first_row..] {
+                row.spans.insert(0, Span::raw(RUN_INDENT));
+            }
+            for text in lines.texts[first_row..].iter_mut().flatten() {
+                text.col += indent;
+            }
+        }
+        let inside = open_run.as_ref().is_some_and(|run| index + 1 < run.end);
+        if !inside {
+            lines.push_text(Line::default(), 0, cmr::Join::Break);
+        }
     }
     Built {
         lines,
+        starts,
         wides,
         copies,
         folds,
@@ -1606,6 +1803,7 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
     }
     let Built {
         lines,
+        starts,
         wides,
         copies,
         folds,
@@ -1734,10 +1932,76 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
             frame.buffer_mut().set_style(cells.intersection(area), tint);
         }
     }
+    let mark_style = Style::new().bg(palette::get().selection);
+    let accent = Style::new().fg(palette::get().accent);
+    for mark in &app.marks {
+        let Some(&first) = starts.get(mark.entry) else {
+            continue;
+        };
+        let last = starts.get(mark.entry + 1).copied().unwrap_or(texts.len());
+        let mut chip = true;
+        for line in first..last.min(end) {
+            let Some(Some(text)) = texts.get(line) else {
+                continue;
+            };
+            let Some(cols) = text.marked(&mark.source) else {
+                continue;
+            };
+            if line >= start {
+                let y = area.y + (line - start) as u16;
+                let cells = Rect::new(area.x + cols.start as u16, y, cols.len() as u16, 1);
+                frame
+                    .buffer_mut()
+                    .set_style(cells.intersection(area), mark_style);
+                if chip {
+                    let glyph = session::chip(mark.number).to_string();
+                    frame.buffer_mut().set_string(area.x, y, glyph, accent);
+                }
+            }
+            chip = false;
+        }
+    }
+    app.mark_button = None;
+    let offered = app
+        .selection
+        .as_ref()
+        .filter(|selection| selection.pointer.is_none() && app.marks.len() < session::MAX_MARKS);
+    if let Some(selection) = offered {
+        let (from, to) = selection.ends();
+        let entry = select::entry_of(&starts, texts.len(), from.line);
+        let reply = entry.filter(|entry| {
+            select::entry_of(&starts, texts.len(), to.line) == Some(*entry)
+                && matches!(app.transcript.entries[*entry], Entry::Agent(_))
+        });
+        if reply.is_some() && (start..end).contains(&to.line) {
+            let text_end = texts[to.line]
+                .as_ref()
+                .map_or(0, |text| text.col + text.text.width());
+            let width = MARK_BUTTON.width() as u16;
+            let x =
+                (area.x + to.col.min(text_end) as u16 + 1).min(area.right().saturating_sub(width));
+            let button = Rect::new(x, area.y + (to.line - start) as u16, width, 1);
+            let style = if app.hover_mark {
+                Style::new()
+                    .fg(palette::get().background.unwrap_or(Color::Black))
+                    .bg(palette::get().accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+                    .fg(palette::get().accent)
+                    .bg(palette::get().tint)
+            };
+            frame
+                .buffer_mut()
+                .set_string(button.x, button.y, MARK_BUTTON, style);
+            app.mark_button = Some(button);
+        }
+    }
     app.texts = select::Texts {
         area,
         start,
         lines: texts,
+        starts,
     };
     app.v_bar = None;
     if area.width < outer.width {
@@ -1749,6 +2013,9 @@ fn draw_transcript(frame: &mut Frame, outer: Rect, app: &mut App) {
         app.v_bar = Some(bar);
     }
 }
+
+/// The button a finished selection inside one reply shows at its end.
+const MARK_BUTTON: &str = " + mark ";
 
 /// The conversation's scroll bar: its column on screen, and how far the
 /// conversation scrolls, in lines.
@@ -1894,7 +2161,7 @@ fn bubble(prompt: &Message, today: Time, width: usize) -> Drawn {
             rows.push_text(Line::default(), 0, cmr::Join::Break);
         }
         for (piece, join) in pieces {
-            rows.push_text(Line::from(piece), 0, join);
+            rows.push_text(Line::from(chip_spans(&piece, Style::default())), 0, join);
         }
     }
     let label = border_label(prompt, today, widest - 4);
@@ -2030,84 +2297,98 @@ fn wrapped(
     }
 }
 
-fn tool_block(tool: &Tool, cwd: &Path, width: usize) -> Drawn {
-    let word = if tool.agent {
+fn tool_block(tool: &Tool, cwd: &Path, width: usize, spin: usize) -> Drawn {
+    tool_rows(tool, cwd, width, spin, "")
+}
+
+/// A tool call's row: its icon, its kind, its title, then where it acted,
+/// its diff and how it ended, as far as they fit. `suffix` goes dim after
+/// the title. `spin` is the spinner's frame count.
+fn tool_rows(tool: &Tool, cwd: &Path, width: usize, spin: usize, suffix: &str) -> Drawn {
+    let (glyph, style) = tool_icon(tool);
+    let palette = palette::get();
+    let icon = if tool.cancelled {
+        Span::styled(format!("{glyph} "), dim())
+    } else {
+        match tool.status {
+            ToolCallStatus::InProgress => {
+                let frame = header::SPINNER[spin % header::SPINNER.len()];
+                Span::styled(format!("{frame} "), style)
+            }
+            ToolCallStatus::Completed => Span::styled(format!("{glyph} "), style),
+            ToolCallStatus::Failed => Span::styled("✗ ", Style::new().fg(palette.red)),
+            _ => Span::styled(format!("{glyph} "), dim()),
+        }
+    };
+    let mark = icon.width();
+    let word = if tool.agent || !tool.children.is_empty() {
         "agent"
     } else {
         kind_word(tool.kind)
     };
-    tool_rows(tool, cwd, width, word, "")
-}
-
-/// A tool call's head: the dot row, and a row under it unless the call is
-/// done with nothing to add. `word` goes in the kind column and `suffix` dim
-/// after the title.
-fn tool_rows(tool: &Tool, cwd: &Path, width: usize, word: &str, suffix: &str) -> Drawn {
-    let (dot, status, status_style) = match tool.status {
-        ToolCallStatus::InProgress => (
-            Style::new().fg(palette::get().yellow),
-            "running…",
-            Style::new().fg(palette::get().yellow),
-        ),
-        ToolCallStatus::Completed => (Style::new().fg(palette::get().green), "done", dim()),
-        ToolCallStatus::Failed => (
-            Style::new().fg(palette::get().red),
-            "failed",
-            Style::new().fg(palette::get().red),
-        ),
-        _ => (dim(), "pending", dim()),
-    };
-    let (dot, status, status_style) = if tool.cancelled {
-        (dim(), "cancelled", dim())
-    } else {
-        (dot, status, status_style)
-    };
-    let dot = Span::styled("● ", dot);
-    let mark = dot.width();
-    let head = [
-        dot,
-        Span::styled(format!("{word:<6}"), bold()),
+    let mut row = vec![
+        icon,
+        Span::styled(format!("{word:<6}"), style.add_modifier(Modifier::BOLD)),
         Span::raw(" "),
     ];
-    let room = width.saturating_sub(head.iter().map(Span::width).sum::<usize>() + suffix.width());
-    let mut first = head.to_vec();
-    first.push(Span::raw(cut(&tool.title, room)));
-    first.push(Span::styled(suffix.to_string(), dim()));
 
-    let lead = Span::styled("  ⎿  ", dim());
-    let lead_width = lead.width();
-    let room = width.saturating_sub(lead_width);
-    let mut second = vec![lead];
-    let mut detail = Vec::new();
+    let mut tail = Vec::new();
     let (added, removed) = tool.changed;
-    let mut used = 0;
     if added + removed > 0 {
-        let plus = format!("+{added}");
-        let minus = format!(" −{removed}");
-        used = plus.width() + minus.width();
-        detail.push(Span::styled(plus, Style::new().fg(palette::get().green)));
-        detail.push(Span::styled(minus, Style::new().fg(palette::get().red)));
+        tail.push(Span::raw("  "));
+        tail.push(Span::styled(
+            format!("+{added}"),
+            Style::new().fg(palette.green),
+        ));
+        tail.push(Span::styled(
+            format!(" −{removed}"),
+            Style::new().fg(palette.red),
+        ));
     }
+    if tool.cancelled {
+        tail.push(Span::styled("  cancelled", dim()));
+    } else if matches!(tool.status, ToolCallStatus::Pending) {
+        tail.push(Span::styled("  pending", dim()));
+    }
+    let fixed = row.iter().map(Span::width).sum::<usize>()
+        + suffix.width()
+        + tail.iter().map(Span::width).sum::<usize>();
+    let room = width.saturating_sub(fixed);
+    let title = cut(&tool.title, room);
 
     // the location gives way when the row cannot hold it
-    let place = location(tool, cwd).filter(|place| place.width() + 2 + used <= room);
+    let left = room.saturating_sub(title.width());
+    let place = location(tool, cwd).filter(|place| place.width() + 2 <= left);
+    row.push(Span::raw(title));
     if let Some(place) = place {
-        second.push(Span::styled(place, dim()));
-        if used > 0 {
-            second.push(Span::raw("  "));
-        }
+        row.push(Span::styled(format!("  {place}"), dim()));
     }
-    second.extend(detail);
+    row.push(Span::styled(suffix.to_string(), dim()));
+    row.extend(tail);
     let mut rows = Drawn::default();
-    rows.push_text(Line::from(first), mark, cmr::Join::Break);
-    if second.len() == 1 {
-        if tool.status == ToolCallStatus::Completed {
-            return rows;
-        }
-        second.push(Span::styled(status, status_style));
-    }
-    rows.push_text(Line::from(second), lead_width, cmr::Join::Break);
+    rows.push_text(Line::from(row), mark, cmr::Join::Break);
     rows
+}
+
+/// A call's icon and the colour its icon and kind share.
+fn tool_icon(tool: &Tool) -> (&'static str, Style) {
+    let palette = palette::get();
+    let colour = |colour| Style::new().fg(colour);
+    if tool.agent || !tool.children.is_empty() {
+        return ("•", dim());
+    }
+    match tool.kind {
+        ToolKind::Read => ("≡", colour(palette.blue)),
+        ToolKind::Search => ("◎", colour(palette.cyan)),
+        ToolKind::Edit => ("±", colour(palette.yellow)),
+        ToolKind::Delete => ("⌫", colour(palette.orange)),
+        ToolKind::Move => ("➜", colour(palette.blue)),
+        ToolKind::Execute => ("❯", colour(palette.magenta)),
+        ToolKind::Fetch => ("↓", colour(palette.cyan)),
+        ToolKind::Think => ("∴", dim()),
+        ToolKind::SwitchMode => ("◇", colour(palette.accent)),
+        _ => ("•", dim()),
+    }
 }
 
 /// Whether a click on the call shows more of it: a subagent's work, an edit's
@@ -2146,53 +2427,186 @@ fn tool_view(
     tool: &Tool,
     cwd: &Path,
     width: usize,
+    spin: usize,
     expanded: bool,
     hovered: bool,
     rendered: &mut Rendered,
 ) -> (Drawn, usize) {
+    let room = width.saturating_sub(MARKER_WIDTH);
     if !expandable(tool) {
-        let lines = tool_block(tool, cwd, width);
+        let mut lines = tool_block(tool, cwd, room, spin);
         let head = lines.len();
+        behind_marker(&mut lines, None);
         return (lines, head);
     }
 
-    // two columns go to the marker at the end of the title row
-    let room = width.saturating_sub(2);
     let (mut lines, head) = if tool.children.is_empty() {
-        let lines = tool_block(tool, cwd, room);
+        let lines = tool_block(tool, cwd, room, spin);
         let head = lines.len();
         (lines, head)
     } else {
-        let head = subagent_head(tool, cwd, room).len();
-        (subagent_block(tool, cwd, room, expanded), head)
+        let head = subagent_head(tool, cwd, room, spin).len();
+        (subagent_block(tool, cwd, room, spin, expanded), head)
     };
-    lines.lines[0] = with_marker(lines.lines[0].clone(), width, expanded, hovered);
     if expanded && tool.children.is_empty() {
-        let inner = width.saturating_sub(SUBAGENT_INDENT.len());
+        let inner = room.saturating_sub(SUBAGENT_INDENT.len());
         lines.extend(rendered.expanded(tool, inner));
     }
+    behind_marker(&mut lines, Some(marker(expanded, hovered)));
     (lines, head)
 }
 
-/// `title` with the fold marker in column `width`: `▸` folded, `▾` expanded,
-/// dim until the block is hovered.
-fn with_marker(
-    mut title: Line<'static>,
+/// The runs of two or more tool calls in a row, as ranges of entries from
+/// the first call to the last. A permission row stays inside a run, and any
+/// other entry ends it.
+fn tool_runs(entries: &[Entry]) -> Vec<Range<usize>> {
+    let mut runs = Vec::new();
+    let mut run: Option<(usize, usize, usize)> = None;
+    for (index, entry) in entries.iter().enumerate() {
+        match entry {
+            Entry::Tool(_) => {
+                let (start, _, count) = run.unwrap_or((index, index, 0));
+                run = Some((start, index, count + 1));
+            }
+            Entry::Permission { .. } => {}
+            _ => {
+                if let Some((start, last, count)) = run.take()
+                    && count > 1
+                {
+                    runs.push(start..last + 1);
+                }
+            }
+        }
+    }
+    if let Some((start, last, count)) = run
+        && count > 1
+    {
+        runs.push(start..last + 1);
+    }
+    runs
+}
+
+/// The fold key of the run that starts with `first`, apart from the key of
+/// `first`'s own fold.
+fn group_id(first: &Tool) -> ToolCallId {
+    ToolCallId::new(format!("group:{}", first.id.0))
+}
+
+/// A run of tool calls folded into one row: how the run stands, the number
+/// of calls, a count of each kind in its colour, their diffs added up, the
+/// failures, and the call in progress. `spin` is the spinner's frame count.
+fn group_row(
+    tools: &[&Tool],
     width: usize,
+    spin: usize,
     expanded: bool,
     hovered: bool,
 ) -> Line<'static> {
+    let palette = palette::get();
+    let running = tools.iter().find(|tool| {
+        !tool.cancelled
+            && matches!(
+                tool.status,
+                ToolCallStatus::InProgress | ToolCallStatus::Pending
+            )
+    });
+    let failed = tools
+        .iter()
+        .filter(|tool| tool.status == ToolCallStatus::Failed)
+        .count();
+    let icon = if failed > 0 {
+        Span::styled("✗ ", Style::new().fg(palette.red))
+    } else if running.is_some() {
+        let frame = header::SPINNER[spin % header::SPINNER.len()];
+        Span::styled(format!("{frame} "), Style::new().fg(palette.yellow))
+    } else {
+        Span::styled("✓ ", Style::new().fg(palette.green))
+    };
+    let mut kinds: Vec<(&str, Style, usize)> = Vec::new();
+    for tool in tools {
+        let word = if tool.agent || !tool.children.is_empty() {
+            "agent"
+        } else {
+            kind_word(tool.kind)
+        };
+        match kinds.iter_mut().find(|(seen, _, _)| *seen == word) {
+            Some((_, _, count)) => *count += 1,
+            None => kinds.push((word, tool_icon(tool).1, 1)),
+        }
+    }
+    let mut spans = vec![
+        icon,
+        Span::styled(format!("{} tools", tools.len()), bold()),
+        Span::raw("  "),
+    ];
+    let added: usize = tools.iter().map(|tool| tool.changed.0).sum();
+    let removed: usize = tools.iter().map(|tool| tool.changed.1).sum();
+    for (at, (word, style, count)) in kinds.iter().enumerate() {
+        if at > 0 {
+            spans.push(Span::styled(" · ", dim()));
+        }
+        spans.push(Span::styled(format!("{word} "), *style));
+        spans.push(Span::styled(
+            count.to_string(),
+            Style::new().fg(palette.foreground),
+        ));
+        if *word == "edit" && added + removed > 0 {
+            spans.push(Span::raw(" ("));
+            spans.push(Span::styled(
+                format!("+{added}"),
+                Style::new().fg(palette.green),
+            ));
+            spans.push(Span::styled(
+                format!(" −{removed}"),
+                Style::new().fg(palette.red),
+            ));
+            spans.push(Span::raw(")"));
+        }
+    }
+    if failed > 0 {
+        spans.push(Span::styled(
+            format!(" · {failed} failed"),
+            Style::new().fg(palette.red),
+        ));
+    }
+    if let Some(tool) = running {
+        let used = MARKER_WIDTH + spans.iter().map(Span::width).sum::<usize>() + 3;
+        let room = width.saturating_sub(used);
+        spans.push(Span::styled(
+            format!(" · {}", cut(&tool.title, room)),
+            dim(),
+        ));
+    }
+    spans.insert(0, marker(expanded, hovered));
+    Line::from(spans)
+}
+
+/// The columns the fold marker and the space after it take.
+const MARKER_WIDTH: usize = 2;
+
+/// The fold marker that leads a foldable row: `▸` folded, `▾` expanded,
+/// dim until the row is hovered.
+fn marker(expanded: bool, hovered: bool) -> Span<'static> {
     let style = if hovered {
         Style::new().fg(palette::get().accent)
     } else {
         dim()
     };
-    let gap = width.saturating_sub(1 + title.width());
-    title.spans.push(Span::raw(" ".repeat(gap)));
-    title
-        .spans
-        .push(Span::styled(if expanded { "▾" } else { "▸" }, style));
-    title
+    Span::styled(if expanded { "▾ " } else { "▸ " }, style)
+}
+
+/// Shift `lines` right by the marker's columns, with `marker` on the first
+/// row, or blank when the call does not fold.
+fn behind_marker(lines: &mut Drawn, marker: Option<Span<'static>>) {
+    let blank = || Span::raw(" ".repeat(MARKER_WIDTH));
+    for (at, row) in lines.lines.iter_mut().enumerate() {
+        let lead = match (&marker, at) {
+            (Some(marker), 0) => marker.clone(),
+            _ => blank(),
+        };
+        row.spans.insert(0, lead);
+    }
+    lines.indent(MARKER_WIDTH);
 }
 
 /// The unchanged lines kept either side of a change in a diff.
@@ -2263,12 +2677,14 @@ fn diff_rows(content: &[ToolCallContent], width: usize) -> Drawn {
 fn output_rows(content: &[ToolCallContent], width: usize) -> Drawn {
     let mut rows = Drawn::default();
     for text in output(content) {
-        for (row, mark) in cmr::layout_marked(&cmr::parse(text), width) {
+        let page = cmr::parse(text).render_with(cmr::Format::builder().width(width).build());
+        for row in page.rows() {
             let line = row
-                .into_iter()
-                .map(|(text, style)| Span::styled(text, screen_style(style)))
+                .pieces
+                .iter()
+                .map(|(text, style)| Span::styled(text.clone(), screen_style(*style)))
                 .collect();
-            rows.push_text(trim_end(line), mark.lead, mark.join);
+            rows.push_text(trim_end(line), row.lead, row.join);
         }
     }
     rows
@@ -2276,15 +2692,15 @@ fn output_rows(content: &[ToolCallContent], width: usize) -> Drawn {
 
 /// A subagent's call: folded to its two rows, or expanded with what the
 /// subagent did indented under it.
-fn subagent_block(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> Drawn {
-    let mut lines = subagent_head(tool, cwd, width);
+fn subagent_block(tool: &Tool, cwd: &Path, width: usize, spin: usize, expanded: bool) -> Drawn {
+    let mut lines = subagent_head(tool, cwd, width, spin);
     if !expanded {
         return lines;
     }
     let inner = width.saturating_sub(SUBAGENT_INDENT.len());
     for child in &tool.children {
         let mut rows = match child {
-            Child::Tool(call) => tool_block(call, cwd, inner),
+            Child::Tool(call) => tool_block(call, cwd, inner, spin),
             Child::Text(text) => {
                 let mut rows = Drawn::default();
                 wrapped(
@@ -2318,13 +2734,16 @@ fn subagent_block(tool: &Tool, cwd: &Path, width: usize, expanded: bool) -> Draw
     lines
 }
 
-fn subagent_head(tool: &Tool, cwd: &Path, width: usize) -> Drawn {
+fn subagent_head(tool: &Tool, cwd: &Path, width: usize, spin: usize) -> Drawn {
     let count = tool.tool_count();
     let noun = if count == 1 { "tool" } else { "tools" };
-    tool_rows(tool, cwd, width, "agent", &format!("  {count} {noun}"))
+    tool_rows(tool, cwd, width, spin, &format!("  {count} {noun}"))
 }
 
 const SUBAGENT_INDENT: &str = "    ";
+
+/// How far an unfolded run's calls sit in from its row.
+const RUN_INDENT: &str = "    ";
 
 fn kind_word(kind: ToolKind) -> &'static str {
     match kind {
@@ -2364,7 +2783,9 @@ pub fn cut(text: &str, room: usize) -> String {
     let mut out = String::new();
     let mut used = 0;
     for ch in text.chars() {
-        let width = ch.width().unwrap_or(0);
+        // measured as a string, as `text.width()` measures it, where a
+        // newline takes a column though the char has no width
+        let width = ch.encode_utf8(&mut [0; 4]).width();
         if used + width > room - 1 {
             break;
         }
@@ -2427,104 +2848,143 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// The open form in the prompt's place, scrolled to keep the `focus` lines in
-/// view, under a rule carrying its message and keys.
+/// The open form in a box over the prompt's rows and the rule above them,
+/// scrolled to keep the `focus` lines in view, with its keys on the bottom
+/// border.
 fn draw_form(
     frame: &mut Frame,
-    rule: Rect,
     area: Rect,
     app: &App,
     lines: Vec<Line<'static>>,
     focus: Range<usize>,
 ) {
-    let Some(asked) = &app.form else {
+    if app.form.is_none() {
         return;
-    };
-    let keys = match app.forms.len() {
-        0 => "enter pick   esc dismiss".to_string(),
-        more => format!("{more} more   enter pick   esc dismiss"),
-    };
-    let width = rule.width as usize;
-    let title = cut(&asked.form.message, width.saturating_sub(keys.width() + 9));
-    let rest = width.saturating_sub(title.width() + keys.width() + 8);
-    let title_style = Style::new()
-        .fg(palette::get().blue)
-        .add_modifier(Modifier::BOLD);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("── ", dim()),
-            Span::styled(title, title_style),
-            Span::styled(format!(" {} ", "─".repeat(rest)), dim()),
-            Span::styled(keys, dim()),
-            Span::styled(" ──", dim()),
-        ])),
-        rule,
-    );
+    }
+    let accent = Style::new().fg(palette::get().accent);
+    let mut block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(accent)
+        .padding(Padding::horizontal(1))
+        .title_bottom(Line::styled(" ↑↓ move · enter pick · esc dismiss ", dim()).right_aligned());
+    if !app.forms.is_empty() {
+        block = block.title_bottom(Line::styled(format!(" {} more ", app.forms.len()), accent));
+    }
+    let body = block.inner(area);
     let skip = focus
         .end
-        .saturating_sub(area.height as usize)
+        .saturating_sub(body.height as usize)
         .min(focus.start);
     let lines: Vec<Line> = lines.into_iter().skip(skip).collect();
-    let lead = PROMPT_LEAD.len() as u16;
-    let body = Rect {
-        x: area.x + lead.min(area.width),
-        width: area.width.saturating_sub(lead),
-        ..area
-    };
-    frame.render_widget(Paragraph::new(lines), body);
+    clear(frame, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
+
+/// The columns the form's box takes from the screen's width: two borders and
+/// a column of padding inside each.
+const FORM_FRAME: usize = 4;
+
+/// The columns before each row's text, where the cursor's bar is drawn.
+const FORM_LEAD: usize = 2;
 
 /// The form's lines at `width`, and the lines to keep in view: the cursor's
 /// row through the end of the preview it shows.
 fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, Range<usize>) {
     let rows = form.rows();
     let preview = form.focused_preview();
-    let mut lines: Vec<Line> = Vec::new();
+    let room = width.saturating_sub(FORM_LEAD);
+    let indent = " ".repeat(FORM_LEAD);
+    let questions = form.fields.iter().filter(|f| f.other_of.is_none()).count();
+    let title_style = Style::new()
+        .fg(palette::get().blue)
+        .add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line> = wrap(&form.message, width)
+        .into_iter()
+        .map(|piece| Line::styled(piece, title_style))
+        .collect();
     let mut focus = 0..0;
     let mut shown_field = None;
+    let mut number = 0;
     for (index, row) in rows.iter().enumerate() {
         let field = form::row_field(*row);
-        if field != shown_field {
-            if !lines.is_empty() {
-                lines.push(Line::default());
-            }
+        let other = field.is_some_and(|field| form.fields[field].other_of.is_some());
+        if field != shown_field && !other {
+            lines.push(Line::default());
             if let Some(field) = field.map(|field| &form.fields[field]) {
-                lines.push(Line::styled(cut(&field.title, width), bold()));
-                for piece in field
-                    .description
-                    .iter()
-                    .flat_map(|text| textwrap::wrap(text, width))
-                {
-                    lines.push(Line::styled(piece.into_owned(), dim()));
+                number += 1;
+                let count = if questions > 1 {
+                    format!(" · {number} of {questions}")
+                } else {
+                    String::new()
+                };
+                let mut title = wrap(&field.title, room.saturating_sub(count.width()));
+                let last = title.pop().unwrap_or_default();
+                for piece in title {
+                    lines.push(Line::styled(format!("{indent}{piece}"), bold()));
+                }
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{indent}{last}"), bold()),
+                    Span::styled(count, dim()),
+                ]));
+                for piece in field.description.iter().flat_map(|text| wrap(text, room)) {
+                    lines.push(Line::styled(format!("{indent}{piece}"), dim()));
                 }
             }
-            shown_field = field;
         }
-        if index == form.cursor {
-            focus = lines.len()..lines.len() + 1;
+        shown_field = field;
+        let focused = index == form.cursor;
+        let row_lines = form_row(form, *row, room, focused);
+        if focused {
+            focus = lines.len()..lines.len() + row_lines.len();
         }
-        let line = form_row(form, *row, width);
-        lines.push(if index == form.cursor {
-            line.style(Style::new().bg(palette::get().selection))
-        } else {
-            line
-        });
+        for line in row_lines {
+            let lead = if focused {
+                Span::styled("▌ ", Style::new().fg(palette::get().accent))
+            } else {
+                Span::raw(indent.clone())
+            };
+            let mut spans = vec![lead];
+            spans.extend(line.spans);
+            let line = Line::from(spans).style(line.style);
+            lines.push(if focused {
+                line.patch_style(Style::new().bg(palette::get().selection))
+            } else {
+                line
+            });
+        }
         let last_of_field = rows.get(index + 1).and_then(|next| form::row_field(*next)) != field;
         if let Some((previewed, text)) = preview
             && field == Some(previewed)
             && last_of_field
         {
-            lines.extend(preview_lines(text, width));
+            for line in preview_lines(text, room) {
+                let mut spans = vec![Span::raw(indent.clone())];
+                spans.extend(line.spans);
+                lines.push(Line::from(spans).style(line.style));
+            }
             focus.end = lines.len();
         }
     }
     if let Some(error) = &form.error {
-        lines.push(Line::styled(
-            cut(error, width),
-            Style::new().fg(palette::get().yellow),
-        ));
+        let yellow = Style::new().fg(palette::get().yellow);
+        for piece in wrap(error, room) {
+            lines.push(Line::styled(format!("{indent}{piece}"), yellow));
+        }
     }
     (lines, focus)
+}
+
+/// `text` broken into lines of at most `width` columns, at least one.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let pieces: Vec<String> = textwrap::wrap(text, width.max(1))
+        .into_iter()
+        .map(|piece| piece.into_owned())
+        .collect();
+    if pieces.is_empty() {
+        vec![String::new()]
+    } else {
+        pieces
+    }
 }
 
 /// An option's preview in a dim box at most `width` wide, each line cut to
@@ -2547,55 +3007,147 @@ fn preview_lines(preview: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-fn form_row(form: &Form, row: Row, width: usize) -> Line<'static> {
+/// The fewest columns a question's descriptions get beside its titles.
+const DESCRIPTION_MIN: usize = 16;
+
+/// The width of a question's title column, marks included, or `None` when
+/// its options have no descriptions or the box is too narrow for a second
+/// column.
+fn title_column(options: &[form::Choice], mark: usize, width: usize) -> Option<usize> {
+    if options.iter().all(|choice| choice.description.is_none()) {
+        return None;
+    }
+    let widest = options.iter().map(|choice| choice.title.width()).max()?;
+    let cap = width.checked_sub(2 + DESCRIPTION_MIN)?;
+    (cap > mark).then(|| (widest + mark).min(cap))
+}
+
+/// A row's lines, at most `width` wide.
+fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'static>> {
     let accent = Style::new().fg(palette::get().accent);
+    let green = Style::new().fg(palette::get().green);
+    let mark_style = |on: bool| if on { green } else { dim() };
     match row {
         Row::Option(field, option) => {
-            let (choice, mark) = match &form.fields[field].kind {
+            let (options, mark, on) = match &form.fields[field].kind {
                 FormKind::Choice { options, picked } => {
-                    let mark = if *picked == Some(option) {
-                        "● "
-                    } else {
-                        "○ "
-                    };
-                    (&options[option], mark)
+                    let on = *picked == Some(option);
+                    (options, if on { "● " } else { "○ " }, on)
                 }
                 FormKind::Many { options, picked } => {
-                    let mark = if picked[option] { "[x] " } else { "[ ] " };
-                    (&options[option], mark)
+                    let on = picked[option];
+                    (options, if on { "■ " } else { "□ " }, on)
                 }
-                _ => return Line::default(),
+                _ => return Vec::new(),
             };
-            let title = cut(&choice.title, width.saturating_sub(mark.width()));
-            let mut spans = vec![Span::styled(mark, accent), Span::raw(title.clone())];
-            if let Some(description) = &choice.description {
-                let room = width.saturating_sub(mark.width() + title.width() + 2);
-                if room > 1 {
-                    spans.push(Span::styled(format!("  {}", cut(description, room)), dim()));
+            let choice = &options[option];
+            let indent = " ".repeat(mark.width());
+            let column = title_column(options, mark.width(), width);
+            let room = column.unwrap_or(width).saturating_sub(mark.width());
+            let mut lines: Vec<Vec<Span>> = wrap(&choice.title, room)
+                .into_iter()
+                .enumerate()
+                .map(|(n, piece)| {
+                    let lead = if n == 0 {
+                        Span::styled(mark, mark_style(on))
+                    } else {
+                        Span::raw(indent.clone())
+                    };
+                    vec![lead, Span::raw(piece)]
+                })
+                .collect();
+            match (column, &choice.description) {
+                (Some(column), Some(description)) => {
+                    let pieces = wrap(description, width.saturating_sub(column + 2));
+                    for (n, piece) in pieces.into_iter().enumerate() {
+                        if n == lines.len() {
+                            lines.push(Vec::new());
+                        }
+                        let used: usize = lines[n].iter().map(|span| span.width()).sum();
+                        lines[n].push(Span::raw(" ".repeat(column + 2 - used)));
+                        lines[n].push(Span::styled(piece, dim()));
+                    }
                 }
+                (None, Some(description)) => {
+                    for piece in wrap(description, room) {
+                        lines.push(vec![Span::styled(format!("{indent}{piece}"), dim())]);
+                    }
+                }
+                _ => {}
             }
-            Line::from(spans)
+            lines.into_iter().map(Line::from).collect()
         }
         Row::Text(field) => {
-            let FormKind::Text { text, .. } = &form.fields[field].kind else {
-                return Line::default();
+            let field = &form.fields[field];
+            let FormKind::Text { text, .. } = &field.kind else {
+                return Vec::new();
             };
-            let shown = if text.is_empty() {
-                Span::styled("type here", dim())
+            let room = width.saturating_sub(2);
+            let mut pieces: Vec<Vec<Span>> = if text.is_empty() {
+                let placeholder = match (&field.description, field.other_of) {
+                    (Some(description), Some(_)) => description.as_str(),
+                    _ => "type here",
+                };
+                wrap(placeholder, room)
+                    .into_iter()
+                    .map(|piece| vec![Span::styled(piece, dim())])
+                    .collect()
             } else {
-                Span::raw(cut(text, width.saturating_sub(2)))
+                prompt::wrap_rows(text, room)
+                    .into_iter()
+                    .map(|range| vec![Span::raw(text[range].to_string())])
+                    .collect()
             };
-            Line::from(vec![Span::styled("› ", accent), shown])
+            if focused {
+                let block = Span::styled(" ", Style::new().add_modifier(Modifier::REVERSED));
+                if text.is_empty() {
+                    pieces[0].insert(0, block);
+                } else if let Some(last) = pieces.last_mut() {
+                    last.push(block);
+                }
+            }
+            pieces
+                .into_iter()
+                .enumerate()
+                .map(|(n, mut spans)| {
+                    let lead = if n == 0 { "› " } else { "  " };
+                    spans.insert(0, Span::styled(lead, accent));
+                    Line::from(spans)
+                })
+                .collect()
         }
         Row::Toggle(field) => {
             let FormKind::Toggle(on) = form.fields[field].kind else {
-                return Line::default();
+                return Vec::new();
             };
-            let mark = if on { "[x] yes" } else { "[ ] no" };
-            Line::styled(mark, accent)
+            let mark = if on { "■ yes" } else { "□ no" };
+            vec![Line::styled(mark, mark_style(on))]
         }
-        Row::Submit => Line::styled("submit", accent.add_modifier(Modifier::BOLD)),
+        Row::Submit => vec![Line::styled("submit", accent.add_modifier(Modifier::BOLD))],
     }
+}
+
+/// `text` as spans in `style`, with each mark chip in the accent colour.
+fn chip_spans(text: &str, style: Style) -> Vec<Span<'static>> {
+    let accent = Style::new()
+        .fg(palette::get().accent)
+        .add_modifier(Modifier::BOLD);
+    let mut spans = Vec::new();
+    let mut plain = String::new();
+    for ch in text.chars() {
+        if session::chip_number(ch).is_some() {
+            if !plain.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut plain), style));
+            }
+            spans.push(Span::styled(ch.to_string(), accent));
+        } else {
+            plain.push(ch);
+        }
+    }
+    if !plain.is_empty() || spans.is_empty() {
+        spans.push(Span::styled(plain, style));
+    }
+    spans
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<Color>) {
@@ -2610,7 +3162,9 @@ fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<C
             } else {
                 Span::raw(PROMPT_LEAD)
             };
-            Line::from(vec![lead, Span::styled(row.clone(), text)])
+            let mut spans = vec![lead];
+            spans.extend(chip_spans(row, text));
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), area);
@@ -3051,7 +3605,7 @@ mod tests {
     }
 
     fn rows(tool: &Tool, width: usize) -> Vec<String> {
-        tool_block(tool, Path::new("/work"), width)
+        tool_block(tool, Path::new("/work"), width, 0)
             .lines
             .into_iter()
             .map(|line| line.to_string())
@@ -3062,40 +3616,62 @@ mod tests {
     fn a_tool_title_too_long_for_the_row_is_cut_with_an_ellipsis() {
         let tool = tool("Read a/very/long/path/to/some/file.rs", "/work/x.rs", None);
         let rows = rows(&tool, 30);
-        assert_eq!(rows[0], "● read   Read a/very/long/pat…");
+        assert_eq!(rows, ["≡ read   Read a/very/long/pat…"]);
         assert_eq!(rows[0].chars().count(), 30);
-        assert_eq!(rows[1], "  ⎿  x.rs");
+    }
+
+    #[test]
+    fn each_kind_of_call_has_its_own_icon_and_its_name_takes_the_icon_colour() {
+        let palette = palette::get();
+        let mut call = tool("x", "/work/x", None);
+        call.locations.clear();
+        for (kind, glyph, colour) in [
+            (ToolKind::Read, "≡", Some(palette.blue)),
+            (ToolKind::Search, "◎", Some(palette.cyan)),
+            (ToolKind::Edit, "±", Some(palette.yellow)),
+            (ToolKind::Delete, "⌫", Some(palette.orange)),
+            (ToolKind::Move, "➜", Some(palette.blue)),
+            (ToolKind::Execute, "❯", Some(palette.magenta)),
+            (ToolKind::Fetch, "↓", Some(palette.cyan)),
+            (ToolKind::Think, "∴", dim().fg),
+            (ToolKind::SwitchMode, "◇", Some(palette.accent)),
+            (ToolKind::Other, "•", dim().fg),
+        ] {
+            call.kind = kind;
+            let line = &tool_block(&call, Path::new("/work"), 60, 0).lines[0];
+            assert_eq!(line.spans[0].content, format!("{glyph} "));
+            assert_eq!(line.spans[0].style.fg, colour, "{kind:?}");
+            assert_eq!(line.spans[1].style.fg, colour, "{kind:?}");
+        }
     }
 
     #[test]
     fn the_location_is_dropped_when_the_title_already_names_the_file() {
         let shown = tool("Read src/main.rs", "/work/src/main.rs", Some(3));
-        assert_eq!(rows(&shown, 80), ["● read   Read src/main.rs"]);
+        assert_eq!(rows(&shown, 80), ["≡ read   Read src/main.rs"]);
         let other = tool("Read the entry point", "/work/src/main.rs", Some(3));
-        assert_eq!(rows(&other, 80)[1], "  ⎿  src/main.rs:3");
+        assert_eq!(
+            rows(&other, 80),
+            ["≡ read   Read the entry point  src/main.rs:3"]
+        );
     }
 
     #[test]
     fn the_location_gives_way_when_the_row_cannot_hold_it() {
         let tool = tool("Read the entry point", "/work/src/main.rs", Some(3));
-        assert_eq!(rows(&tool, 15), ["● read   Read …"]);
+        assert_eq!(rows(&tool, 15), ["≡ read   Read …"]);
     }
 
     #[test]
-    fn an_edit_shows_its_size_after_the_location() {
+    fn an_edit_shows_its_location_and_its_size_on_its_own_row() {
         let mut edit = tool("Write the notes", "/work/NOTES.md", None);
+        edit.kind = ToolKind::Edit;
         edit.content = vec![ToolCallContent::Diff(Diff::new("NOTES.md", "a\nb\n"))];
         edit.changed = crate::diff::size(&edit.content);
-        assert_eq!(rows(&edit, 80)[1], "  ⎿  NOTES.md  +2 −0");
-    }
-
-    #[test]
-    fn a_tool_with_nothing_to_show_names_its_status() {
-        let mut pending = tool("Read src/main.rs", "/work/src/main.rs", None);
-        pending.status = ToolCallStatus::InProgress;
-        assert_eq!(rows(&pending, 80)[1], "  ⎿  running…");
-        pending.status = ToolCallStatus::Failed;
-        assert_eq!(rows(&pending, 80)[1], "  ⎿  failed");
+        assert_eq!(
+            rows(&edit, 80),
+            ["± edit   Write the notes  NOTES.md  +2 −0"]
+        );
     }
 
     #[test]
@@ -3153,6 +3729,50 @@ mod tests {
     }
 
     #[test]
+    fn a_markdown_popup_lays_out_its_source_and_cuts_a_long_one() {
+        let rows = markdown_popup_rows("**Title**\n\nSome `code` here.", 40);
+        assert_eq!(plain(&rows), ["Title", "", "Some code here."]);
+        assert!(rows[0].spans[0].style.add_modifier.contains(Modifier::BOLD));
+        let long: String = (0..30).map(|n| format!("line {n}\n\n")).collect();
+        let rows = markdown_popup_rows(&long, 40);
+        assert_eq!(rows.len(), links::POPUP_LINES);
+        assert_eq!(plain(&rows).last().unwrap(), "…");
+    }
+
+    fn choice(title: &str, description: Option<&str>) -> form::Choice {
+        form::Choice {
+            value: title.to_string(),
+            title: title.to_string(),
+            description: description.map(str::to_string),
+            preview: None,
+        }
+    }
+
+    #[test]
+    fn a_questions_descriptions_start_in_one_column_past_its_widest_title() {
+        let options = [choice("Memory", Some("lost")), choice("Disk", None)];
+        assert_eq!(title_column(&options, 2, 60), Some(8));
+        let long = [choice(&"x".repeat(50), Some("why")), choice("Disk", None)];
+        assert_eq!(title_column(&long, 2, 60), Some(60 - 2 - DESCRIPTION_MIN));
+    }
+
+    #[test]
+    fn a_question_too_narrow_for_two_columns_or_with_no_descriptions_has_none() {
+        let options = [choice("Memory", Some("lost")), choice("Disk", None)];
+        assert_eq!(title_column(&options, 2, 20), None);
+        let plain = [choice("Linux", None), choice("macOS", None)];
+        assert_eq!(title_column(&plain, 4, 60), None);
+    }
+
+    #[test]
+    fn cut_never_returns_text_wider_than_its_room_when_the_text_holds_newlines() {
+        let text = "a long line\nwith a newline\nand another one after it";
+        for room in 1..text.len() {
+            assert!(cut(text, room).width() <= room, "room {room}");
+        }
+    }
+
+    #[test]
     fn cut_counts_columns_and_never_splits_a_wide_char() {
         assert_eq!(cut("日本語", 6), "日本語");
         assert_eq!(cut("日本語", 5), "日本…");
@@ -3205,8 +3825,7 @@ mod tests {
     #[test]
     fn a_queued_row_draws_its_label_in_the_accent_and_its_text_in_the_foreground() {
         let palette = palette::get();
-        let waiting: VecDeque<String> = ["one", "two", "three", "four"].map(str::to_string).into();
-        let lines = waiting_lines(&waiting, 40);
+        let lines = waiting_lines(&["one", "two", "three", "four"], 40);
         let colours = |line: &Line| -> Vec<(String, Option<Color>)> {
             line.spans
                 .iter()
@@ -3431,6 +4050,46 @@ mod tests {
     fn a_table_that_fits_the_width_is_laid_out_with_the_prose() {
         let parts = markdown("| a | b |\n|---|---|\n| 1 | 2 |\n\nafter", 20);
         assert!(matches!(&parts[..], [Part::Flow { .. }]));
+    }
+
+    #[test]
+    fn a_long_cell_wraps_in_a_capped_column_when_the_box_has_room() {
+        let note = "word ".repeat(30);
+        let text = format!("| name | note |\n|---|---|\n| a | {note} |");
+        let parts = markdown(&text, 200);
+        let [Part::Flow { rows, .. }] = &parts[..] else {
+            panic!("expected the table with the prose");
+        };
+        let rows = plain(&rows.lines);
+        assert!(rows.len() > 3, "{rows:?}");
+        assert!(
+            rows.iter().all(|row| row.width() <= 4 + 3 + COLUMN_CAP),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_table_has_a_rule_between_its_rows_in_the_prose_and_in_a_quote() {
+        let table = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |";
+        let quoted: String = table.lines().map(|line| format!("> {line}\n")).collect();
+        for text in [table, &quoted] {
+            let rows = plain(&flat(&markdown(text, 20)));
+            let rules = rows.iter().filter(|row| row.contains("──┼──")).count();
+            assert_eq!(rules, 2, "{rows:?}");
+        }
+    }
+
+    #[test]
+    fn a_table_squeezed_to_its_floor_pans_and_keeps_its_columns() {
+        let cell = "word ".repeat(8);
+        let row = format!("|{}\n", format!(" {cell} |").repeat(4));
+        let text = format!("| a | b | c | d |\n|---|---|---|---|\n{row}");
+        let parts = markdown(&text, 50);
+        let [Part::Block(KeptBlock { natural, rows, .. })] = &parts[..] else {
+            panic!("expected one block");
+        };
+        assert_eq!(*natural, 4 * COLUMN_FLOOR + 3 * 3);
+        assert!(plain(&rows.lines).iter().any(|row| row.contains('┼')));
     }
 
     fn rendered_of(text: &str, width: usize) -> Vec<String> {
@@ -3813,12 +4472,15 @@ mod tests {
                     - one\n- two\n\n```rs\nfn main() {}\n```\n\n\
                     | a | b |\n|---|---|\n| 1 | 2 |\n\n---\n\n> quoted text";
         for width in [30, 60] {
-            let whole: Vec<Line> = cmr::render(text, width)
-                .into_iter()
+            let page = cmr::parse(text).render_with(cmr::Format::builder().width(width).build());
+            let whole: Vec<Line> = page
+                .rows()
+                .iter()
                 .map(|row| {
                     trim_end(
-                        row.into_iter()
-                            .map(|(text, style)| Span::styled(text, screen_style(style)))
+                        row.pieces
+                            .iter()
+                            .map(|(text, style)| Span::styled(text.clone(), screen_style(*style)))
                             .collect(),
                     )
                 })
@@ -3917,13 +4579,13 @@ mod tests {
         edit.content = diff_of(Some("a"), "b");
         edit.changed = crate::diff::size(&edit.content);
         let cwd = Path::new("/work");
-        let (folded, head) = tool_view(&edit, cwd, 60, false, false, &mut Rendered::default());
+        let (folded, head) = tool_view(&edit, cwd, 60, 0, false, false, &mut Rendered::default());
         let folded = folded.lines;
-        assert_eq!((folded.len(), head), (2, 2));
-        let (open, head) = tool_view(&edit, cwd, 60, true, false, &mut Rendered::default());
+        assert_eq!((folded.len(), head), (1, 1));
+        let (open, head) = tool_view(&edit, cwd, 60, 0, true, false, &mut Rendered::default());
         let open = open.lines;
-        assert_eq!(head, 2);
-        assert_eq!(&plain(&open)[2..], ["    - a", "    + b"]);
+        assert_eq!(head, 1);
+        assert_eq!(&plain(&open)[1..], ["      - a", "      + b"]);
     }
 
     fn text_content(text: &str) -> Vec<ToolCallContent> {
@@ -3940,6 +4602,7 @@ mod tests {
             &run,
             Path::new("/work"),
             60,
+            0,
             true,
             false,
             &mut Rendered::default(),
@@ -3948,17 +4611,83 @@ mod tests {
         assert_eq!(head, 1);
         assert_eq!(
             &plain(&open)[1..],
-            ["    ┌ console", "    │ $ cargo run", "    │ hello"]
+            ["      ┌ console", "      │ $ cargo run", "      │ hello"]
         );
     }
 
-    fn last_cell(line: &Line) -> (String, Style) {
-        let span = line.spans.last().unwrap();
-        (span.content.chars().last().unwrap().to_string(), span.style)
+    fn read(id: &str) -> Entry {
+        let mut call = tool("Read src/a.rs", "/work/src/a.rs", None);
+        call.id = ToolCallId::new(id.to_string());
+        Entry::Tool(call)
     }
 
     #[test]
-    fn a_folded_expandable_call_ends_its_title_row_with_a_dim_right_marker() {
+    fn a_run_is_two_or_more_calls_in_a_row_and_a_thought_or_a_reply_ends_it() {
+        let entries = vec![
+            read("a"),
+            read("b"),
+            Entry::Thought("blah".to_string()),
+            read("c"),
+            Entry::Agent(Message::new("blah".into(), None)),
+            read("d"),
+            Entry::Permission {
+                title: "Read".to_string(),
+                choice: "Allow once".to_string(),
+            },
+            read("e"),
+        ];
+        assert_eq!(tool_runs(&entries), [0..2, 5..8]);
+    }
+
+    #[test]
+    fn a_finished_run_folds_into_its_count_and_its_kinds_with_the_diff_beside_the_edits() {
+        let mut edit = tool("Edit src/a.rs", "/work/src/a.rs", None);
+        edit.kind = ToolKind::Edit;
+        edit.changed = (2, 1);
+        let mut run = tool("cargo run", "/work", None);
+        run.kind = ToolKind::Execute;
+        let first = tool("Read src/a.rs", "/work/src/a.rs", None);
+        let calls = [&first, &first, &edit, &run];
+        let line = group_row(&calls, 60, 0, false, false).to_string();
+        assert_eq!(line, "▸ ✓ 4 tools  read 2 · edit 1 (+2 −1) · run 1");
+    }
+
+    #[test]
+    fn a_runs_counts_are_in_the_foreground_and_their_kinds_in_the_kind_colour() {
+        let mut edit = tool("Edit src/a.rs", "/work/src/a.rs", None);
+        edit.kind = ToolKind::Edit;
+        let read = tool("Read src/a.rs", "/work/src/a.rs", None);
+        let line = group_row(&[&read, &edit], 60, 0, false, false);
+        let palette = palette::get();
+        let colour = |text: &str| {
+            line.spans
+                .iter()
+                .find(|span| span.content == text)
+                .and_then(|span| span.style.fg)
+        };
+        assert_eq!(colour("read "), Some(palette.blue));
+        assert_eq!(colour("edit "), Some(palette.yellow));
+        assert_eq!(colour("1"), Some(palette.foreground));
+    }
+
+    #[test]
+    fn a_running_run_names_the_call_in_progress_and_counts_its_failures() {
+        let mut failed = tool("Read src/a.rs", "/work/src/a.rs", None);
+        failed.status = ToolCallStatus::Failed;
+        let mut running = tool("Read src/b.rs", "/work/src/b.rs", None);
+        running.status = ToolCallStatus::InProgress;
+        let line = group_row(&[&failed, &running], 60, 0, false, false).to_string();
+        assert!(line.starts_with("▸ ✗ 2 tools  read 2 · 1 failed"), "{line}");
+        assert!(line.contains("read 2 · 1 failed · Read src/b.rs"), "{line}");
+    }
+
+    fn first_cell(line: &Line) -> (String, Style) {
+        let span = line.spans.first().unwrap();
+        (span.content.chars().next().unwrap().to_string(), span.style)
+    }
+
+    #[test]
+    fn a_folded_expandable_call_starts_its_title_row_with_a_dim_marker() {
         let mut edit = tool("Edit src/main.rs", "/work/src/main.rs", None);
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
@@ -3967,13 +4696,14 @@ mod tests {
             &edit,
             Path::new("/work"),
             40,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        assert_eq!(rows[0].width(), 40);
-        assert_eq!(last_cell(&rows[0]), ("▸".to_string(), dim()));
+        assert_eq!(first_cell(&rows[0]), ("▸".to_string(), dim()));
+        assert!(rows[0].to_string().starts_with("▸ ± edit"), "{}", rows[0]);
     }
 
     #[test]
@@ -3986,45 +4716,47 @@ mod tests {
             &edit,
             Path::new("/work"),
             40,
+            0,
             true,
             true,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        let (glyph, style) = last_cell(&rows[0]);
+        let (glyph, style) = first_cell(&rows[0]);
         assert_eq!(glyph, "▾");
         assert_eq!(style.fg, Some(palette::get().accent));
     }
 
     #[test]
-    fn a_subagent_call_has_the_marker_and_a_call_with_nothing_to_expand_has_none() {
+    fn a_subagent_call_has_the_marker_and_a_call_with_nothing_to_expand_has_two_blank_columns() {
         let (rows, head) = tool_view(
             &task(),
             Path::new("/work"),
             60,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        assert_eq!(head, 2);
-        assert!(rows[0].to_string().ends_with('▸'));
-        assert_eq!(rows[0].width(), 60);
+        assert_eq!(head, 1);
+        assert!(rows[0].to_string().starts_with("▸ "), "{}", rows[0]);
         let read = tool("Read src/main.rs", "/work/src/main.rs", None);
         let (rows, _) = tool_view(
             &read,
             Path::new("/work"),
             60,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        assert!(!rows[0].to_string().ends_with(['▸', '▾']));
+        assert!(rows[0].to_string().starts_with("  ≡ read"), "{}", rows[0]);
     }
 
     #[test]
-    fn a_long_title_is_cut_before_the_marker() {
+    fn a_long_title_is_cut_to_the_width_after_the_marker() {
         let mut edit = tool("Edit a/very/long/path/to/some/file.rs", "/work/x", None);
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
@@ -4033,14 +4765,15 @@ mod tests {
             &edit,
             Path::new("/work"),
             24,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let rows = rows.lines;
-        assert_eq!(rows[0].width(), 24);
+        assert!(rows[0].width() <= 24, "{}", rows[0]);
         assert!(rows[0].to_string().contains('…'));
-        assert!(rows[0].to_string().ends_with('▸'));
+        assert!(rows[0].to_string().starts_with('▸'));
     }
 
     #[test]
@@ -4066,24 +4799,26 @@ mod tests {
     }
 
     #[test]
-    fn a_done_call_with_nothing_to_add_has_no_status_row() {
+    fn a_done_call_is_one_row_led_by_its_kind_icon() {
         let mut quiet = tool("Read the entry point", "/work/x", None);
         quiet.locations.clear();
-        assert_eq!(rows(&quiet, 80), ["● read   Read the entry point"]);
+        assert_eq!(rows(&quiet, 80), ["≡ read   Read the entry point"]);
     }
 
     #[test]
-    fn a_call_that_is_not_done_keeps_its_status_row() {
+    fn a_running_call_shows_the_spinner_and_a_failed_call_a_cross_in_place_of_its_icon() {
         let mut call = tool("Read the entry point", "/work/x", None);
         call.locations.clear();
-        for (status, word) in [
-            (ToolCallStatus::InProgress, "running…"),
-            (ToolCallStatus::Failed, "failed"),
-            (ToolCallStatus::Pending, "pending"),
-        ] {
-            call.status = status;
-            assert_eq!(rows(&call, 80)[1], format!("  ⎿  {word}"));
-        }
+        let frame = header::SPINNER[0];
+        call.status = ToolCallStatus::InProgress;
+        assert_eq!(
+            rows(&call, 80),
+            [format!("{frame} read   Read the entry point")]
+        );
+        call.status = ToolCallStatus::Failed;
+        assert_eq!(rows(&call, 80), ["✗ read   Read the entry point"]);
+        call.status = ToolCallStatus::Pending;
+        assert_eq!(rows(&call, 80), ["≡ read   Read the entry point  pending"]);
     }
 
     fn task() -> Tool {
@@ -4100,22 +4835,18 @@ mod tests {
 
     #[test]
     fn a_folded_subagent_block_shows_its_title_its_tool_count_and_its_status() {
-        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, false).lines);
-        assert_eq!(
-            lines,
-            ["● agent  Survey the entry point  1 tool", "  ⎿  running…"]
-        );
+        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, 0, false).lines);
+        assert_eq!(lines, ["◐ agent  Survey the entry point  1 tool"]);
     }
 
     #[test]
     fn an_expanded_subagent_block_draws_its_children_indented_four_columns() {
-        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, true).lines);
+        let lines = plain(&subagent_block(&task(), Path::new("/work"), 60, 0, true).lines);
         assert_eq!(
             lines,
             [
-                "● agent  Survey the entry point  1 tool",
-                "  ⎿  running…",
-                "    ● read   Read src/main.rs",
+                "◐ agent  Survey the entry point  1 tool",
+                "    ≡ read   Read src/main.rs",
                 "    main.rs is a stub.",
             ]
         );
@@ -4142,13 +4873,14 @@ mod tests {
             &replayed,
             Path::new("/work"),
             60,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let lines = lines.lines;
         let text = plain(&lines);
-        assert!(text[0].starts_with("● agent"), "{text:?}");
+        assert!(text[0].starts_with("  • agent"), "{text:?}");
         assert!(!text[0].contains('▸'), "{text:?}");
         assert_eq!(head, lines.len());
         assert!(!expandable(&replayed));
@@ -4158,12 +4890,13 @@ mod tests {
             &replayed,
             Path::new("/work"),
             60,
+            0,
             false,
             false,
             &mut Rendered::default(),
         );
         let lines = lines.lines;
-        assert!(plain(&lines)[0].starts_with("● think"));
+        assert!(plain(&lines)[0].starts_with("  ∴ think"));
     }
 
     #[test]
@@ -4196,9 +4929,9 @@ mod tests {
         edit.kind = ToolKind::Edit;
         edit.content = diff_of(Some("a"), "b");
         let cwd = Path::new("/work");
-        let (rows, _) = tool_view(&edit, cwd, 60, false, false, &mut Rendered::default());
+        let (rows, _) = tool_view(&edit, cwd, 60, 0, false, false, &mut Rendered::default());
         let head = rows.texts[0].as_ref().unwrap();
-        assert_eq!(head.col, 2);
+        assert_eq!(head.col, 4);
         assert_eq!(head.text, "edit   Edit src/main.rs");
     }
 

@@ -14,6 +14,7 @@ pub mod links;
 pub mod log;
 pub mod palette;
 pub mod picker;
+pub mod playback;
 pub mod prompt;
 pub mod registry;
 pub mod report;

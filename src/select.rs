@@ -17,6 +17,10 @@ pub struct LineText {
 
     /// The whole line, when `text` is the part of it a panned block shows.
     pub whole: Option<String>,
+
+    /// The byte of the reply's source each character of `text` starts at,
+    /// by character, where one is known. A character past the end has none.
+    pub sources: Vec<Option<usize>>,
 }
 
 impl LineText {
@@ -28,6 +32,27 @@ impl LineText {
             col += width;
             (ch, col - width, width)
         })
+    }
+
+    /// Each character with its first column, its width and its source byte.
+    fn sourced(&self) -> impl Iterator<Item = (char, usize, usize, usize)> + '_ {
+        self.cells()
+            .zip(&self.sources)
+            .filter_map(|((ch, col, width), at)| Some((ch, col, width, (*at)?)))
+    }
+
+    /// The columns from the first character whose source byte lies in
+    /// `source` to the end of the last.
+    pub fn marked(&self, source: &Range<usize>) -> Option<Range<usize>> {
+        let mut hits = self
+            .sourced()
+            .filter(|&(.., at)| source.contains(&at))
+            .map(|(_, col, width, _)| (col, width));
+        let (first, width) = hits.next()?;
+        let end = hits
+            .last()
+            .map_or(first + width, |(col, width)| col + width);
+        Some(first..end)
     }
 }
 
@@ -74,6 +99,30 @@ impl Selection {
         Some(first..end)
     }
 
+    /// The source bytes the selection runs over in `lines`: from the
+    /// earliest source byte of a selected character to the end of the
+    /// character at the latest.
+    pub fn source(&self, lines: &[Option<LineText>]) -> Option<Range<usize>> {
+        let (from, to) = self.ends();
+        let mut range: Option<Range<usize>> = None;
+        for line in from.line..=to.line {
+            let Some(Some(text)) = lines.get(line) else {
+                continue;
+            };
+            let picked = text
+                .sourced()
+                .filter(|&(_, col, width, _)| self.picks(line, col, width));
+            for (ch, .., at) in picked {
+                let end = at + ch.len_utf8();
+                range = Some(match range {
+                    Some(range) => range.start.min(at)..range.end.max(end),
+                    None => at..end,
+                });
+            }
+        }
+        range
+    }
+
     /// The selected text of `lines`, where `lines[n]` is line `n`. A line
     /// that goes on from the one above joins it with a space or with
     /// nothing, and every other line starts after a newline.
@@ -112,6 +161,135 @@ impl Selection {
     }
 }
 
+/// The word under `point` of `lines`: the run of letters, digits and
+/// underscores around it, or `None` off a word.
+pub fn word_at(lines: &[Option<LineText>], point: Point) -> Option<Selection> {
+    let text = lines.get(point.line)?.as_ref()?;
+    let cells: Vec<(char, usize, usize)> = text.cells().collect();
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let at = cells
+        .iter()
+        .position(|&(ch, col, width)| (col..col + width.max(1)).contains(&point.col) && word(ch))?;
+    let first = cells[..at]
+        .iter()
+        .rposition(|&(ch, ..)| !word(ch))
+        .map_or(0, |n| n + 1);
+    let last = cells[at..]
+        .iter()
+        .position(|&(ch, ..)| !word(ch))
+        .map_or(cells.len() - 1, |n| at + n - 1);
+    Some(Selection {
+        anchor: Point {
+            line: point.line,
+            col: cells[first].1,
+        },
+        head: Point {
+            line: point.line,
+            col: cells[last].1,
+        },
+        pointer: None,
+    })
+}
+
+/// The line under `point` of `lines`, with the rows a soft wrap split it
+/// into.
+pub fn line_at(lines: &[Option<LineText>], point: Point) -> Option<Selection> {
+    let goes_on =
+        |line: usize| matches!(lines.get(line), Some(Some(text)) if text.join != Join::Break);
+    lines.get(point.line)?.as_ref()?;
+    let mut first = point.line;
+    while first > 0 && goes_on(first) && matches!(lines.get(first - 1), Some(Some(_))) {
+        first -= 1;
+    }
+    let mut last = point.line;
+    while goes_on(last + 1) {
+        last += 1;
+    }
+    Some(Selection {
+        anchor: Point {
+            line: first,
+            col: 0,
+        },
+        head: Point {
+            line: last,
+            col: usize::MAX,
+        },
+        pointer: None,
+    })
+}
+
+/// `range` of the markdown `source`, widened over each marker that pairs
+/// with one inside it or across from it: backticks, emphasis, and a link's
+/// brackets and target.
+pub fn widened(source: &str, mut range: Range<usize>) -> Range<usize> {
+    loop {
+        let before = &source[..range.start];
+        let after = &source[range.end..];
+        if before.ends_with('[')
+            && let Some(rest) = after.strip_prefix("](")
+            && let Some(close) = closing_paren(rest)
+        {
+            range = range.start - 1..range.end + 2 + close + 1;
+            continue;
+        }
+        let open = run_before(before);
+        let close = run_after(after);
+        if let (Some((a, n)), Some((b, m))) = (open, close)
+            && a == b
+        {
+            range = range.start - n.min(m)..range.end + n.min(m);
+            continue;
+        }
+        let inside = |(marker, n): (char, usize)| {
+            source[range.clone()].contains(&marker.to_string().repeat(n))
+        };
+        match (open, close) {
+            (Some(open), _) if inside(open) => range.start -= open.1,
+            (_, Some(close)) if inside(close) => range.end += close.1,
+            _ => return range,
+        }
+    }
+}
+
+/// The run of one emphasis or code marker that `text` ends with, as the
+/// marker and the run's length.
+fn run_before(text: &str) -> Option<(char, usize)> {
+    let marker = text.chars().next_back().filter(|&ch| is_marker(ch))?;
+    let rest = text.trim_end_matches(marker);
+
+    // an underscore inside a word is drawn as itself, not as emphasis
+    let in_word = marker == '_' && rest.chars().next_back().is_some_and(char::is_alphanumeric);
+    (!in_word).then_some((marker, text.len() - rest.len()))
+}
+
+/// The run of one emphasis or code marker that `text` starts with, as the
+/// marker and the run's length.
+fn run_after(text: &str) -> Option<(char, usize)> {
+    let marker = text.chars().next().filter(|&ch| is_marker(ch))?;
+    let rest = text.trim_start_matches(marker);
+    let in_word = marker == '_' && rest.chars().next().is_some_and(char::is_alphanumeric);
+    (!in_word).then_some((marker, text.len() - rest.len()))
+}
+
+fn is_marker(ch: char) -> bool {
+    matches!(ch, '`' | '*' | '_' | '~')
+}
+
+/// The byte of the `)` that closes a link target `text` starts inside.
+fn closing_paren(text: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (at, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 0 => return Some(at),
+            ')' => depth -= 1,
+            '\n' => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
 /// The transcript's text as the last draw laid it out.
 #[derive(Default)]
 pub struct Texts {
@@ -124,9 +302,17 @@ pub struct Texts {
     /// The text of each of the transcript's lines, `None` for a line that
     /// holds none or was not laid out.
     pub lines: Vec<Option<LineText>>,
+
+    /// The first line of each transcript entry, by entry.
+    pub starts: Vec<usize>,
 }
 
 impl Texts {
+    /// The entry that line `line` belongs to.
+    pub fn entry_of(&self, line: usize) -> Option<usize> {
+        entry_of(&self.starts, self.lines.len(), line)
+    }
+
     /// The point under `position`, when it is on a line that holds text.
     pub fn text_at(&self, position: Position) -> Option<Point> {
         if !self.area.contains(position) {
@@ -170,6 +356,13 @@ pub fn nearest(area: Rect, shown: Range<usize>, position: Position) -> Point {
     Point { line, col }
 }
 
+/// The entry that line `line` of `total` belongs to, by each entry's first
+/// line.
+pub fn entry_of(starts: &[usize], total: usize, line: usize) -> Option<usize> {
+    let after = starts.partition_point(|start| *start <= line);
+    (after > 0 && line < total).then(|| after - 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +373,7 @@ mod tests {
             text: text.to_string(),
             join,
             whole: None,
+            sources: Vec::new(),
         })
     }
 
@@ -264,6 +458,51 @@ mod tests {
         let lines = [text(0, "a界b", Join::Break)];
         assert_eq!(selection((0, 2), (0, 2)).copy(&lines), "界");
         assert_eq!(selection((0, 1), (0, 1)).copy(&lines), "界");
+    }
+
+    fn sourced(col: usize, shown: &str, sources: Vec<Option<usize>>) -> Option<LineText> {
+        Some(LineText {
+            sources,
+            ..text(col, shown, Join::Break).unwrap()
+        })
+    }
+
+    #[test]
+    fn a_selections_source_skips_characters_with_none_at_either_end() {
+        // `• ab` from the source `- ab`, with `cd` on the next line from `cd`
+        let lines = [
+            sourced(0, "• ab", vec![None, None, Some(2), Some(3)]),
+            sourced(0, "cd!", vec![Some(5), Some(6)]),
+        ];
+        assert_eq!(selection((0, 0), (1, 2)).source(&lines), Some(2..7));
+        assert_eq!(selection((0, 0), (0, 1)).source(&lines), None);
+    }
+
+    #[test]
+    fn only_the_characters_of_a_sources_range_are_marked() {
+        let line = sourced(2, "a界bc", vec![Some(0), Some(1), Some(4), None]).unwrap();
+        assert_eq!(line.marked(&(1..5)), Some(3..6));
+        assert_eq!(line.marked(&(5..9)), None);
+    }
+
+    #[test]
+    fn a_range_widens_over_markers_that_pair_inside_it_or_across_from_it() {
+        let widen = |source: &str, inner: &str| {
+            let at = source.find(inner).unwrap();
+            let range = widened(source, at..at + inner.len());
+            source[range].to_string()
+        };
+        assert_eq!(widen("see `code` here", "code"), "`code`");
+        assert_eq!(widen("a **bold** b", "bold"), "**bold**");
+        assert_eq!(widen("a **b** c **d**", "b** c **d"), "**b** c **d**");
+        assert_eq!(widen("go [there](a(b)c) now", "there"), "[there](a(b)c)");
+        assert_eq!(widen("**[t](u)**", "t"), "**[t](u)**");
+        assert_eq!(widen("a **bold** b", "bol"), "bol");
+        assert_eq!(widen("snake_case_name", "case"), "case");
+        assert_eq!(
+            widen("say **one** and `two`", "one** and `two"),
+            "**one** and `two`"
+        );
     }
 
     #[test]

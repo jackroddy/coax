@@ -3,12 +3,15 @@ use std::path::Path;
 use std::time::Instant;
 
 use agent_client_protocol::v1::schema::{StopReason, ToolCallStatus};
-use decade_channel::{Agent, AgentState, AgentUpdate, Channel, Context, Message, Show, Tokens};
+use decade_channel::{
+    Agent, AgentState, AgentUpdate, Channel, Context, Message, Restore, Show, Subagent,
+    SubagentState, Tokens,
+};
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::log;
-use crate::session::{Entry, Transcript};
+use crate::session::{Child, Entry, Tool, Transcript};
 use crate::settings::Settings;
 
 /// What coax tells decade about its agent at one moment.
@@ -21,6 +24,7 @@ pub struct Snapshot {
     pub context: Option<Context>,
     pub tokens: Option<Tokens>,
     pub cost: Option<f64>,
+    pub subagents: Option<Vec<Subagent>>,
 }
 
 impl Snapshot {
@@ -63,8 +67,42 @@ impl Snapshot {
                 .as_ref()
                 .filter(|cost| cost.currency == "USD")
                 .map(|cost| cost.amount),
+            subagents: Some(
+                transcript
+                    .subagents(now)
+                    .into_iter()
+                    .map(|tool| subagent(tool, now))
+                    .collect::<Vec<_>>(),
+            )
+            .filter(|list| !list.is_empty()),
         }
     }
+}
+
+fn subagent(tool: &Tool, now: Instant) -> Subagent {
+    let state = if tool.agent_running(now) {
+        SubagentState::Working
+    } else if tool.cancelled || tool.status == ToolCallStatus::Failed {
+        SubagentState::Failed
+    } else {
+        SubagentState::Done
+    };
+    let activity = tool.children.iter().rev().find_map(|child| match child {
+        Child::Tool(child) if running(child) => Some(child.title.clone()),
+        _ => None,
+    });
+    Subagent {
+        name: tool.title.clone(),
+        activity: activity.filter(|_| state == SubagentState::Working),
+        state,
+    }
+}
+
+fn running(tool: &Tool) -> bool {
+    matches!(
+        tool.status,
+        ToolCallStatus::Pending | ToolCallStatus::InProgress
+    ) && !tool.cancelled
 }
 
 /// The title of the latest call of this turn that has not finished.
@@ -75,14 +113,7 @@ fn running_title(transcript: &Transcript) -> Option<String> {
         .rev()
         .take_while(|entry| !matches!(entry, Entry::User(_)))
         .find_map(|entry| match entry {
-            Entry::Tool(tool)
-                if matches!(
-                    tool.status,
-                    ToolCallStatus::Pending | ToolCallStatus::InProgress
-                ) && !tool.cancelled =>
-            {
-                Some(tool.title.clone())
-            }
+            Entry::Tool(tool) if running(tool) => Some(tool.title.clone()),
             _ => None,
         })
 }
@@ -101,8 +132,53 @@ pub fn changes(sent: &Snapshot, now: &Snapshot) -> Option<AgentUpdate> {
         context: field(&sent.context, &now.context),
         tokens: field(&sent.tokens, &now.tokens),
         cost: field(&sent.cost, &now.cost),
+        subagents: field(&sent.subagents, &now.subagents),
     };
     (update != AgentUpdate::default()).then_some(update)
+}
+
+/// The launch arguments decade passes back to start coax again on a
+/// session: `args` without `--prompt`, `--session` and `--input` and their
+/// values.
+pub fn resume_args(args: &[String]) -> Vec<String> {
+    let mut kept = Vec::new();
+    let mut at = 0;
+    while at < args.len() {
+        match args[at].as_str() {
+            "--prompt" | "--session" | "--input" => at += 2,
+            "--agent" => {
+                kept.extend(args[at..].iter().take(2).cloned());
+                at += 2;
+            }
+            "--allow" => {
+                kept.push(args[at].clone());
+                at += 1;
+            }
+            _ => {
+                kept.extend(args[at..].iter().cloned());
+                break;
+            }
+        }
+    }
+    kept
+}
+
+/// The command that starts coax again on `session`. `agent` is the
+/// agent's name in `config.toml`, `None` for a raw agent command.
+pub fn restore_argv(agent: Option<&str>, args: &[String], session: &str) -> Vec<String> {
+    let mut argv = vec!["coax".to_string()];
+    let Some(agent) = agent else {
+        // the flags after a raw agent command go to the agent, and
+        // --session needs --agent, so it starts again on a new session
+        argv.extend(args.iter().cloned());
+        return argv;
+    };
+    argv.extend(["--agent".to_string(), agent.to_string()]);
+    if args.iter().any(|arg| arg == "--allow") {
+        argv.push("--allow".to_string());
+    }
+    argv.extend(["--session".to_string(), session.to_string()]);
+    argv
 }
 
 /// The decade channel, and what it has been told of the agent so far.
@@ -111,15 +187,16 @@ pub struct Reporter {
     sent: Snapshot,
 }
 
-/// Join decade at `path` as coax running `agent`. The messages decade sends
-/// arrive on the receiver.
+/// Join decade at `path` as coax running `agent`, and tell it to start coax
+/// again with `restore`. The messages decade sends arrive on the receiver.
 pub fn connect(
     path: &Path,
     pane: Option<&str>,
     agent: &Agent,
+    restore: Vec<String>,
 ) -> io::Result<(Reporter, UnboundedReceiver<Message>)> {
     let joined = Channel::connect(path, "coax", &[], &[], pane, Some(agent));
-    let (channel, messages) = match joined {
+    let (mut channel, messages) = match joined {
         Ok(joined) => joined,
         Err(error) => {
             log::info(
@@ -129,22 +206,35 @@ pub fn connect(
             return Err(error);
         }
     };
+    channel.restore(&Restore {
+        argv: restore,
+        terminal: true,
+        cwd: std::env::current_dir().ok(),
+    })?;
     log::info(
         "decade.connect",
         json!({
             "socket": path,
             "pane": pane,
-            "agent": {"name": agent.name, "version": agent.version, "session": agent.session},
+            "agent": {
+                "name": agent.name,
+                "version": agent.version,
+                "session": agent.session,
+                "args": agent.args,
+            },
         }),
     );
     Ok(reporter(channel, messages))
 }
 
 /// Join decade by the environment's socket, if there is one.
-pub fn connect_env(agent: &Agent) -> Option<(Reporter, UnboundedReceiver<Message>)> {
+pub fn connect_env(
+    agent: &Agent,
+    restore: Vec<String>,
+) -> Option<(Reporter, UnboundedReceiver<Message>)> {
     let path = std::env::var_os("DECADE_SOCKET")?;
     let pane = std::env::var("DECADE_PANE").ok();
-    connect(Path::new(&path), pane.as_deref(), agent).ok()
+    connect(Path::new(&path), pane.as_deref(), agent, restore).ok()
 }
 
 fn reporter(
@@ -206,6 +296,64 @@ mod tests {
 
     fn snapshot(transcript: &Transcript, question: Option<&str>) -> Snapshot {
         Snapshot::of(transcript, question, &Settings::default(), Instant::now())
+    }
+
+    fn words(line: &str) -> Vec<String> {
+        line.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn the_resume_args_drop_the_prompt_and_the_session_and_keep_the_agent() {
+        assert_eq!(
+            resume_args(&words("--prompt hi --agent claude --session 7f3a --allow")),
+            words("--agent claude --allow")
+        );
+    }
+
+    #[test]
+    fn the_resume_args_drop_played_input_so_a_restart_types_nothing() {
+        assert_eq!(
+            resume_args(&words("--input a.json --allow coax-fake-agent a.json")),
+            words("--allow coax-fake-agent a.json")
+        );
+    }
+
+    #[test]
+    fn the_resume_args_keep_a_raw_command_and_its_args_whole() {
+        assert_eq!(
+            resume_args(&words(
+                "--allow --prompt hi coax-fake-agent --prompt x.json"
+            )),
+            words("--allow coax-fake-agent --prompt x.json")
+        );
+    }
+
+    #[test]
+    fn the_restore_command_resumes_the_session_on_the_named_agent() {
+        assert_eq!(
+            restore_argv(Some("claude"), &words("--agent claude --allow"), "7f3a"),
+            words("coax --agent claude --allow --session 7f3a")
+        );
+    }
+
+    #[test]
+    fn the_restore_command_for_a_bare_coax_names_the_agent_the_picker_chose() {
+        assert_eq!(
+            restore_argv(Some("claude"), &[], "7f3a"),
+            words("coax --agent claude --session 7f3a")
+        );
+    }
+
+    #[test]
+    fn the_restore_command_for_a_raw_agent_command_names_no_session() {
+        assert_eq!(
+            restore_argv(
+                None,
+                &words("--allow coax-fake-agent --prompt x.json"),
+                "7f3a"
+            ),
+            words("coax --allow coax-fake-agent --prompt x.json")
+        );
     }
 
     fn state_of(update: Option<AgentUpdate>) -> Option<Option<AgentState>> {
@@ -314,6 +462,101 @@ mod tests {
             .unwrap();
         transcript.apply(SessionUpdate::ToolCallUpdate(update));
         assert_eq!(snapshot(&transcript, None).state, Some(AgentState::Done));
+    }
+
+    fn call(value: serde_json::Value) -> SessionUpdate {
+        SessionUpdate::ToolCall(serde_json::from_value(value).unwrap())
+    }
+
+    fn status(id: &str, status: &str) -> SessionUpdate {
+        SessionUpdate::ToolCallUpdate(
+            serde_json::from_value(serde_json::json!({"toolCallId": id, "status": status}))
+                .unwrap(),
+        )
+    }
+
+    fn task(id: &str, title: &str) -> SessionUpdate {
+        call(serde_json::json!({
+            "toolCallId": id, "title": title, "status": "in_progress",
+            "_meta": {"claudeCode": {"toolName": "Task"}}
+        }))
+    }
+
+    fn child(id: &str, parent: &str, title: &str) -> SessionUpdate {
+        call(serde_json::json!({
+            "toolCallId": id, "title": title, "status": "in_progress",
+            "_meta": {"claudeCode": {"parentToolUseId": parent}}
+        }))
+    }
+
+    fn entry(name: &str, activity: Option<&str>, state: SubagentState) -> Subagent {
+        Subagent {
+            name: name.to_string(),
+            activity: activity.map(str::to_string),
+            state,
+        }
+    }
+
+    #[test]
+    fn the_subagents_are_reported_with_their_running_call_and_state() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("hi".to_string());
+        assert_eq!(snapshot(&transcript, None).subagents, None);
+        transcript.apply(task("t1", "Survey"));
+        transcript.apply(child("c1", "t1", "Read src/ui.rs"));
+        transcript.apply(task("t2", "Review"));
+        transcript.apply(task("t3", "Tests"));
+        let before = snapshot(&transcript, None);
+        transcript.apply(status("t2", "completed"));
+        transcript.apply(status("t3", "failed"));
+        let after = snapshot(&transcript, None);
+        assert_eq!(
+            changes(&before, &after).unwrap().subagents,
+            Some(Some(vec![
+                entry("Survey", Some("Read src/ui.rs"), SubagentState::Working),
+                entry("Review", None, SubagentState::Done),
+                entry("Tests", None, SubagentState::Failed),
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_subagent_started_by_a_subagent_is_not_reported() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("hi".to_string());
+        transcript.apply(task("t1", "Survey"));
+        transcript.apply(call(serde_json::json!({
+            "toolCallId": "t2", "title": "Nested", "status": "in_progress",
+            "_meta": {"claudeCode": {"toolName": "Task", "parentToolUseId": "t1"}}
+        })));
+        let names: Vec<String> = snapshot(&transcript, None)
+            .subagents
+            .unwrap()
+            .into_iter()
+            .map(|subagent| subagent.name)
+            .collect();
+        assert_eq!(names, ["Survey"]);
+    }
+
+    #[test]
+    fn a_finished_subagent_leaves_the_list_when_the_next_turn_starts() {
+        let mut transcript = Transcript::default();
+        transcript.prompt("hi".to_string());
+        transcript.apply(task("t1", "Survey"));
+        transcript.apply(task("t2", "Review"));
+        transcript.apply(status("t2", "completed"));
+        transcript.finished(StopReason::EndTurn);
+        let ended = snapshot(&transcript, None);
+        assert_eq!(ended.subagents.as_ref().map(Vec::len), Some(2));
+        transcript.prompt("next".to_string());
+        let next = snapshot(&transcript, None);
+        assert_eq!(
+            next.subagents,
+            Some(vec![entry("Survey", None, SubagentState::Working)])
+        );
+        transcript.apply(status("t1", "completed"));
+        let cleared = snapshot(&transcript, None);
+        assert_eq!(changes(&next, &cleared).unwrap().subagents, Some(None));
     }
 
     #[test]

@@ -1,0 +1,180 @@
+{
+  "config_options": [
+    {"id": "mode", "name": "Mode", "type": "select", "currentValue": "auto", "options": [{"value": "default", "name": "Default", "description": "Ask before each change"}, {"value": "acceptEdits", "name": "Accept edits", "description": "Edits go through, other tools ask"}, {"value": "plan", "name": "Plan", "description": "Plan only, change nothing"}, {"value": "auto", "name": "Auto", "description": "Never ask"}, {"value": "bypassPermissions", "name": "Bypass permissions", "description": "Skip every check"}], "category": "mode"},
+    {"id": "model", "name": "Model", "type": "select", "currentValue": "opus", "options": [{"value": "opus", "name": "Opus", "description": "Most capable"}, {"value": "sonnet", "name": "Sonnet", "description": "Fast and capable"}, {"value": "haiku", "name": "Haiku", "description": "Quick"}], "category": "model"},
+    {"id": "effort", "name": "Effort", "type": "select", "currentValue": "default", "options": [{"value": "default", "name": "Default"}, {"value": "low", "name": "Low"}, {"value": "high", "name": "High", "description": "Think harder, slower"}], "category": "thought_level"},
+    {"id": "fast", "name": "Fast", "category": "model_config", "type": "boolean", "currentValue": false}
+  ],
+  "acts": [
+    {
+      "steps": [
+        {"update": {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "this is another thought, blah blah"}}},
+        {"delay_ms": 250},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Read src/blah.rs", "kind": "read", "status": "in_progress", "locations": [{"path": "src/blah.rs", "line": 1}]}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "let number = 42;"}}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t2", "title": "Read src/blah/more.rs", "kind": "read", "status": "in_progress", "locations": [{"path": "src/blah/more.rs", "line": 1}]}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "let text = \"this is a string\";"}}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t3", "title": "Read src/main.rs", "kind": "read", "status": "in_progress", "locations": [{"path": "src/main.rs", "line": 1}]}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t3", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "fn main() {}"}}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t4", "title": "Search blah", "kind": "search", "status": "in_progress"}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t4", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "src/blah.rs:1"}}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t5", "title": "Search number", "kind": "search", "status": "in_progress"}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t5", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "src/blah.rs:1"}}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t6", "title": "Edit src/blah.rs", "kind": "edit", "status": "in_progress", "locations": [{"path": "src/blah.rs", "line": 1}]}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t6", "status": "completed", "content": [{"type": "diff", "path": "src/blah.rs", "oldText": "let number = 42;\n", "newText": "let number = 43;\n"}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t7", "title": "Edit src/blah/more.rs", "kind": "edit", "status": "in_progress", "locations": [{"path": "src/blah/more.rs", "line": 1}]}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t7", "status": "completed", "content": [{"type": "diff", "path": "src/blah/more.rs", "oldText": "let text = \"this is a string\";\n", "newText": "let text = \"this is another string\";\nlet more = 1;\n"}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t8", "title": "cargo run", "kind": "execute", "status": "in_progress"}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t8", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "```console\n$ cargo run\nthis is some output\n```"}}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t9", "title": "Read src/blah.rs", "kind": "read", "status": "in_progress", "locations": [{"path": "src/blah.rs", "line": 1}]}},
+        {"delay_ms": 75},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t9", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "let number = 43;"}}]}},
+        {"delay_ms": 60},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "this is a reply after all of that. "}}},
+        {"delay_ms": 100},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "blah blah blah."}}},
+        {"update": {"sessionUpdate": "usage_update", "used": 30000, "size": 200000, "cost": {"amount": 0.6, "currency": "USD"}}},
+        {"stop": "end_turn"}
+      ],
+      "usage": {"totalTokens": 30450, "inputTokens": 30000, "outputTokens": 450}
+    },
+    {
+      "steps": [
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "# this is a header\n\nthis is a paragraph with **bold**, *italic*, `inline code` and [a link](https://example.com).\n\n## this is a smaller header\n\n1. this is a numbered list\n2. with a second item\n\n- this is a list\n- with another item\n  - blah blah blah\n\n> this is a quote with **bold** in it\n\n---\n\n| this is a column | another column | a third |\n|---|---|---|\n| blah blah blah | this is a longer cell that wraps onto a second line | 42 |\n| blah | a cell with `inline code` and **bold** in it | 7 |\n| this is a row | blah blah, blah blah blah | 1,024 |\n\n```rust\n// this is a comment\nfn example() {\n    let number = 42;\n    let text = \"this is a string that is long enough to run past the edge of the box, blah blah blah\";\n}\n```\n\n```markdown\n### this is a markdown block\n\nblah blah **bold**, *italic* and `code`, with [a link](https://example.com)\n\n> this is a quote\n\n| this | that |\n|------|------|\n| a    | 1    |\n| b    | 2    |\n```"}}},
+        {"update": {"sessionUpdate": "usage_update", "used": 44000, "size": 200000, "cost": {"amount": 0.88, "currency": "USD"}}},
+        {"stop": "end_turn"}
+      ],
+      "usage": {"totalTokens": 44520, "inputTokens": 44000, "outputTokens": 520}
+    },
+    {
+      "steps": [
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "this is a reply with three points in it:\n\n- this is the first point, blah blah blah\n- this is the second point, blah blah\n- this is the third point, blah blah blah blah"}}},
+        {"update": {"sessionUpdate": "usage_update", "used": 56000, "size": 200000, "cost": {"amount": 1.12, "currency": "USD"}}},
+        {"stop": "end_turn"}
+      ],
+      "usage": {"totalTokens": 56580, "inputTokens": 56000, "outputTokens": 580}
+    },
+    {
+      "steps": [
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "this is an answer to [1] and [2]. blah blah blah, blah blah."}}},
+        {"update": {"sessionUpdate": "usage_update", "used": 64000, "size": 200000, "cost": {"amount": 1.28, "currency": "USD"}}},
+        {"stop": "end_turn"}
+      ],
+      "usage": {"totalTokens": 64620, "inputTokens": 64000, "outputTokens": 620}
+    }
+  ],
+  "sessions": [
+    {
+      "id": "session-1",
+      "title": "this is a session",
+      "updated_at": "2026-11-25T08:30:00Z",
+      "history": [
+        {"update": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "this is a prompt"}}},
+        {"update": {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "this is a thought, blah blah"}}},
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "h1", "title": "Read src/blah.rs", "kind": "read", "status": "completed", "locations": [{"path": "src/blah.rs", "line": 1}]}},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "this is a reply. blah blah blah, blah blah."}}},
+        {"update": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "this is another prompt"}}},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "this is another reply. blah blah."}}}
+      ]
+    },
+    {
+      "id": "session-2",
+      "title": "blah blah blah",
+      "updated_at": "2026-11-23T16:00:00Z",
+      "history": [
+        {"update": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "blah blah?"}}},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "blah blah blah."}}}
+      ]
+    },
+    {
+      "id": "session-3",
+      "title": "another session",
+      "updated_at": "2026-11-18T11:15:00Z",
+      "history": [
+        {"update": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "this is a prompt"}}},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "this is a reply."}}}
+      ]
+    },
+    {
+      "id": "session-4",
+      "title": "the oldest session",
+      "updated_at": "2026-10-30T09:00:00Z",
+      "history": [
+        {"update": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "this is a prompt"}}},
+        {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "this is a reply."}}}
+      ]
+    }
+  ],
+  "input": [
+    {"delay_ms": 1200},
+    {"key": "j"},
+    {"delay_ms": 700},
+    {"key": "Enter"},
+    {"wait": "idle"},
+    {"delay_ms": 1200},
+    {"type": "go ahead", "per_char_ms": 55},
+    {"delay_ms": 250},
+    {"key": "Enter"},
+    {"wait": "idle"},
+    {"delay_ms": 800},
+    {"click": {"text": "9 tools"}, "ms": 700},
+    {"delay_ms": 2200},
+    {"click": {"text": "9 tools"}, "ms": 300},
+    {"delay_ms": 700},
+    {"type": "markdown please", "per_char_ms": 55},
+    {"delay_ms": 250},
+    {"key": "Enter"},
+    {"wait": "idle"},
+    {"delay_ms": 1200},
+    {"click": {"text": "pan"}, "ms": 700},
+    {"delay_ms": 700},
+    {"drag": {"from": {"text": "━━━", "at": "start"}, "to": {"text": "⧉", "at": "middle"}}, "ms": 1400},
+    {"delay_ms": 900},
+    {"drag": {"from": {"text": "━━━", "at": "start"}, "to": {"text": "wrap pan", "at": "start"}}, "ms": 1000},
+    {"delay_ms": 1300},
+    {"click": {"text": "⧉", "nth": 0}, "ms": 500},
+    {"delay_ms": 1200},
+    {"click": {"text": "raw"}, "ms": 700},
+    {"delay_ms": 1600},
+    {"click": {"text": "render"}, "ms": 400},
+    {"delay_ms": 1000},
+    {"type": "three points", "per_char_ms": 55},
+    {"delay_ms": 250},
+    {"key": "Enter"},
+    {"wait": "idle"},
+    {"delay_ms": 800},
+    {"drag": {"from": {"text": "this is the first point", "at": "start"}, "to": {"text": "first point, blah blah blah", "at": "end"}}, "ms": 800},
+    {"delay_ms": 500},
+    {"click": {"text": "mark", "nth": -1}, "ms": 400},
+    {"delay_ms": 600},
+    {"type": " can you explain more about this?", "per_char_ms": 45},
+    {"delay_ms": 300},
+    {"key": "Alt+Enter"},
+    {"delay_ms": 500},
+    {"drag": {"from": {"text": "this is the third point", "at": "start"}, "to": {"text": "third point, blah blah blah blah", "at": "end"}}, "ms": 800},
+    {"delay_ms": 500},
+    {"click": {"text": "mark", "nth": -1}, "ms": 400},
+    {"delay_ms": 600},
+    {"type": " this sounds fine to me, but let's double check it", "per_char_ms": 45},
+    {"delay_ms": 400},
+    {"key": "Enter"},
+    {"wait": "idle"},
+    {"delay_ms": 1500}
+  ]
+}

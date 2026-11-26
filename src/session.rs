@@ -112,6 +112,9 @@ pub struct Message {
 
     /// How long the turn took, on the last reply of a turn that ended.
     pub took: Option<Duration>,
+
+    /// The passages of replies a prompt's chips stand for.
+    pub marks: Vec<Marked>,
 }
 
 impl Message {
@@ -120,8 +123,56 @@ impl Message {
             text,
             time,
             took: None,
+            marks: Vec::new(),
         }
     }
+}
+
+/// A passage of a reply that a prompt asks about, under the number of its
+/// chip.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Marked {
+    pub number: usize,
+    pub text: String,
+}
+
+/// The most marks a prompt can hold, one per circled digit `①` to `⑳`.
+pub const MAX_MARKS: usize = 20;
+
+/// The chip that stands for mark `number`, from 1 to `MAX_MARKS`.
+pub fn chip(number: usize) -> char {
+    char::from_u32(0x2460 + number as u32 - 1).unwrap_or('?')
+}
+
+/// The number of the mark `ch` stands for, if it is a chip.
+pub fn chip_number(ch: char) -> Option<usize> {
+    let offset = (ch as u32).checked_sub(0x2460)? as usize;
+    (offset < MAX_MARKS).then_some(offset + 1)
+}
+
+/// The text the agent receives for a prompt: each marked passage quoted
+/// under its number, then the prompt with each chip as `[n]`.
+pub fn sent_text(text: &str, marks: &[Marked]) -> String {
+    if marks.is_empty() {
+        return text.to_string();
+    }
+    let mut sent = String::new();
+    for mark in marks {
+        sent.push_str(&format!("[{}]\n", mark.number));
+        for line in mark.text.lines() {
+            sent.push_str("> ");
+            sent.push_str(line);
+            sent.push('\n');
+        }
+        sent.push('\n');
+    }
+    for ch in text.chars() {
+        match chip_number(ch).filter(|n| marks.iter().any(|mark| mark.number == *n)) {
+            Some(number) => sent.push_str(&format!("[{number}]")),
+            None => sent.push(ch),
+        }
+    }
+    sent
 }
 
 pub enum Entry {
@@ -155,8 +206,14 @@ pub struct Transcript {
 
 impl Transcript {
     pub fn prompt(&mut self, text: String) {
-        self.entries
-            .push(Entry::User(Message::new(text, Some(Time::now()))));
+        self.prompt_marked(text, Vec::new());
+    }
+
+    /// Start a turn on a prompt whose chips stand for `marks`.
+    pub fn prompt_marked(&mut self, text: String, marks: Vec<Marked>) {
+        let mut message = Message::new(text, Some(Time::now()));
+        message.marks = marks;
+        self.entries.push(Entry::User(message));
         self.in_flight = true;
         self.turn_started = Some(Instant::now());
         self.last_message = None;
@@ -219,6 +276,30 @@ impl Transcript {
             .iter()
             .filter(|entry| matches!(entry, Entry::Tool(tool) if tool.agent_running(now)))
             .count()
+    }
+
+    /// The top-level subagent calls of this run that still work at `now`,
+    /// and the others started since the latest prompt.
+    pub fn subagents(&self, now: Instant) -> Vec<&Tool> {
+        let turn = self
+            .entries
+            .iter()
+            .rposition(|entry| matches!(entry, Entry::User(_)))
+            .map_or(0, |at| at + 1)
+            .max(self.replayed);
+        self.entries[self.replayed..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, entry)| match entry {
+                Entry::Tool(tool)
+                    if tool.starts_agent()
+                        && (self.replayed + offset >= turn || tool.agent_running(now)) =>
+                {
+                    Some(tool)
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// Whether the turn runs only because subagents still work at `now`:
@@ -722,6 +803,27 @@ mod tests {
             )));
         }
         assert!(matches!(&transcript.entries[0], Entry::Tool(tool) if tool.revision == 2));
+    }
+
+    #[test]
+    fn a_marked_prompt_sends_each_passage_quoted_above_it_and_each_chip_as_its_number() {
+        let marks = [
+            Marked {
+                number: 1,
+                text: "keep it on disk\nunder state".to_string(),
+            },
+            Marked {
+                number: 3,
+                text: "evict".to_string(),
+            },
+        ];
+        assert_eq!(
+            sent_text("why ① and not ③? ②", &marks),
+            "[1]\n> keep it on disk\n> under state\n\n[3]\n> evict\n\nwhy [1] and not [3]? ②"
+        );
+        assert_eq!(sent_text("plain", &[]), "plain");
+        assert_eq!((chip(1), chip(20)), ('①', '⑳'));
+        assert_eq!((chip_number('⑳'), chip_number('㉑')), (Some(20), None));
     }
 
     fn subagent(id: &'static str, status: ToolCallStatus) -> SessionUpdate {

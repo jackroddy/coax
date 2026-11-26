@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,11 +31,12 @@ use crate::editor;
 use crate::form::Form;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
+use crate::playback::Player;
 use crate::prompt;
 use crate::registry;
 use crate::report::{self, Reporter, Snapshot};
 use crate::select::{self, Point, Selection};
-use crate::session::{Entry, Transcript};
+use crate::session::{self, Entry, Marked, Transcript};
 use crate::settings::{Category, Control, Setting, Settings};
 use crate::ui::{self, Word};
 
@@ -73,7 +75,13 @@ pub struct Press {
 
     /// Where a selection from the press starts, when the press is on text.
     anchor: Option<Point>,
+
+    /// 1 for a click, 2 for the second of a double click, 3 for a triple.
+    count: u8,
 }
+
+/// The longest wait between the clicks of a double or triple click.
+const MULTI_CLICK: Duration = Duration::from_millis(400);
 
 /// How long a block's copy glyph says `copied`.
 const COPIED_FOR: Duration = Duration::from_secs(1);
@@ -98,6 +106,25 @@ impl Drag {
         let start = column as isize - self.bar_x as isize - self.grab;
         ui::pan_for_thumb(self.visible, self.max, start, 2)
     }
+}
+
+/// A passage of a reply marked for the prompt, with where it lies in the
+/// reply's source.
+pub struct Mark {
+    pub number: usize,
+    pub text: String,
+    pub entry: usize,
+
+    /// The bytes of the reply's text the passage covers, empty when the
+    /// selection held no text with a known source.
+    pub source: Range<usize>,
+}
+
+/// A prompt entered during a turn, waiting for its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Queued {
+    pub text: String,
+    pub marks: Vec<Marked>,
 }
 
 pub struct App {
@@ -191,8 +218,21 @@ pub struct App {
     /// click.
     pub selection: Option<Selection>,
 
+    /// The passages the prompt's chips stand for, in the order they were
+    /// made.
+    pub marks: Vec<Mark>,
+
+    /// Where the last draw put the button that marks the selection.
+    pub mark_button: Option<Rect>,
+
+    /// Whether the pointer is over the mark button.
+    pub hover_mark: bool,
+
     /// A press on the transcript, until its release.
     pub press: Option<Press>,
+
+    /// When and where the last press on the transcript was, and its count.
+    pub last_press: Option<(Instant, Position, u8)>,
 
     /// The copy glyphs on screen, set by the last draw.
     pub copies: Vec<ui::CopyArea>,
@@ -247,7 +287,7 @@ pub struct App {
 
     /// Prompts entered during a turn, oldest first, each waiting for the
     /// turn before it to end.
-    pub waiting: VecDeque<String>,
+    pub waiting: VecDeque<Queued>,
 
     /// A held prompt whose turn has come, for the run loop to send.
     outbox: Option<String>,
@@ -300,6 +340,7 @@ struct Hovered {
     bar: Option<(usize, usize)>,
     fold: Option<ToolCallId>,
     link: Option<ui::LinkKey>,
+    mark: bool,
 }
 
 /// A header chip on screen.
@@ -511,10 +552,10 @@ impl App {
         let Some(next) = self.waiting.pop_front() else {
             return;
         };
-        self.transcript.prompt(next.clone());
         if !self.queueing {
-            self.outbox = Some(next);
+            self.outbox = Some(session::sent_text(&next.text, &next.marks));
         }
+        self.transcript.prompt_marked(next.text, next.marks);
     }
 
     /// Cancel the running turn, and put the waiting prompts back in the
@@ -534,7 +575,11 @@ impl App {
         if self.waiting.is_empty() {
             return;
         }
-        let mut texts: Vec<String> = self.waiting.drain(..).collect();
+        let mut texts: Vec<String> = self
+            .waiting
+            .drain(..)
+            .map(|queued| session::sent_text(&queued.text, &queued.marks))
+            .collect();
         if !self.input.is_empty() {
             texts.push(std::mem::take(&mut self.input));
         }
@@ -574,6 +619,7 @@ impl App {
                 self.transcript.notice("decade went away".to_string());
             }
             Message::Panes(_)
+            | Message::Screenshot { .. }
             | Message::Verb { .. }
             | Message::Show { .. }
             | Message::Highlight { .. }
@@ -635,6 +681,7 @@ impl App {
             bar: self.hover_bar,
             fold: self.hover_fold.clone(),
             link: self.hover_link.as_ref().map(|hover| hover.key),
+            mark: self.hover_mark,
         }
     }
 
@@ -645,6 +692,9 @@ impl App {
             MouseEventKind::Moved => {
                 self.hover = self.chip_at(position);
                 self.hover_copy = self.copy_at(position);
+                self.hover_mark = self
+                    .mark_button
+                    .is_some_and(|button| button.contains(position));
                 self.hover_v_bar = self
                     .v_bar_at(position)
                     .is_some_and(|(_, grab)| grab.is_some());
@@ -666,6 +716,7 @@ impl App {
                     && position != press.at
                 {
                     let head = self.texts.nearest(position);
+                    self.last_press = None;
                     let selection = self.selection.get_or_insert(Selection {
                         anchor,
                         head,
@@ -722,6 +773,16 @@ impl App {
             if text.is_empty() {
                 return Action::None;
             }
+            return Action::Copy(text);
+        }
+        let picked = press.anchor.and_then(|point| match press.count {
+            2 => select::word_at(&self.texts.lines, point),
+            3 => select::line_at(&self.texts.lines, point),
+            _ => None,
+        });
+        if let Some(selection) = picked {
+            let text = selection.copy(&self.texts.lines);
+            self.selection = Some(selection);
             return Action::Copy(text);
         }
         if let Some(action) = self.click_link(press.at) {
@@ -900,6 +961,13 @@ impl App {
     }
 
     fn click(&mut self, position: Position) -> Action {
+        if self
+            .mark_button
+            .is_some_and(|button| button.contains(position))
+        {
+            self.mark();
+            return Action::None;
+        }
         self.selection = None;
         if self.permission.is_some() || self.form.is_some() || self.confirm.is_some() {
             return Action::None;
@@ -963,9 +1031,20 @@ impl App {
                 .texts
                 .text_at(position)
                 .filter(|_| !self.wide.iter().any(|block| block.area.contains(position)));
+            let now = Instant::now();
+            let count = match self.last_press {
+                Some((at, place, count))
+                    if place == position && now.duration_since(at) < MULTI_CLICK =>
+                {
+                    count % 3 + 1
+                }
+                _ => 1,
+            };
+            self.last_press = Some((now, position, count));
             self.press = Some(Press {
                 at: position,
                 anchor,
+                count,
             });
             return Action::None;
         };
@@ -1227,6 +1306,74 @@ impl App {
     fn edited(&mut self) {
         self.command_cursor = 0;
         self.command_closed = false;
+        let input = &self.input;
+        self.marks
+            .retain(|mark| input.contains(session::chip(mark.number)));
+    }
+
+    /// Mark the selection: put its chip in the prompt at the cursor and keep
+    /// its passage.
+    fn mark(&mut self) {
+        let Some(selection) = self.selection.take() else {
+            return;
+        };
+        self.mark_button = None;
+        let (from, _) = selection.ends();
+        let Some(entry) = self.texts.entry_of(from.line) else {
+            return;
+        };
+        let Some(number) = (1..=session::MAX_MARKS)
+            .find(|number| self.marks.iter().all(|mark| mark.number != *number))
+        else {
+            return;
+        };
+        let reply = match &self.transcript.entries[entry] {
+            Entry::Agent(reply) => Some(reply.text.as_str()),
+            _ => None,
+        };
+        let passage = reply
+            .zip(selection.source(&self.texts.lines))
+            .and_then(|(reply, range)| {
+                let range = select::widened(reply, range);
+                Some((reply.get(range.clone())?.to_string(), range))
+            });
+        let (text, source) = passage.unwrap_or_else(|| (selection.copy(&self.texts.lines), 0..0));
+        self.marks.push(Mark {
+            number,
+            text,
+            entry,
+            source,
+        });
+
+        // a space after the chip, and before it when it would touch a word,
+        // since fonts draw a circled digit wider than the one column it
+        // takes and it would run into the cursor or the text beside it
+        let mut chip = String::new();
+        if self.input[..self.cursor]
+            .chars()
+            .last()
+            .is_some_and(|ch| !ch.is_whitespace())
+        {
+            chip.push(' ');
+        }
+        chip.push(session::chip(number));
+        chip.push(' ');
+        self.insert(&chip);
+    }
+
+    /// The marks whose chips the prompt being sent holds, and no more marks
+    /// left over.
+    fn take_marks(&mut self, text: &str) -> Vec<Marked> {
+        let mut marks: Vec<Marked> = std::mem::take(&mut self.marks)
+            .into_iter()
+            .filter(|mark| text.contains(session::chip(mark.number)))
+            .map(|mark| Marked {
+                number: mark.number,
+                text: mark.text,
+            })
+            .collect();
+        marks.sort_by_key(|mark| mark.number);
+        marks
     }
 
     /// How many rows the open menu has.
@@ -1470,20 +1617,22 @@ impl App {
                 self.cursor = 0;
                 self.remember(&text, Some(Time::now()));
                 self.scroll = 0;
+                let marks = self.take_marks(&text);
+                let sent = session::sent_text(&text, &marks);
                 let held = self.queueing && self.waiting.is_empty() && self.transcript.held(now);
                 if held {
                     self.held_replies += 1;
                     self.transcript.end_turn();
                 } else if self.transcript.in_flight {
-                    self.waiting.push_back(text.clone());
+                    self.waiting.push_back(Queued { text, marks });
                     return if self.queueing {
-                        Action::Prompt(text)
+                        Action::Prompt(sent)
                     } else {
                         Action::None
                     };
                 }
-                self.transcript.prompt(text.clone());
-                Action::Prompt(text)
+                self.transcript.prompt_marked(text, marks);
+                Action::Prompt(sent)
             }
             KeyCode::Backspace => {
                 self.remove_between(prompt::char_before(&self.input, self.cursor));
@@ -1583,10 +1732,16 @@ pub struct Opening {
     pub first_prompt: Option<String>,
     pub auto_allow: bool,
     pub keys: Keys,
+
+    /// Keys a scenario types in, after the person's own.
+    pub player: Player,
     pub links: LinksConfig,
 
     /// The agent's id in the ACP registry, for the new-version check.
     pub registry: Option<String>,
+
+    /// The launch arguments the report to decade carries.
+    pub resume_args: Vec<String>,
 }
 
 fn flip(id: &str, on: bool) -> Change {
@@ -1627,8 +1782,10 @@ async fn session(
         first_prompt,
         auto_allow,
         mut keys,
+        mut player,
         links,
         registry: registry_id,
+        resume_args,
     } = opening;
     let version = init
         .agent_info
@@ -1642,6 +1799,7 @@ async fn session(
         .and_then(|meta| meta.get("claudeCode")?.get("promptQueueing")?.as_bool())
         .unwrap_or(false);
     let agent = name
+        .clone()
         .or(init.agent_info.map(|info| info.name))
         .unwrap_or_else(|| "agent".to_string());
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
@@ -1690,12 +1848,14 @@ async fn session(
             "ms": opening_began.elapsed().as_millis() as u64,
         }),
     );
+    let restore = report::restore_argv(name.as_deref(), &resume_args, &session.0);
     let identity = decade_channel::Agent {
         name: agent.clone(),
         version,
         session: session.0.to_string(),
+        args: resume_args,
     };
-    let (mut reporter, mut decade_messages) = match report::connect_env(&identity) {
+    let (mut reporter, mut decade_messages) = match report::connect_env(&identity, restore) {
         Some((reporter, messages)) => (Some(reporter), Some(messages)),
         None => (None, None),
     };
@@ -1734,7 +1894,11 @@ async fn session(
         hover_bar: None,
         texts: select::Texts::default(),
         selection: None,
+        marks: Vec::new(),
+        mark_button: None,
+        hover_mark: false,
         press: None,
+        last_press: None,
         copies: Vec::new(),
         hover_copy: None,
         hover_fold: None,
@@ -1792,14 +1956,24 @@ async fn session(
     let mut edge = tokio::time::interval(EDGE_SCROLL_INTERVAL);
     edge.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut redraw = true;
+    let mut screen = ratatui::buffer::Buffer::default();
     let result = loop {
-        if redraw && let Err(error) = terminal.draw(|frame| ui::draw(frame, &mut app)) {
-            break Err(Error::into_internal_error(error));
+        if redraw {
+            let drawn = terminal.draw(|frame| {
+                ui::draw(frame, &mut app);
+                if player.due().is_some() {
+                    screen = frame.buffer_mut().clone();
+                }
+            });
+            if let Err(error) = drawn {
+                break Err(Error::into_internal_error(error));
+            }
         }
         redraw = true;
         report_to_decade(&mut reporter, &mut app);
         let expiry = app.guard.map(|guard| guard.until);
         let copied_until = app.copied.map(|(_, until)| until);
+        let played = player.due();
         let action = tokio::select! {
             event = link.events.recv() => match event {
                 Some(event) => {
@@ -1826,6 +2000,17 @@ async fn session(
             () = async { tokio::time::sleep_until(expiry.unwrap().into()).await }, if expiry.is_some() => {
                 app.guard = None;
                 Action::None
+            },
+            () = async { tokio::time::sleep_until(played.unwrap().into()).await }, if played.is_some() => {
+                let now = Instant::now();
+                match player.next(now, !app.transcript.in_flight, &screen) {
+                    Some(TermEvent::Key(key)) => app.key(key, now),
+                    Some(TermEvent::Mouse(mouse)) => app.pointer(mouse).0,
+                    _ => {
+                        redraw = false;
+                        Action::None
+                    }
+                }
             },
             _ = spin.tick(), if app.transcript.in_flight || app.guard.is_some() || app.transcript.running_agents(Instant::now()) > 0 => {
                 app.spinner = app.spinner.wrapping_add(1);
@@ -2040,6 +2225,46 @@ mod tests {
         Entry::User(Message::new(text.into(), None))
     }
 
+    #[test]
+    fn played_input_sends_a_prompt_and_types_the_next_only_after_the_turn_ends() {
+        let scenario = crate::scenario::Scenario::parse(
+            r#"{"acts": [], "input": [
+                {"type": "hi", "per_char_ms": 10},
+                {"key": "Enter"},
+                {"wait": "idle"},
+                {"type": "yo", "per_char_ms": 10},
+                {"key": "Enter"}
+            ]}"#,
+        )
+        .unwrap();
+        let mut player = Player::new(scenario.input).unwrap();
+        let mut app = app();
+        let mut now = Instant::now();
+        let mut sent = Vec::new();
+        let blank = ratatui::buffer::Buffer::default();
+        let mut play = |app: &mut App, now: Instant, sent: &mut Vec<String>| {
+            if let Some(TermEvent::Key(key)) = player.next(now, !app.transcript.in_flight, &blank)
+                && let Action::Prompt(text) = app.key(key, now)
+            {
+                sent.push(text);
+            }
+        };
+        for _ in 0..10 {
+            now += Duration::from_millis(10);
+            play(&mut app, now, &mut sent);
+        }
+        assert_eq!(sent, ["hi"]);
+        assert!(app.transcript.in_flight);
+        assert!(app.input.is_empty());
+        app.transcript
+            .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
+        for _ in 0..10 {
+            now += Duration::from_millis(60);
+            play(&mut app, now, &mut sent);
+        }
+        assert_eq!(sent, ["hi", "yo"]);
+    }
+
     fn app() -> App {
         App {
             transcript: Transcript::default(),
@@ -2075,7 +2300,11 @@ mod tests {
             hover_bar: None,
             texts: select::Texts::default(),
             selection: None,
+            marks: Vec::new(),
+            mark_button: None,
+            hover_mark: false,
             press: None,
+            last_press: None,
             copies: Vec::new(),
             hover_copy: None,
             hover_fold: None,
@@ -2203,7 +2432,7 @@ mod tests {
             panic!("no load");
         };
         assert_eq!(target, "foam:a");
-        assert_eq!(argv, ["foam", "show", "a"]);
+        assert_eq!(argv, ["foam", "show", "a", "--json"]);
         assert_eq!(app.hover_link.as_ref().unwrap().key, (0, None, 0));
         assert!(matches!(
             at(&mut app, MouseEventKind::Moved, 4),
@@ -2346,9 +2575,9 @@ mod tests {
     fn a_link_in_a_panned_table_is_hovered_and_clicked_on_the_columns_it_shows() {
         let mut app = app();
         app.wide.clear();
-        let note = "y".repeat(60);
+        let note = "yyyy ".repeat(5);
         app.transcript.entries.push(reply(format!(
-            "| name | note |\n|---|---|\n| [alpha](file:src/ui.rs#4) | {note} |"
+            "| name | a | b | c |\n|---|---|---|---|\n| [alpha](file:src/ui.rs#4) | {note} | {note} | {note} |"
         )));
         let text_under = |app: &mut App| {
             let screen = header_rows_all(app, 40);
@@ -2784,6 +3013,121 @@ mod tests {
         assert!(rows(&mut app).contains("- old line"));
         click(&mut app, x, y);
         assert!(!rows(&mut app).contains("old line"));
+    }
+
+    #[test]
+    fn a_run_of_calls_draws_folded_and_a_click_on_it_unfolds_and_folds_it() {
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{ToolCallStatus, ToolKind};
+
+        let read = |id: &str, title: &str| {
+            Entry::Tool(Tool {
+                id: agent_client_protocol::v1::schema::ToolCallId::new(id.to_string()),
+                title: title.to_string(),
+                kind: ToolKind::Read,
+                status: ToolCallStatus::Completed,
+                locations: Vec::new(),
+                content: Vec::new(),
+                cancelled: false,
+                changed: (0, 0),
+                revision: 0,
+                agent: false,
+                children: Vec::new(),
+                last_child_update: None,
+            })
+        };
+        let mut app = drawn_with(vec![read("r1", "Read one.rs"), read("r2", "Read two.rs")]);
+        let rows = |app: &mut App| header_rows_all(app, 80);
+        assert!(rows(&mut app).contains("2 tools"));
+        assert!(!rows(&mut app).contains("Read one.rs"));
+        let fold = &app.folds[0];
+        let (x, y) = (fold.area.x, fold.area.y);
+        click(&mut app, x, y);
+        let open = rows(&mut app);
+        assert!(
+            open.contains("2 tools") && open.contains("Read one.rs"),
+            "{open}"
+        );
+        assert!(open.contains("Read two.rs"), "{open}");
+        click(&mut app, x, y);
+        assert!(!rows(&mut app).contains("Read one.rs"));
+    }
+
+    #[test]
+    fn a_played_click_on_a_folded_runs_text_unfolds_it() {
+        use crate::scenario::{InputStep, Target};
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{ToolCallStatus, ToolKind};
+
+        let read = |id: &str, title: &str| {
+            Entry::Tool(Tool {
+                id: agent_client_protocol::v1::schema::ToolCallId::new(id.to_string()),
+                title: title.to_string(),
+                kind: ToolKind::Read,
+                status: ToolCallStatus::Completed,
+                locations: Vec::new(),
+                content: Vec::new(),
+                cancelled: false,
+                changed: (0, 0),
+                revision: 0,
+                agent: false,
+                children: Vec::new(),
+                last_child_update: None,
+            })
+        };
+        let mut app = drawn_with(vec![read("r1", "Read one.rs"), read("r2", "Read two.rs")]);
+        let click = InputStep::Click {
+            click: Target::Text("2 tools".to_string()),
+            ms: Some(50),
+        };
+        let mut player = Player::new(vec![click]).unwrap();
+        let mut now = Instant::now();
+        while let Some(due) = player.due() {
+            now = due.max(now);
+            let screen = header_buffer(&mut app, 80);
+            if let Some(TermEvent::Mouse(mouse)) = player.next(now, true, &screen) {
+                app.pointer(mouse);
+            }
+        }
+        assert!(header_rows_all(&mut app, 80).contains("Read one.rs"));
+    }
+
+    #[test]
+    fn an_unfolded_run_draws_its_calls_indented_under_its_row_with_no_blank_rows_between() {
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{ToolCallStatus, ToolKind};
+
+        let read = |id: &str, title: &str| {
+            Entry::Tool(Tool {
+                id: agent_client_protocol::v1::schema::ToolCallId::new(id.to_string()),
+                title: title.to_string(),
+                kind: ToolKind::Read,
+                status: ToolCallStatus::Completed,
+                locations: Vec::new(),
+                content: Vec::new(),
+                cancelled: false,
+                changed: (0, 0),
+                revision: 0,
+                agent: false,
+                children: Vec::new(),
+                last_child_update: None,
+            })
+        };
+        let mut app = drawn_with(vec![read("r1", "Read one.rs"), read("r2", "Read two.rs")]);
+        header_rows_all(&mut app, 80);
+        let fold = &app.folds[0];
+        let (x, y) = (fold.area.x, fold.area.y);
+        click(&mut app, x, y);
+        let open = header_rows_all(&mut app, 80);
+        let lines: Vec<&str> = open.lines().map(str::trim_end).collect();
+        let row = lines
+            .iter()
+            .position(|line| line.contains("2 tools"))
+            .unwrap();
+        assert!(lines[row].starts_with("▾ ✓ 2 tools  read 2"), "{open}");
+        assert_eq!(lines[row + 1], "      ≡ read   Read one.rs", "{open}");
+        assert_eq!(lines[row + 2], "      ≡ read   Read two.rs", "{open}");
+        assert_eq!(lines[row + 3], "", "{open}");
     }
 
     fn unfolded_edit(app: &mut App) -> ui::FoldArea {
@@ -3356,8 +3700,8 @@ mod tests {
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
         let context = screen_row(&mut app, 120, CONTEXT_ROW);
-        assert!(context.starts_with(" context: 3%  ▰▰▰▱▱"), "{context}");
-        assert_eq!(context.chars().filter(|ch| *ch == '▰').count(), 3);
+        assert!(context.starts_with(" context: 3%  ━━━──"), "{context}");
+        assert_eq!(context.chars().filter(|ch| *ch == '━').count(), 3);
         assert_eq!(context.chars().count(), 120);
         let status = status_row(&mut app, 120);
         assert!(
@@ -3524,7 +3868,7 @@ mod tests {
             plan_entry("write it up", PlanEntryStatus::Pending),
         ];
         let row = progress_row(&mut app, 100);
-        assert_eq!(row.trim_end(), " ▶ plan 1/3 · run the tests");
+        assert_eq!(row.trim_end(), " ▸ plan 1/3 · run the tests");
         let buffer = header_buffer(&mut app, 100);
         assert_eq!(buffer[(1, PROGRESS_ROW)].fg, palette.yellow);
         let step = column(&mut app, 100, PROGRESS_ROW, "run");
@@ -3532,13 +3876,24 @@ mod tests {
 
         app.transcript.plan[1].status = PlanEntryStatus::Completed;
         let row = progress_row(&mut app, 100);
-        assert_eq!(row.trim_end(), " ▶ plan 2/3 · write it up");
+        assert_eq!(row.trim_end(), " ▸ plan 2/3 · write it up");
 
         app.transcript.plan[2].status = PlanEntryStatus::Completed;
         let row = progress_row(&mut app, 100);
-        assert_eq!(row.trim_end(), " ▶ plan 3/3");
+        assert_eq!(row.trim_end(), " ▸ plan 3/3");
         let buffer = header_buffer(&mut app, 100);
         assert_eq!(buffer[(1, PROGRESS_ROW)].fg, palette.green);
+    }
+
+    #[test]
+    fn the_plan_rows_arrow_points_down_while_the_plan_is_shown() {
+        use agent_client_protocol::v1::schema::PlanEntryStatus;
+
+        let mut app = with_settings();
+        app.transcript.plan = vec![plan_entry("read the code", PlanEntryStatus::Pending)];
+        assert!(progress_row(&mut app, 100).starts_with(" ▸ plan 0/1"));
+        app.show_plan = true;
+        assert!(progress_row(&mut app, 100).starts_with(" ▾ plan 0/1"));
     }
 
     #[test]
@@ -3562,7 +3917,7 @@ mod tests {
             PlanEntryStatus::InProgress,
         )];
         let row = progress_row(&mut app, 60);
-        assert!(row.starts_with(" ▶ plan 0/1 · a step with"), "{row}");
+        assert!(row.starts_with(" ▸ plan 0/1 · a step with"), "{row}");
         assert!(row.contains("…  "), "{row}");
         assert!(row.ends_with(" Read src/main.rs "), "{row}");
 
@@ -3759,7 +4114,7 @@ mod tests {
         type_text(&mut app, "two");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::Prompt(text) if text == "two"));
         assert_eq!(users(&app), ["one"]);
-        assert_eq!(app.waiting, ["two"]);
+        assert_eq!(queued_texts(&app), ["two"]);
         done(&mut app, StopReason::EndTurn);
         assert_eq!(users(&app), ["one", "two"]);
         assert!(app.transcript.in_flight);
@@ -3825,7 +4180,7 @@ mod tests {
         agent_says(&mut app, "started");
         type_text(&mut app, "two");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.waiting, ["two"]);
+        assert_eq!(queued_texts(&app), ["two"]);
         done(&mut app, StopReason::EndTurn);
         assert_eq!(app.take_outbox().as_deref(), Some("two"));
         assert_eq!(texts(&app), ["one", "started", "two"]);
@@ -3859,7 +4214,10 @@ mod tests {
         let mut app = with_settings();
         app.transcript.prompt("one".to_string());
         app.waiting = ["two\nmore", "three", "four", "five"]
-            .map(str::to_string)
+            .map(|text| Queued {
+                text: text.to_string(),
+                marks: Vec::new(),
+            })
             .into();
         let rows = header_rows_all(&mut app, 60);
         let rows: Vec<&str> = rows.lines().collect();
@@ -3867,6 +4225,13 @@ mod tests {
         assert!(rows[20].starts_with(" queued  three "), "{}", rows[20]);
         assert!(rows[21].starts_with(" + 2 more queued"), "{}", rows[21]);
         assert!(rows[22].starts_with(" ◐ working"), "{}", rows[22]);
+    }
+
+    fn queued_texts(app: &App) -> Vec<&str> {
+        app.waiting
+            .iter()
+            .map(|queued| queued.text.as_str())
+            .collect()
     }
 
     fn ask_form(app: &mut App) -> oneshot::Receiver<ElicitationAction> {
@@ -3891,7 +4256,7 @@ mod tests {
         let mut answer = ask_form(&mut app);
         let screen = header_rows_all(&mut app, 100);
         assert!(
-            screen.contains("○ Disk  kept under the state directory"),
+            screen.contains("○ Disk    kept under the state directory"),
             "{screen}"
         );
         type_text(&mut app, "x");
@@ -3911,14 +4276,16 @@ mod tests {
         let rows: Vec<&str> = screen.lines().collect();
         assert!(rows[8].starts_with(" waiting for you"), "{screen}");
         assert!(
-            rows[9].starts_with("── Please answer the following questions. ─"),
+            rows[9].starts_with("╭──") && rows[9].ends_with("─╮"),
             "{screen}"
         );
         assert!(
-            rows[9].ends_with(" 1 more   enter pick   esc dismiss ──"),
+            rows[10].starts_with("│ Please answer the following questions. "),
             "{screen}"
         );
-        assert_eq!(rows[10], format!("{:<100}", "  Storage"));
+        assert!(rows[12].starts_with("│   Storage · 1 of 2 "), "{screen}");
+        assert!(rows[24].starts_with("╰ 1 more ─"), "{screen}");
+        assert!(rows[24].ends_with(" esc dismiss ╯"), "{screen}");
         assert!(rows[25].starts_with("━━━━"), "{screen}");
         assert!(rows[..8].iter().all(|row| !row.contains("Storage")));
     }
@@ -3933,11 +4300,51 @@ mod tests {
         let screen = header_rows_all(&mut app, 100);
         let rows: Vec<&str> = screen.lines().collect();
         let disk = rows.iter().position(|row| row.contains("○ Disk")).unwrap();
-        assert!(rows[disk + 1].starts_with("  ╭──"), "{screen}");
-        assert!(rows[disk + 2].starts_with("  │ state/ "), "{screen}");
-        assert!(rows[disk + 4].starts_with("  │     index.db │"), "{screen}");
+        assert!(rows[disk + 1].starts_with("│   ╭──"), "{screen}");
+        assert!(rows[disk + 2].starts_with("│   │ state/ "), "{screen}");
+        assert!(
+            rows[disk + 4].starts_with("│   │     index.db │"),
+            "{screen}"
+        );
         press(&mut app, KeyCode::Down);
         assert!(!header_rows_all(&mut app, 100).contains("index.db"));
+    }
+
+    #[test]
+    fn long_form_text_and_typed_text_wrap_inside_the_box() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        ask_form(&mut app);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Up);
+        type_text(&mut app, "keep it on the fast disk and evict old blobs");
+        let screen = header_rows_all(&mut app, 40);
+        let rows: Vec<&str> = screen.lines().collect();
+        let form = &rows[9..25];
+        assert!(
+            form.iter()
+                .all(|row| row.starts_with('│') || row.starts_with('╭') || row.starts_with('╰')),
+            "{screen}"
+        );
+        assert!(form.iter().all(|row| !row.contains('…')), "{screen}");
+        let disk = form.iter().position(|row| row.contains("● Disk")).unwrap();
+        assert!(
+            form[disk].starts_with("│   ● Disk    kept under the state "),
+            "{screen}"
+        );
+        assert!(
+            form[disk + 1].starts_with("│             directory "),
+            "{screen}"
+        );
+        assert!(
+            form[disk + 2].starts_with("│ ▌ › keep it on the fast disk and "),
+            "{screen}"
+        );
+        assert!(
+            form[disk + 3].starts_with("│ ▌   evict old blobs"),
+            "{screen}"
+        );
     }
 
     #[test]
@@ -5282,6 +5689,198 @@ mod tests {
         assert!(app.selection.is_some());
         assert!(matches!(click(&mut app, from.x, from.y), Action::None));
         assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn a_long_notice_with_newlines_draws_as_one_cut_line_when_the_screen_cuts_it_after_a_newline() {
+        let mut app = app();
+        app.transcript.notice(
+            "prompt failed: Internal error: You've hit your 5-hour limit · resets \
+             9:30pm (America/Denver): {\n  \"errorKind\": \"rate_limit\"\n}"
+                .to_string(),
+        );
+        let screen = header_rows_all(&mut app, 110);
+        let row = screen
+            .lines()
+            .find(|row| row.contains("prompt failed"))
+            .expect("the notice is drawn");
+        assert!(row.trim_end().ends_with('…'), "{screen}");
+    }
+
+    #[test]
+    fn a_double_click_copies_the_word_and_a_triple_click_the_whole_wrapped_line() {
+        let long = "first words then a line long enough to wrap over two rows of \
+                    the transcript at eighty columns wide, ending here";
+        let mut app = drawn_with(vec![reply(format!("alpha beta_gamma delta\n\n{long}"))]);
+        let at = text_spot(&app, "beta", false);
+        assert!(matches!(click(&mut app, at.x, at.y), Action::None));
+        assert_eq!(copied_by(click(&mut app, at.x, at.y)), "beta_gamma");
+        assert!(app.selection.is_some());
+        let at = text_spot(&app, "then", false);
+        click(&mut app, at.x, at.y);
+        click(&mut app, at.x, at.y);
+        assert_eq!(copied_by(click(&mut app, at.x, at.y)), long);
+    }
+
+    #[test]
+    fn clicks_too_far_apart_in_time_select_nothing() {
+        let mut app = drawn_with(vec![reply("alpha beta")]);
+        let at = text_spot(&app, "beta", false);
+        click(&mut app, at.x, at.y);
+        if let Some((when, _, _)) = &mut app.last_press {
+            *when -= MULTI_CLICK * 2;
+        }
+        assert!(matches!(click(&mut app, at.x, at.y), Action::None));
+        assert!(app.selection.is_none());
+    }
+
+    fn mark_drag(app: &mut App, from: &str, to: &str) {
+        let from = text_spot(app, from, false);
+        let to = text_spot(app, to, true);
+        drag_over(app, from, to);
+        header_buffer(app, 80);
+    }
+
+    #[test]
+    fn a_marked_passage_reaches_the_agent_quoted_above_the_question() {
+        let mut app = drawn_with(vec![prompt("go"), reply("one two three")]);
+        mark_drag(&mut app, "one", "two");
+        let button = app.mark_button.expect("a mark button");
+        assert!(matches!(click(&mut app, button.x, button.y), Action::None));
+        assert_eq!(app.input, "① ");
+        assert!(app.selection.is_none());
+        let screen = header_rows_all(&mut app, 80);
+        assert!(screen.contains("① one two three"), "{screen}");
+        type_text(&mut app, "why?");
+        let Action::Prompt(sent) = press(&mut app, KeyCode::Enter) else {
+            panic!("the prompt should go out");
+        };
+        assert_eq!(sent, "[1]\n> one two\n\n[1] why?");
+        assert!(app.marks.is_empty());
+        let Some(Entry::User(sent)) = app.transcript.entries.last() else {
+            panic!("the prompt should be in the transcript");
+        };
+        assert_eq!(sent.text, "① why?");
+        assert_eq!(sent.marks[0].text, "one two");
+        header_buffer(&mut app, 80);
+        let chip = app
+            .link_areas
+            .iter()
+            .find(|area| area.target == "mark:1")
+            .expect("the sent chip can be hovered");
+        assert_eq!(chip.title.as_deref(), Some("one two"));
+        let area = chip.area;
+        let buffer = header_buffer(&mut app, 80);
+        assert_eq!(buffer[(area.x, area.y)].symbol(), "①");
+    }
+
+    /// The passage of a mark made by a drag from `from` to `to`.
+    fn marked_text(app: &mut App, from: &str, to: &str) -> String {
+        mark_drag(app, from, to);
+        let button = app.mark_button.expect("a mark button");
+        click(app, button.x, button.y);
+        app.marks.last().expect("a mark").text.clone()
+    }
+
+    #[test]
+    fn a_marked_passage_reaches_the_agent_as_its_markdown_source() {
+        let mut app = drawn_with(vec![reply("say **one** and `two` then three")]);
+        assert_eq!(marked_text(&mut app, "one", "two"), "**one** and `two`");
+        type_text(&mut app, "why?");
+        let Action::Prompt(sent) = press(&mut app, KeyCode::Enter) else {
+            panic!("the prompt should go out");
+        };
+        assert_eq!(sent, "[1]\n> **one** and `two`\n\n[1] why?");
+    }
+
+    #[test]
+    fn marking_exactly_the_text_of_inline_code_or_a_link_takes_its_markers() {
+        let text = "see `run()` or [the docs](https://example.com/a) now";
+        let mut app = drawn_with(vec![reply(text)]);
+        assert_eq!(marked_text(&mut app, "run", "()"), "`run()`");
+        assert_eq!(
+            marked_text(&mut app, "the docs", "docs"),
+            "[the docs](https://example.com/a)"
+        );
+    }
+
+    #[test]
+    fn a_mark_from_a_list_bullet_starts_at_the_items_text() {
+        let mut app = drawn_with(vec![reply("- first item here\n- second")]);
+        assert_eq!(marked_text(&mut app, "•", "here"), "first item here");
+    }
+
+    #[test]
+    fn a_mark_inside_a_markdown_block_drawn_as_markdown_takes_its_source() {
+        let text = "before\n\n```md\nsome **bold** words\n```";
+        let mut app = drawn_with(vec![reply(text)]);
+        assert_eq!(marked_text(&mut app, "bold", "words"), "**bold** words");
+    }
+
+    #[test]
+    fn a_marked_passage_stays_on_its_words_when_the_reply_reflows() {
+        let words: Vec<String> = (1..=40).map(|n| format!("word{n}")).collect();
+        let mut app = drawn_with(vec![reply(words.join(" "))]);
+        marked_text(&mut app, "word5 ", "word30");
+        let buffer = header_buffer(&mut app, 50);
+        let area = app.texts.area;
+        let selection = crate::palette::get().selection;
+        let rows: Vec<String> = (area.top()..area.bottom())
+            .map(|y| {
+                (area.left()..area.right())
+                    .filter(|&x| buffer[(x, y)].bg == selection)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .filter(|row| !row.is_empty())
+            .collect();
+        assert!(rows.len() > 2, "the passage wraps over more rows at 50");
+        assert_eq!(rows.join(" "), words[4..30].join(" "));
+    }
+
+    #[test]
+    fn the_mark_button_turns_solid_under_the_pointer() {
+        let mut app = drawn_with(vec![reply("one two three")]);
+        mark_drag(&mut app, "one", "two");
+        let button = app.mark_button.expect("a mark button");
+        let resting = header_buffer(&mut app, 80)[(button.x + 1, button.y)].style();
+        let moved = wheel(
+            MouseEventKind::Moved,
+            KeyModifiers::NONE,
+            button.x,
+            button.y,
+        );
+        app.mouse(moved);
+        assert!(app.hover_mark);
+        let hovered = header_buffer(&mut app, 80)[(button.x + 1, button.y)].style();
+        assert_ne!(resting.bg, hovered.bg);
+        assert!(
+            hovered
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn backspace_over_a_chip_drops_its_mark() {
+        let mut app = drawn_with(vec![reply("one two three")]);
+        mark_drag(&mut app, "one", "two");
+        let button = app.mark_button.expect("a mark button");
+        click(&mut app, button.x, button.y);
+        assert_eq!(app.marks.len(), 1);
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.marks.len(), 1);
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.input, "");
+        assert!(app.marks.is_empty());
+    }
+
+    #[test]
+    fn a_selection_that_leaves_its_reply_offers_no_mark() {
+        let mut app = drawn_with(vec![reply("one two"), reply("three four")]);
+        mark_drag(&mut app, "two", "three");
+        assert!(app.selection.is_some());
+        assert_eq!(app.mark_button, None);
     }
 
     #[test]

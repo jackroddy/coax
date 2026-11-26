@@ -1,25 +1,30 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use agent_client_protocol::v1::schema::SessionId;
 use agent_client_protocol::{AcpAgent, Error};
-use coax::agents::Agents;
+use coax::agents::{self, Agents};
 use coax::app::{Opening, Start};
 use coax::config::Config;
 use coax::links::LinksConfig;
 use coax::log;
 use coax::picker::Choice;
-use coax::{acp, app, picker};
+use coax::playback::Player;
+use coax::scenario::Scenario;
+use coax::{acp, app, picker, report};
 use serde_json::json;
 use tokio::task::LocalSet;
 
-const USAGE: &str =
-    "usage: coax [--prompt <text>] [--allow] [--agent <name> | <agent command> [args...]]";
+const USAGE: &str = "usage: coax [--prompt <text>] [--allow] \
+     [--agent <name> [--session <id>] | <agent command> [args...]]";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
     first_prompt: Option<String>,
     auto_allow: bool,
     launch: Launch,
+    session: Option<String>,
+    input: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -33,6 +38,9 @@ fn parse(mut args: Vec<String>) -> Option<Options> {
     let mut first_prompt = None;
     let mut auto_allow = false;
     let mut agent = None;
+    let mut session = None;
+    #[cfg_attr(not(feature = "fake-agent"), allow(unused_mut))]
+    let mut input = None;
     loop {
         match args.first().map(String::as_str) {
             Some("--prompt") if args.len() > 1 => {
@@ -43,9 +51,18 @@ fn parse(mut args: Vec<String>) -> Option<Options> {
                 agent = Some(args[1].clone());
                 args.drain(..2);
             }
+            Some("--session") if args.len() > 1 => {
+                session = Some(args[1].clone());
+                args.drain(..2);
+            }
             Some("--allow") => {
                 auto_allow = true;
                 args.remove(0);
+            }
+            #[cfg(feature = "fake-agent")]
+            Some("--input") if args.len() > 1 => {
+                input = Some(args[1].clone());
+                args.drain(..2);
             }
             _ => break,
         }
@@ -57,10 +74,15 @@ fn parse(mut args: Vec<String>) -> Option<Options> {
         (None, Some(_)) => Launch::Command(args),
         (None, None) => Launch::Pick,
     };
+    if session.is_some() && !matches!(launch, Launch::Named(_)) {
+        return None;
+    }
     Some(Options {
         first_prompt,
         auto_allow,
         launch,
+        session,
+        input,
     })
 }
 
@@ -88,12 +110,24 @@ fn logged_args(mut args: Vec<String>) -> Vec<String> {
                 args[at + 1] = "<prompt>".to_string();
                 at += 2;
             }
-            "--agent" => at += 2,
+            "--agent" | "--session" | "--input" => at += 2,
             "--allow" => at += 1,
             _ => break,
         }
     }
     args
+}
+
+/// The keys a scenario file's `input` types in.
+fn player(path: Option<&str>) -> Player {
+    let Some(path) = path else {
+        return Player::default();
+    };
+    let json =
+        std::fs::read_to_string(path).unwrap_or_else(|error| fail(2, &format!("{path}: {error}")));
+    let scenario =
+        Scenario::parse(&json).unwrap_or_else(|error| fail(2, &format!("{path}: {error}")));
+    Player::new(scenario.input).unwrap_or_else(|error| fail(2, &format!("{path}: {error}")))
 }
 
 fn fail(code: i32, message: &str) -> ! {
@@ -105,25 +139,33 @@ fn fail(code: i32, message: &str) -> ! {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     coax::log::init();
+    let args: Vec<String> = std::env::args().skip(1).collect();
     coax::log::info(
         "launch",
         json!({
             "version": env!("CARGO_PKG_VERSION"),
-            "args": logged_args(std::env::args().skip(1).collect()),
+            "args": logged_args(args.clone()),
             "cwd": std::env::current_dir().ok(),
         }),
     );
-    let Some(options) = parse(std::env::args().skip(1).collect()) else {
+    let resume_args = report::resume_args(&args);
+    let Some(options) = parse(args) else {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
+    let start = match options.session {
+        Some(id) => Start::Load(SessionId::new(id), None),
+        None => Start::New,
+    };
     let mut opening = Opening {
-        start: Start::New,
+        start,
         first_prompt: options.first_prompt,
         auto_allow: options.auto_allow,
         keys: app::key_thread(),
+        player: player(options.input.as_deref()),
         links: LinksConfig::default(),
         registry: None,
+        resume_args,
     };
     let result = match options.launch {
         Launch::Command(words) => match AcpAgent::from_args(words.clone()) {
@@ -157,7 +199,9 @@ async fn main() {
     }
 }
 
-async fn open(agent: AcpAgent, name: Option<String>, opening: Opening) -> Result<(), Error> {
+/// Run `agent` on `opening`. A session to load that the agent does not list
+/// for the folder is an error before the screen opens.
+async fn open(agent: AcpAgent, name: Option<String>, mut opening: Opening) -> Result<(), Error> {
     let command = agent.config().command().display().to_string();
     let agent = log::tap(agent, name.as_deref().unwrap_or(&command));
     acp::run(agent, &command, async |link| {
@@ -167,6 +211,10 @@ async fn open(agent: AcpAgent, name: Option<String>, opening: Opening) -> Result
             "agent.initialized",
             json!({"ms": began.elapsed().as_millis() as u64}),
         );
+        if let Start::Load(id, title) = &mut opening.start {
+            let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
+            *title = agents::listed_title(&link, &init, id, &cwd).await?;
+        }
         app::run(link, init, name, opening).await
     })
     .await
@@ -178,9 +226,15 @@ async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), 
     opening.links = config.links.clone();
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
     let mut agents = Agents::start(config, &cwd);
-    let choice = picker::pick(config, path, &mut agents.listings, &mut opening.keys)
-        .await
-        .map_err(Error::into_internal_error)?;
+    let choice = picker::pick(
+        config,
+        path,
+        &mut agents.listings,
+        &mut opening.keys,
+        &mut opening.player,
+    )
+    .await
+    .map_err(Error::into_internal_error)?;
     match &choice {
         Choice::Quit => log::info("picker", json!({"choice": "quit"})),
         Choice::Agent(name) => log::info("picker", json!({"choice": "new", "agent": name})),
@@ -238,6 +292,30 @@ mod tests {
     #[test]
     fn agent_and_a_raw_command_together_are_a_usage_error() {
         assert_eq!(parse(args("--agent claude coax-fake-agent")), None);
+    }
+
+    #[test]
+    fn session_with_agent_names_the_session_to_load() {
+        let options = parse(args("--agent claude --allow --session 7f3a")).unwrap();
+        assert_eq!(options.launch, Launch::Named("claude".to_string()));
+        assert_eq!(options.session.as_deref(), Some("7f3a"));
+        assert!(options.auto_allow);
+        assert_eq!(parse(args("--agent claude")).unwrap().session, None);
+    }
+
+    #[test]
+    fn session_without_agent_is_a_usage_error() {
+        assert_eq!(parse(args("--session 7f3a")), None);
+        assert_eq!(parse(args("--session 7f3a coax-fake-agent")), None);
+        assert_eq!(parse(args("--agent claude --session")), None);
+    }
+
+    #[test]
+    fn the_logged_args_hide_the_prompt_and_keep_the_session() {
+        assert_eq!(
+            logged_args(args("--prompt hi --agent claude --session 7f3a --allow")),
+            args("--prompt <prompt> --agent claude --session 7f3a --allow")
+        );
     }
 
     #[test]

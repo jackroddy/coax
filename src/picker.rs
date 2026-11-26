@@ -7,9 +7,9 @@ use agent_client_protocol::v1::schema::SessionId;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, BorderType, Padding, Paragraph};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{Instant, timeout_at};
 use unicode_width::UnicodeWidthStr;
@@ -19,6 +19,7 @@ use crate::app::Keys;
 use crate::config::Config;
 use crate::header;
 use crate::palette;
+use crate::playback::Player;
 use crate::ui;
 
 /// How long the picker waits for the agents' session lists before its first
@@ -28,6 +29,25 @@ const LISTING_WAIT: Duration = Duration::from_millis(300);
 /// A session older than this shows its date in place of its age.
 const RECENT_DAYS: i64 = 7;
 
+/// The mark before a ready agent.
+const READY: char = '●';
+
+/// The mark before an agent that failed to start.
+const FAILED: char = '✗';
+
+/// The frames of the mark before an agent still starting.
+const STARTING: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// The gutter of the highlighted row in the focused pane.
+const CHOSEN: &str = "› ";
+
+/// How often the starting mark moves to its next frame.
+const SPIN: Duration = Duration::from_millis(100);
+
+const MONTHS: [&str; 12] = [
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+];
+
 /// The agent picker shown on a bare launch.
 pub struct Picker<'a> {
     names: Vec<&'a str>,
@@ -35,9 +55,18 @@ pub struct Picker<'a> {
 
     /// Why each agent has no sessions, when it has none for a reason.
     failures: Vec<Option<Failure>>,
+
+    /// Which agents have sent their listing, so are no longer starting.
+    reported: Vec<bool>,
     default: Option<usize>,
     sessions: Vec<SessionRow>,
     selected: Selected,
+
+    /// The agent row to return to when focus comes back to the new pane.
+    agent_cursor: usize,
+
+    /// The session row to return to when focus comes back to the sessions.
+    session_cursor: Option<(usize, SessionId)>,
 
     /// Whether the user has moved the highlight; until then it follows the
     /// newest session as listings arrive.
@@ -58,8 +87,9 @@ struct Updated {
     date: String,
 }
 
-/// The highlighted row. A session is kept by identity, so sessions arriving
-/// above it do not move the highlight.
+/// The highlighted row, which also says which pane has focus. A session is
+/// kept by identity, so sessions arriving above it do not move the
+/// highlight.
 #[derive(PartialEq, Eq)]
 enum Selected {
     Session(usize, SessionId),
@@ -96,11 +126,14 @@ impl<'a> Picker<'a> {
             .and_then(|default| names.iter().position(|name| *name == default));
         Picker {
             failures: names.iter().map(|_| None).collect(),
+            reported: names.iter().map(|_| false).collect(),
             names,
             commands,
             default,
             sessions: Vec::new(),
             selected: Selected::Agent(default.unwrap_or(0)),
+            agent_cursor: default.unwrap_or(0),
+            session_cursor: None,
             moved: false,
             path,
         }
@@ -111,6 +144,7 @@ impl<'a> Picker<'a> {
         let Some(agent) = self.names.iter().position(|name| *name == listing.agent) else {
             return;
         };
+        self.reported[agent] = true;
         self.failures[agent] = listing.failure;
         self.sessions.retain(|row| row.agent != agent);
         self.sessions
@@ -127,145 +161,256 @@ impl<'a> Picker<'a> {
             }));
         self.sessions
             .sort_by_key(|row| std::cmp::Reverse(row.updated.as_ref().map(|at| at.seconds)));
+        if self
+            .session_cursor
+            .as_ref()
+            .is_some_and(|(agent, id)| self.session_index(*agent, id).is_none())
+        {
+            self.session_cursor = None;
+        }
         if !self.moved {
             self.selected = match self.sessions.first() {
                 Some(row) => Selected::Session(row.agent, row.id.clone()),
-                None => Selected::Agent(self.default.unwrap_or(0)),
+                None => Selected::Agent(self.agent_cursor),
             };
             return;
         }
-        if let Selected::Session(agent, id) = &self.selected {
-            let kept = self
-                .sessions
-                .iter()
-                .any(|row| row.agent == *agent && row.id == *id);
-            if !kept {
-                self.selected = Selected::Agent(self.default.unwrap_or(0));
-            }
+        if let Selected::Session(agent, id) = &self.selected
+            && self.session_index(*agent, id).is_none()
+        {
+            self.selected = Selected::Agent(self.agent_cursor);
         }
     }
 
-    fn rows(&self) -> usize {
-        self.sessions.len() + self.names.len()
+    /// Whether an agent is still starting, so its mark moves.
+    pub fn starting(&self) -> bool {
+        self.reported.iter().any(|reported| !reported)
     }
 
-    /// The highlighted row's place in the sessions-then-agents list.
-    fn position(&self) -> usize {
+    fn session_index(&self, agent: usize, id: &SessionId) -> Option<usize> {
+        self.sessions
+            .iter()
+            .position(|row| row.agent == agent && row.id == *id)
+    }
+
+    fn select_session(&mut self, index: usize) {
+        let row = &self.sessions[index];
+        self.selected = Selected::Session(row.agent, row.id.clone());
+    }
+
+    /// The highlighted session's row, or the one focus left behind.
+    fn session_row_index(&self) -> Option<usize> {
         match &self.selected {
-            Selected::Session(agent, id) => self
-                .sessions
-                .iter()
-                .position(|row| row.agent == *agent && row.id == *id)
-                .unwrap_or(0),
-            Selected::Agent(index) => self.sessions.len() + index,
+            Selected::Session(agent, id) => self.session_index(*agent, id),
+            Selected::Agent(_) => self
+                .session_cursor
+                .as_ref()
+                .and_then(|(agent, id)| self.session_index(*agent, id)),
         }
     }
 
-    fn select(&mut self, position: usize) {
-        self.moved = true;
-        self.selected = match self.sessions.get(position) {
-            Some(row) => Selected::Session(row.agent, row.id.clone()),
-            None => Selected::Agent(position - self.sessions.len()),
-        };
+    fn focus_new(&mut self) {
+        if let Selected::Session(agent, id) = &self.selected {
+            self.session_cursor = Some((*agent, id.clone()));
+            self.selected = Selected::Agent(self.agent_cursor);
+        }
+    }
+
+    fn focus_sessions(&mut self) {
+        if self.sessions.is_empty() {
+            return;
+        }
+        if let Selected::Agent(index) = self.selected {
+            self.agent_cursor = index;
+            self.select_session(self.session_row_index().unwrap_or(0));
+        }
+    }
+
+    /// Move the highlight `step` rows within the focused pane, stopping at
+    /// either end.
+    fn step(&mut self, step: isize) {
+        match self.selected {
+            Selected::Session(..) => {
+                let at = self.session_row_index().unwrap_or(0);
+                let to = at.saturating_add_signed(step).min(self.sessions.len() - 1);
+                self.select_session(to);
+            }
+            Selected::Agent(index) if !self.names.is_empty() => {
+                let to = index.saturating_add_signed(step).min(self.names.len() - 1);
+                self.agent_cursor = to;
+                self.selected = Selected::Agent(to);
+            }
+            Selected::Agent(_) => {}
+        }
     }
 
     pub fn key(&mut self, key: KeyEvent) -> Option<Choice<'a>> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Char('c') if ctrl => Some(Choice::Quit),
-            KeyCode::Esc => Some(Choice::Quit),
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.select(self.position().saturating_sub(1));
-                None
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.names.is_empty() {
-                    return None;
-                }
-                self.select((self.position() + 1).min(self.rows() - 1));
-                None
-            }
-            KeyCode::Enter => match &self.selected {
-                Selected::Session(agent, id) => Some(Choice::Session {
-                    agent: self.names[*agent],
-                    id: id.clone(),
-                    title: self
-                        .sessions
-                        .iter()
-                        .find(|row| row.id == *id)
-                        .and_then(|row| row.title.clone()),
-                }),
-                Selected::Agent(index)
-                    if matches!(self.failures.get(*index), Some(Some(Failure::Start(_)))) =>
-                {
-                    None
-                }
-                Selected::Agent(index) => self.names.get(*index).map(|name| Choice::Agent(name)),
+            KeyCode::Char('c') if ctrl => return Some(Choice::Quit),
+            KeyCode::Esc => return Some(Choice::Quit),
+            KeyCode::Up | KeyCode::Char('k') => self.step(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.step(1),
+            KeyCode::Left | KeyCode::Char('h') => self.focus_new(),
+            KeyCode::Right | KeyCode::Char('l') => self.focus_sessions(),
+            KeyCode::Tab | KeyCode::BackTab => match self.selected {
+                Selected::Session(..) => self.focus_new(),
+                Selected::Agent(_) => self.focus_sessions(),
             },
-            _ => None,
+            KeyCode::Enter => return self.choice(),
+            _ => return None,
+        }
+        self.moved = true;
+        None
+    }
+
+    fn choice(&self) -> Option<Choice<'a>> {
+        match &self.selected {
+            Selected::Session(agent, id) => Some(Choice::Session {
+                agent: self.names[*agent],
+                id: id.clone(),
+                title: self
+                    .sessions
+                    .iter()
+                    .find(|row| row.id == *id)
+                    .and_then(|row| row.title.clone()),
+            }),
+            Selected::Agent(index)
+                if matches!(self.failures.get(*index), Some(Some(Failure::Start(_)))) =>
+            {
+                None
+            }
+            Selected::Agent(index) => self.names.get(*index).map(|name| Choice::Agent(name)),
         }
     }
 
-    fn draw(&self, frame: &mut Frame, now: i64) {
+    fn draw(&self, frame: &mut Frame, now: i64, spin: usize) {
         let area = frame.area();
         frame.buffer_mut().set_style(area, palette::base());
-        let agents_height = self.names.len().max(2) as u16 + 2;
-        let sessions = !self.sessions.is_empty();
-        let room = frame.area().height.saturating_sub(3 + agents_height);
-        let sessions_height = (self.sessions.len() as u16 + 2).min(room);
-        let [header_area, sessions_area, agents_area, footer_area] = Layout::vertical([
+        let [header_area, body, detail_area, footer_area] = Layout::vertical([
             Constraint::Length(2),
-            Constraint::Length(if sessions { sessions_height } else { 0 }),
-            Constraint::Min(agents_height),
+            Constraint::Min(3),
+            Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .areas(frame.area());
-        let title = if sessions {
-            "pick a session or an agent"
-        } else {
-            "pick an agent"
-        };
-        header::title_bar(frame, header_area, title);
+        .areas(area);
+        header::title_bar(frame, header_area, "pick a session or start a new one");
+        let new_width = (self.new_width() as u16).min(body.width / 2);
+        let [new_area, sessions_area] =
+            Layout::horizontal([Constraint::Length(new_width), Constraint::Min(0)]).areas(body);
         let on_session = matches!(self.selected, Selected::Session(..));
-        if sessions {
-            self.draw_sessions(frame, sessions_area, on_session, now);
-        }
-        self.draw_agents(frame, agents_area, !on_session);
+        self.draw_new(frame, new_area, !on_session, spin);
+        self.draw_sessions(frame, sessions_area, on_session, now);
+        frame.render_widget(
+            Paragraph::new(self.detail(detail_area.width as usize)),
+            detail_area,
+        );
         let hints = if self.names.is_empty() {
-            "esc quit"
+            " esc quit"
+        } else if self.sessions.is_empty() {
+            " j/k move   enter start   esc quit"
         } else {
-            "j/k move   enter start   esc quit"
+            " j/k move   h/l or tab switch   enter start   esc quit"
         };
-        frame.render_widget(Paragraph::new(hints), footer_area);
+        frame.render_widget(Paragraph::new(Line::styled(hints, ui::dim())), footer_area);
     }
 
-    fn draw_sessions(&self, frame: &mut Frame, area: Rect, focused: bool, now: i64) {
-        let block = ui::pane("sessions", focused);
+    /// The new pane's width: its widest row, its borders and its padding.
+    fn new_width(&self) -> usize {
+        let content = if self.names.is_empty() {
+            self.no_agents()
+                .iter()
+                .map(|line| line.width())
+                .max()
+                .unwrap_or(0)
+        } else {
+            CHOSEN.width()
+                + 2
+                + self
+                    .names
+                    .iter()
+                    .map(|name| name.width())
+                    .max()
+                    .unwrap_or(0)
+        };
+        content.max(" new ".width()) + 4
+    }
+
+    fn no_agents(&self) -> [String; 2] {
+        [
+            "no agents configured".to_string(),
+            format!(
+                "add one to {}",
+                home_as_tilde(&self.path.display().to_string())
+            ),
+        ]
+    }
+
+    fn draw_new(&self, frame: &mut Frame, area: Rect, focused: bool, spin: usize) {
+        let block = pane("new", focused);
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let height = inner.height as usize;
-        let position = self.position();
-        let first = if position < self.sessions.len() {
-            (position + 1).saturating_sub(height)
+        let lines: Vec<Line> = if self.names.is_empty() {
+            self.no_agents()
+                .into_iter()
+                .map(|line| Line::styled(line, ui::dim()))
+                .collect()
         } else {
-            0
+            (0..self.names.len())
+                .map(|index| self.agent_row(index, inner.width as usize, focused, spin))
+                .collect()
         };
-        let lines: Vec<Line> = (first..self.sessions.len().min(first + height))
-            .map(|index| self.session_row(index, inner.width as usize, now))
-            .collect();
         frame.render_widget(Paragraph::new(lines), inner);
     }
 
-    fn session_row(&self, index: usize, width: usize, now: i64) -> Line<'static> {
-        let row = &self.sessions[index];
-        let chosen = self.position() == index;
-        let gutter = if chosen { "› " } else { "  " };
-        let agent_width = self
-            .names
-            .iter()
-            .map(|name| name.width())
-            .max()
-            .unwrap_or(0);
+    fn agent_row(&self, index: usize, width: usize, focused: bool, spin: usize) -> Line<'static> {
+        let palette = palette::get();
+        let chosen = focused && self.selected == Selected::Agent(index);
+        let gutter = if chosen { CHOSEN } else { "  " };
+        let failed = matches!(self.failures[index], Some(Failure::Start(_)));
+        let (mark, mark_style) = if failed {
+            (FAILED, Style::new().fg(palette.red))
+        } else if !self.reported[index] {
+            (
+                STARTING[spin % STARTING.len()],
+                Style::new().fg(palette.yellow),
+            )
+        } else {
+            (READY, Style::new().fg(palette.green))
+        };
+        let name_style = if failed {
+            ui::dim()
+        } else {
+            Style::new().fg(palette.cyan)
+        };
+        let name = ui::cut(self.names[index], width.saturating_sub(gutter.width() + 2));
+        let line = Line::from(vec![
+            Span::raw(gutter),
+            Span::styled(format!("{mark} "), mark_style),
+            Span::styled(name, name_style),
+        ]);
+        if chosen {
+            line.style(Style::new().bg(palette.selection))
+        } else {
+            line
+        }
+    }
+
+    fn draw_sessions(&self, frame: &mut Frame, area: Rect, focused: bool, now: i64) {
+        let block = pane("sessions", focused);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if self.sessions.is_empty() {
+            frame.render_widget(
+                Paragraph::new(Line::styled("no earlier sessions here", ui::dim())),
+                inner,
+            );
+            return;
+        }
+        let height = inner.height as usize;
+        let at = self.session_row_index().unwrap_or(0);
+        let first = (at + 1).saturating_sub(height);
+        let chosen = focused.then_some(at);
         let ages: Vec<String> = self
             .sessions
             .iter()
@@ -276,8 +421,30 @@ impl<'a> Picker<'a> {
                     .unwrap_or_default()
             })
             .collect();
+        let lines: Vec<Line> = (first..self.sessions.len().min(first + height))
+            .map(|index| self.session_row(index, inner.width as usize, chosen, &ages))
+            .collect();
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+
+    fn session_row(
+        &self,
+        index: usize,
+        width: usize,
+        chosen: Option<usize>,
+        ages: &[String],
+    ) -> Line<'static> {
+        let row = &self.sessions[index];
+        let chosen = chosen == Some(index);
+        let gutter = if chosen { CHOSEN } else { "  " };
+        let agent_width = self
+            .names
+            .iter()
+            .map(|name| name.width())
+            .max()
+            .unwrap_or(0);
         let age_width = ages.iter().map(|age| age.width()).max().unwrap_or(0);
-        let title_width = width.saturating_sub(2 + 2 + agent_width + 2 + age_width);
+        let title_width = width.saturating_sub(gutter.width() + 2 + agent_width + 2 + age_width);
         let title = ui::cut(row.title.as_deref().unwrap_or("untitled"), title_width);
         let line = Line::from(vec![
             Span::raw(gutter),
@@ -286,7 +453,7 @@ impl<'a> Picker<'a> {
                 Style::new().fg(palette::get().cyan),
             ),
             Span::styled(
-                format!("{}  ", ui::pad_right(self.names[row.agent], agent_width)),
+                format!("{}  ", ui::pad_left(self.names[row.agent], agent_width)),
                 ui::dim(),
             ),
             Span::styled(ui::pad_left(&ages[index], age_width), ui::dim()),
@@ -298,67 +465,76 @@ impl<'a> Picker<'a> {
         }
     }
 
-    fn draw_agents(&self, frame: &mut Frame, area: Rect, focused: bool) {
-        let block = ui::pane("agents", focused);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        let lines = if self.names.is_empty() {
-            vec![
-                Line::styled("no agents configured", ui::dim()),
-                Line::styled(
-                    format!(
-                        "add one to {}",
-                        home_as_tilde(&self.path.display().to_string())
-                    ),
-                    ui::dim(),
-                ),
-            ]
-        } else {
-            (0..self.names.len())
-                .map(|index| self.row(index, inner.width as usize))
-                .collect()
+    /// The line under the panes: the highlighted agent's command, or why it
+    /// failed, and on the right its status and its number of sessions.
+    fn detail(&self, width: usize) -> Line<'static> {
+        let agent = match self.selected {
+            Selected::Session(agent, _) => agent,
+            Selected::Agent(index) => index,
         };
-        frame.render_widget(Paragraph::new(lines), inner);
-    }
-
-    fn row(&self, index: usize, width: usize) -> Line<'static> {
-        let name_width = self
-            .names
-            .iter()
-            .map(|name| name.width())
-            .max()
-            .unwrap_or(0);
-        let chosen = self.selected == Selected::Agent(index);
-        let gutter = if chosen { "› " } else { "  " };
-        let tail = if self.default == Some(index) {
-            "  default"
-        } else {
-            ""
-        };
-        let room = width.saturating_sub(2 + name_width + 2 + tail.width());
-        let command = match &self.failures[index] {
-            Some(Failure::Start(error)) => format!("failed: {}", first_line(error)),
-            Some(Failure::List(error)) => format!("sessions failed: {}", first_line(error)),
-            None => self.commands[index].clone(),
-        };
-        let command = ui::cut(&command, room);
-        let used = 2 + name_width + 2 + command.width() + tail.width();
-        let line = Line::from(vec![
-            Span::raw(gutter),
-            Span::styled(
-                format!("{}  ", ui::pad_right(self.names[index], name_width)),
-                Style::new().fg(palette::get().cyan),
-            ),
-            Span::styled(command, ui::dim()),
-            Span::raw(" ".repeat(width.saturating_sub(used))),
-            Span::styled(tail, ui::dim()),
-        ]);
-        if chosen {
-            line.style(Style::new().bg(palette::get().selection))
-        } else {
-            line
+        if agent >= self.names.len() {
+            return Line::default();
         }
+        let failure = &self.failures[agent];
+        let (left, left_style) = match failure {
+            Some(Failure::Start(error)) => (
+                format!("failed: {}", first_line(error)),
+                Style::new().fg(palette::get().red),
+            ),
+            Some(Failure::List(error)) => {
+                (format!("sessions failed: {}", first_line(error)), ui::dim())
+            }
+            None => (self.commands[agent].clone(), ui::dim()),
+        };
+        let mut right = vec![
+            match failure {
+                Some(Failure::Start(_)) => "failed",
+                _ if !self.reported[agent] => "starting",
+                _ => "ready",
+            }
+            .to_string(),
+        ];
+        if self.default == Some(agent) {
+            right.push("default".to_string());
+        }
+        if self.reported[agent] && !matches!(failure, Some(Failure::Start(_))) {
+            let count = self
+                .sessions
+                .iter()
+                .filter(|row| row.agent == agent)
+                .count();
+            right.push(match count {
+                1 => "1 session".to_string(),
+                count => format!("{count} sessions"),
+            });
+        }
+        let right = format!("{} ", right.join(" · "));
+        let room = width.saturating_sub(1 + right.width() + 2);
+        let left = ui::cut(&left, room);
+        let gap = width.saturating_sub(1 + left.width() + right.width());
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled(left, left_style),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(right, ui::dim()),
+        ])
     }
+}
+
+/// A picker pane: a rounded border with `title`, in the accent colour while
+/// it has focus and dim otherwise.
+fn pane(title: &str, focused: bool) -> Block<'static> {
+    let (border, title_style) = if focused {
+        let accent = Style::new().fg(palette::get().accent);
+        (accent, accent.add_modifier(Modifier::BOLD))
+    } else {
+        (ui::dim(), ui::dim())
+    };
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .padding(Padding::horizontal(1))
+        .border_style(border)
+        .title(Span::styled(format!(" {title} "), title_style))
 }
 
 fn first_line(text: &str) -> &str {
@@ -380,16 +556,29 @@ fn now() -> i64 {
         .map_or(0, |since| since.as_secs() as i64)
 }
 
-/// `at` as an age against `now`: `just now`, `3m ago`, `5h ago`, `2d ago`, and
-/// past a week the date.
+/// `at` as a short age against `now`: `now`, `3m`, `5h`, `2d`, then past a
+/// week the date as `nov 18`, with the year once it is past a year.
 fn age(at: &Updated, now: i64) -> String {
     let seconds = now - at.seconds;
     match seconds {
-        ..60 => "just now".to_string(),
-        60..3_600 => format!("{}m ago", seconds / 60),
-        3_600..86_400 => format!("{}h ago", seconds / 3_600),
-        _ if seconds < RECENT_DAYS * 86_400 => format!("{}d ago", seconds / 86_400),
-        _ => at.date.chars().take(10).collect(),
+        ..60 => "now".to_string(),
+        60..3_600 => format!("{}m", seconds / 60),
+        3_600..86_400 => format!("{}h", seconds / 3_600),
+        _ if seconds < RECENT_DAYS * 86_400 => format!("{}d", seconds / 86_400),
+        _ => {
+            let mut parts = at.date.get(..10).unwrap_or_default().split('-');
+            let year = parts.next().unwrap_or_default();
+            let month: usize = parts.next().and_then(|m| m.parse().ok()).unwrap_or(0);
+            let day: u32 = parts.next().and_then(|d| d.parse().ok()).unwrap_or(0);
+            let Some(month) = MONTHS.get(month.wrapping_sub(1)) else {
+                return at.date.chars().take(10).collect();
+            };
+            if seconds < 365 * 86_400 {
+                format!("{month} {day}")
+            } else {
+                format!("{month} {day} {year}")
+            }
+        }
     }
 }
 
@@ -443,6 +632,7 @@ pub async fn pick<'a>(
     path: &'a Path,
     listings: &mut UnboundedReceiver<Listing>,
     keys: &mut Keys,
+    player: &mut Player,
 ) -> io::Result<Choice<'a>> {
     let mut picker = Picker::new(config, path);
     let mut reported = HashSet::new();
@@ -458,10 +648,16 @@ pub async fn pick<'a>(
     }
     let mut terminal = ratatui::init();
     let mut listing_open = true;
+    let mut screen = ratatui::buffer::Buffer::default();
+    let mut spin = 0;
+    let mut tick = tokio::time::interval(SPIN);
     let result = loop {
-        if let Err(error) = terminal.draw(|frame| picker.draw(frame, now())) {
-            break Err(error);
+        match terminal.draw(|frame| picker.draw(frame, now(), spin)) {
+            Ok(frame) if player.due().is_some() => screen = frame.buffer.clone(),
+            Ok(_) => {}
+            Err(error) => break Err(error),
         }
+        let played = player.due();
         tokio::select! {
             key = keys.recv() => match key {
                 Some(Ok(Event::Key(key))) => {
@@ -473,6 +669,14 @@ pub async fn pick<'a>(
                 Some(Err(error)) => break Err(error),
                 None => break Ok(Choice::Quit),
             },
+            () = async { tokio::time::sleep_until(played.unwrap().into()).await }, if played.is_some() => {
+                if let Some(Event::Key(key)) = player.next(std::time::Instant::now(), true, &screen)
+                    && let Some(choice) = picker.key(key)
+                {
+                    break Ok(choice);
+                }
+            },
+            _ = tick.tick(), if picker.starting() => spin += 1,
             listing = listings.recv(), if listing_open => match listing {
                 Some(listing) => picker.listing(listing),
                 None => listing_open = false,
@@ -615,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn moving_down_from_the_newest_session_reaches_the_older_one_then_the_agents() {
+    fn moving_down_stays_within_the_sessions_and_h_and_l_cross_between_the_panes() {
         let config = config(None);
         let mut picker = Picker::new(&config, Path::new("config.toml"));
         picker.listing(listing_of(
@@ -625,19 +829,33 @@ mod tests {
                 ("b2", "older", "2026-11-02T10:00:00Z"),
             ],
         ));
+        let older = Some(Choice::Session {
+            agent: "beta",
+            id: SessionId::new("b2".to_string()),
+            title: Some("older".to_string()),
+        });
+        picker.key(press(KeyCode::Char('j')));
+        assert_eq!(picker.key(press(KeyCode::Enter)), older);
+        picker.key(press(KeyCode::Char('j')));
+        assert_eq!(picker.key(press(KeyCode::Enter)), older);
+        picker.key(press(KeyCode::Char('h')));
         picker.key(press(KeyCode::Char('j')));
         assert_eq!(
             picker.key(press(KeyCode::Enter)),
-            Some(Choice::Session {
-                agent: "beta",
-                id: SessionId::new("b2".to_string()),
-                title: Some("older".to_string()),
-            })
+            Some(Choice::Agent("beta"))
         );
-        picker.key(press(KeyCode::Char('j')));
+        picker.key(press(KeyCode::Char('l')));
+        assert_eq!(picker.key(press(KeyCode::Enter)), older);
+        picker.key(press(KeyCode::Tab));
         assert_eq!(
             picker.key(press(KeyCode::Enter)),
-            Some(Choice::Agent("alpha"))
+            Some(Choice::Agent("beta"))
+        );
+        picker.key(press(KeyCode::Right));
+        picker.key(press(KeyCode::Left));
+        assert_eq!(
+            picker.key(press(KeyCode::Enter)),
+            Some(Choice::Agent("beta"))
         );
     }
 
@@ -704,14 +922,15 @@ mod tests {
     }
 
     #[test]
-    fn an_age_reads_as_minutes_hours_days_and_then_the_date() {
+    fn an_age_reads_short_as_minutes_hours_days_then_the_month_and_day() {
         let at = updated("2026-11-03T10:00:00Z");
         let start = at.seconds;
-        assert_eq!(age(&at, start + 30), "just now");
-        assert_eq!(age(&at, start + 3 * 60), "3m ago");
-        assert_eq!(age(&at, start + 5 * 3_600), "5h ago");
-        assert_eq!(age(&at, start + 2 * 86_400), "2d ago");
-        assert_eq!(age(&at, start + 9 * 86_400), "2026-11-03");
+        assert_eq!(age(&at, start + 30), "now");
+        assert_eq!(age(&at, start + 3 * 60), "3m");
+        assert_eq!(age(&at, start + 5 * 3_600), "5h");
+        assert_eq!(age(&at, start + 2 * 86_400), "2d");
+        assert_eq!(age(&at, start + 9 * 86_400), "nov 3");
+        assert_eq!(age(&at, start + 400 * 86_400), "nov 3 2026");
     }
 
     fn failed(agent: &str, failure: Failure) -> Listing {
@@ -721,13 +940,17 @@ mod tests {
         }
     }
 
-    fn screen(picker: &Picker) -> String {
+    fn drawn(picker: &Picker) -> ratatui::buffer::Buffer {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
         let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
-        terminal.draw(|frame| picker.draw(frame, 0)).unwrap();
-        let buffer = terminal.backend().buffer().clone();
+        terminal.draw(|frame| picker.draw(frame, 0, 0)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn screen(picker: &Picker) -> String {
+        let buffer = drawn(picker);
         (0..20)
             .map(|y| {
                 (0..80)
@@ -765,5 +988,113 @@ mod tests {
             picker.key(press(KeyCode::Enter)),
             Some(Choice::Agent("alpha"))
         );
+    }
+
+    fn find(screen: &str, text: &str) -> (usize, usize) {
+        screen
+            .lines()
+            .enumerate()
+            .find_map(|(y, row)| row.find(text).map(|byte| (row[..byte].chars().count(), y)))
+            .unwrap_or_else(|| panic!("{text} not on\n{screen}"))
+    }
+
+    #[test]
+    fn the_new_pane_sits_left_of_the_sessions_pane_on_the_same_rows() {
+        let config = config(None);
+        let mut picker = Picker::new(&config, Path::new("config.toml"));
+        picker.listing(listing_of(
+            "alpha",
+            &[("a1", "one", "2026-11-01T10:00:00Z")],
+        ));
+        let screen = screen(&picker);
+        let (new_x, new_y) = find(&screen, "╭ new ");
+        let (sessions_x, sessions_y) = find(&screen, "╭ sessions ");
+        assert_eq!(new_y, sessions_y);
+        assert!(new_x < sessions_x, "{screen}");
+        let (alpha_x, alpha_y) = find(&screen, "alpha");
+        let (one_x, one_y) = find(&screen, "› one");
+        assert_eq!(alpha_y, one_y);
+        assert!(alpha_x < one_x);
+    }
+
+    #[test]
+    fn only_the_focused_pane_has_the_accent_border_and_the_highlight() {
+        let config = config(None);
+        let mut picker = Picker::new(&config, Path::new("config.toml"));
+        picker.listing(listing_of(
+            "alpha",
+            &[("a1", "one", "2026-11-01T10:00:00Z")],
+        ));
+        let accent = palette::get().accent;
+        let title_fg = |picker: &Picker, title: &str| {
+            let (x, y) = find(&screen(picker), title);
+            drawn(picker)[(x as u16 + 2, y as u16)].fg
+        };
+        assert_eq!(title_fg(&picker, "╭ sessions "), accent);
+        assert_ne!(title_fg(&picker, "╭ new "), accent);
+        assert!(screen(&picker).contains("› one"));
+        assert!(!screen(&picker).contains("› ●"));
+        picker.key(press(KeyCode::Tab));
+        assert_eq!(title_fg(&picker, "╭ new "), accent);
+        assert_ne!(title_fg(&picker, "╭ sessions "), accent);
+        assert!(screen(&picker).contains("› ●"));
+        assert!(!screen(&picker).contains("› one"));
+    }
+
+    #[test]
+    fn an_agent_is_marked_starting_then_ready_or_failed() {
+        let config = config(None);
+        let mut picker = Picker::new(&config, Path::new("config.toml"));
+        let mark = |picker: &Picker, name: &str| {
+            let screen = screen(picker);
+            let (x, y) = find(&screen, name);
+            screen.lines().nth(y).unwrap().chars().nth(x - 2).unwrap()
+        };
+        assert_eq!(mark(&picker, "alpha"), STARTING[0]);
+        assert!(picker.starting());
+        picker.listing(listing_of("alpha", &[]));
+        picker.listing(failed("beta", Failure::Start("b: gone".to_string())));
+        picker.listing(listing_of("gamma", &[]));
+        assert_eq!(mark(&picker, "alpha"), READY);
+        assert_eq!(mark(&picker, "beta"), FAILED);
+        assert!(!picker.starting());
+    }
+
+    #[test]
+    fn the_line_under_the_panes_shows_the_agents_command_status_and_sessions() {
+        let config = config(Some("alpha"));
+        let mut picker = Picker::new(&config, Path::new("config.toml"));
+        picker.listing(listing_of(
+            "alpha",
+            &[
+                ("a1", "one", "2026-11-01T10:00:00Z"),
+                ("a2", "two", "2026-11-02T10:00:00Z"),
+            ],
+        ));
+        let screen = screen(&picker);
+        let detail = screen.lines().nth(18).unwrap();
+        assert!(detail.starts_with(" a "), "{detail}");
+        assert!(
+            detail.trim_end().ends_with("ready · default · 2 sessions"),
+            "{detail}"
+        );
+        picker.key(press(KeyCode::Char('h')));
+        picker.key(press(KeyCode::Char('j')));
+        let screen = self::screen(&picker);
+        let detail = screen.lines().nth(18).unwrap();
+        assert!(detail.starts_with(" b "), "{detail}");
+        assert!(detail.trim_end().ends_with("starting"), "{detail}");
+    }
+
+    #[test]
+    fn an_empty_folder_and_an_empty_config_each_say_so_in_their_pane() {
+        let config = config(None);
+        let picker = Picker::new(&config, Path::new("config.toml"));
+        assert!(screen(&picker).contains("no earlier sessions here"));
+        let empty = Config::default();
+        let picker = Picker::new(&empty, Path::new("config.toml"));
+        let screen = screen(&picker);
+        assert!(screen.contains("no agents configured"), "{screen}");
+        assert!(screen.contains("add one to config.toml"), "{screen}");
     }
 }

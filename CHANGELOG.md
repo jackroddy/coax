@@ -8,7 +8,110 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 0.3 is a breaking release and 0.2.0 to 0.2.1 is not. What is versioned is the
 command line, the keys, and the scenario format the fake agent reads.
 
-## [Unreleased]
+## [0.3.0] - 2026-11-26
+
+### Added
+
+- Two or more tool calls in a row, with no reply, thought or message
+  between them, fold into one line. The line starts with `✓` when every
+  call is done, the spinner while one runs, and a red `✗` when one failed.
+  It then gives the number of calls and a count of each kind, as in
+  `read 4 · edit 2 (+3 −2)`. Each kind's name is in that kind's colour and
+  its count in the text colour, and the edits carry their diffs added up.
+  Any failures and the call in progress follow. A click unfolds the calls,
+  indented under the line with no blank lines between them. A second click
+  folds them again.
+- A scenario can carry an `input` list, the person's side of the
+  conversation: text to type, keys to press, pauses, and waits for the
+  agent's turn to end. `coax --input <scenario.json>` types it into coax
+  through the same path as the keyboard, in the picker and in the
+  conversation. The flag exists only in a build with the `fake-agent`
+  feature. A key can carry modifiers, as in `Alt+Enter`. The list can also
+  move the mouse, click, double-click and drag. Each mouse step names text,
+  and coax aims at that text in the last frame it drew, counting matches
+  from the bottom when `nth` is negative.
+- Text between single `*` or `_` in a reply is drawn in italics.
+- A double click on transcript text selects and copies the word under the
+  pointer. A triple click selects and copies its line, joined across the
+  rows a soft wrap split it into.
+- A selection inside one reply shows a `mark` button at its end. A click on
+  it puts a numbered chip, as in `①`, in the prompt and highlights the
+  passage with the same number. The highlight stays on the passage's words
+  when the reply reflows. The agent receives each passage's markdown
+  source quoted under its number above the prompt, with each chip as `[1]`.
+  Backspace over a chip drops its mark. Hovering a chip in a sent prompt
+  shows its passage.
+- `coax --agent <name> --session <id>` loads that agent's session in place
+  of the picker. coax exits with an error before the screen opens when the
+  agent cannot load sessions or does not list the id for the folder.
+  `--session` without `--agent` is a usage error.
+- The report to decade carries the flags coax was started with, without
+  `--prompt` and `--session` and their values. decade passes them back,
+  with `--session`, to start coax again on the same session.
+- A `file:` link can name a function after its `#`, as in
+  `file:src/acp.rs#Link::prompt`. A click sends the name to decade's file
+  pane as `at: {"symbol": "Link::prompt"}`. The pane looks the name up.
+  The hover popup shows the path and the name.
+- The report to decade lists the agent's sub-agents. Each entry names the
+  sub-agent's task and the call it is running. It also says whether the
+  sub-agent is working, done or failed. A finished sub-agent stays in the
+  list until the next prompt.
+- coax sends decade a restore block when it connects. decade starts coax
+  again from it, in the same folder and on the same session. That holds for
+  a session chosen in the picker too. A coax started on a raw agent command
+  comes back on a new session, since `--session` needs `--agent`.
+
+### Changed
+
+- The picker shows a `new` pane, listing the agents, to the left of the
+  `sessions` pane. The focused pane has an accent border and holds the
+  highlight. `h` and `l`, Left and Right, or Tab switch panes, and `j`
+  and `k` move within one. Each agent's row starts with `●` when the
+  agent is ready, a spinner while it starts, or `✗` when it failed. A
+  line under the panes shows the highlighted agent's command, or why it
+  failed, with its status and its number of sessions. A session's age
+  reads `23h`, `2d`, then the date, as `nov 18`. An empty folder shows
+  "no earlier sessions here".
+- Each tool call takes one line. Its location and an edit's `+N −M`
+  follow the title, where they used to sit on a second line. The `●`
+  before a call is now an icon for its kind, and the kind's name takes the
+  icon's colour: `≡` read, `◎` search, `±` edit, `⌫` delete, `➜` move,
+  `❯` run, `↓` fetch, `∴` think, `◇` mode, and `•` for an agent or any
+  other call. The spinner takes the icon's place while the call runs, and
+  a red `✗` when it fails.
+- The fold arrow of a call, a run of calls or a sub-agent sits at the start
+  of its line, where it sat at the right edge. A call that cannot unfold
+  keeps the arrow's two columns blank, so the icons line up. The plan row's
+  `▶` is now `▸` while the plan is hidden and `▾` while it shows.
+- The context bar draws its used part as `━` and the rest as `─`, where it
+  drew `▰` and `▱`. Many fonts lack those two, and the terminal's fallback
+  glyphs overlapped their neighbours or lost their outline. The bar turns
+  yellow at 25%, orange at 50% and red at 75%. It used to turn yellow past
+  80% and red past 95%.
+- `cargo install coax` installs `coax` alone. `coax-fake-agent` builds only
+  with the `fake-agent` feature, as in `cargo build --features fake-agent`.
+- A notice is drawn as one line, with its newlines as spaces. coax no
+  longer aborts when a notice holding newlines, such as a rate-limit error
+  from the agent, is cut to fit the screen.
+- Hovering a `foam:` link shows the issue laid out as markdown. The title
+  is bold, with a dim line of its type, status and priority under it. The
+  body and notes follow. coax runs `foam show <id> --json` for the popup,
+  whatever hover command `config.toml` gives the foam scheme.
+- coax draws an agent's question form in a box with an accent border. Long
+  text in the form wraps inside the box, where coax used to cut it short.
+  The text typed into a field wraps too. Each question's header shows its
+  number, as in "Storage · 1 of 2". A question's option descriptions start
+  in one column past its widest option title. A multiple choice marks
+  its options `□` and `■`, as a single choice marks its own `○` and `●`.
+- A question's Other field is drawn as the question's last row. Enter on a
+  single choice moves to the next question and passes over that Other
+  field. Down still reaches it.
+- coax lays out a table column at most 40 cells wide. Longer text in the
+  column wraps. When a table is still wider than the box, coax narrows its
+  widest columns first, down to 16 cells each. Only a table still too wide at
+  that point pans. Before, one long cell was enough to make a table pan.
+- A table in the agent's text, a quoted one included, has a rule between each
+  pair of body rows, so a row whose cells wrap stays apart from the next.
 
 ## [0.2.0] - 2026-11-12
 
@@ -489,5 +592,6 @@ The name on crates.io, and a first session.
 - `coax-fake-agent`, an ACP agent that replays a scenario file, for tests and
   for development without a real agent.
 
+[0.3.0]: https://github.com/jackroddy/coax/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jackroddy/coax/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jackroddy/coax/releases/tag/v0.1.0

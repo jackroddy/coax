@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use agent_client_protocol::v1::schema::{InitializeResponse, SessionInfo};
+use agent_client_protocol::v1::schema::{InitializeResponse, SessionId, SessionInfo};
 use agent_client_protocol::{AcpAgent, Error};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{JoinHandle, spawn_local};
@@ -122,4 +122,26 @@ async fn connect(
 fn can_list_and_load(init: &InitializeResponse) -> bool {
     init.agent_capabilities.load_session
         && init.agent_capabilities.session_capabilities.list.is_some()
+}
+
+/// The title of session `id` as the agent lists it for `cwd`. An agent that
+/// cannot list and load sessions, or does not list `id`, is an error.
+pub async fn listed_title(
+    link: &Link,
+    init: &InitializeResponse,
+    id: &SessionId,
+    cwd: &Path,
+) -> Result<Option<String>, Error> {
+    if !can_list_and_load(init) {
+        return Err(Error::invalid_params().data("the agent cannot load a session"));
+    }
+    let sessions = link.list_sessions(cwd.to_path_buf()).await?;
+    match sessions.into_iter().find(|info| info.session_id == *id) {
+        Some(info) => Ok(info.title),
+        None => Err(Error::invalid_params().data(format!(
+            "the agent has no session {} in {}",
+            id.0,
+            cwd.display()
+        ))),
+    }
 }

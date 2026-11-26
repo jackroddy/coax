@@ -56,6 +56,7 @@ change that breaks any of them moves the minor. Anything else moves the patch.
 running it inside a detached tmux and reading the pane back:
 
 ```console
+$ cargo build --all-features
 $ tmux new-session -d -s chat -x 100 -y 30 "target/debug/coax target/debug/coax-fake-agent scenarios/hello.json"
 $ tmux send-keys -t chat 'hello' Enter
 $ tmux capture-pane -t chat -p
@@ -65,7 +66,12 @@ $ tmux kill-session -t chat
 **The fake agent.** `coax-fake-agent <scenario.json>` is an ACP agent that plays
 one act of the scenario per prompt. A step is `{"update": <session update as
 on the wire>}`, `{"permission": {...}}`, `{"delay_ms": N}` or `{"stop":
-"end_turn"}`. `scenarios/hello.json` is the reference; tests include it.
+"end_turn"}`. `scenarios/hello.json` is the reference; tests include it. The
+binary builds only with the `fake-agent` feature, so `cargo install coax` leaves
+it out. The checks below turn it on with `--all-features`. A scenario's
+optional `input` list holds the person's side of the conversation, and
+`coax --input <scenario.json>` types it into coax in a build with the
+feature. Its mouse steps click or drag on text the screen shows.
 
 ## checks
 

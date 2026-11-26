@@ -53,15 +53,15 @@ fn temp_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use super::*;
 
-    fn script(name: &str, body: &str) -> String {
+    // the editor setting is `sh <script>` rather than the script itself:
+    // exec of a file just written fails with ETXTBSY when another test
+    // thread forks while the write is still open
+    fn script(name: &str, body: &str) -> (String, PathBuf) {
         let path = std::env::temp_dir().join(format!("coax-test-{}-{name}", std::process::id()));
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-        path.to_string_lossy().into_owned()
+        fs::write(&path, format!("{body}\n")).unwrap();
+        (format!("sh {}", path.display()), path)
     }
 
     #[test]
@@ -75,30 +75,30 @@ mod tests {
 
     #[test]
     fn the_saved_text_comes_back_without_its_trailing_newline() {
-        let editor = script("rewrite", r#"printf 'new 日本\nsecond line\n\n' > "$1""#);
+        let (editor, file) = script("rewrite", r#"printf 'new 日本\nsecond line\n\n' > "$1""#);
         let text = edit(&editor, "old").unwrap();
         assert_eq!(text, "new 日本\nsecond line");
-        let _ = fs::remove_file(editor);
+        let _ = fs::remove_file(file);
     }
 
     #[test]
     fn the_editor_gets_the_prompt_text_in_the_file() {
         let seen = std::env::temp_dir().join(format!("coax-test-{}-seen", std::process::id()));
-        let editor = script("copy", &format!(r#"cat "$1" > {}"#, seen.display()));
+        let (editor, file) = script("copy", &format!(r#"cat "$1" > {}"#, seen.display()));
         let text = edit(&editor, "draft\nover two lines").unwrap();
         assert_eq!(text, "draft\nover two lines");
         assert_eq!(fs::read_to_string(&seen).unwrap(), "draft\nover two lines");
-        let _ = fs::remove_file(editor);
+        let _ = fs::remove_file(file);
         let _ = fs::remove_file(seen);
     }
 
     #[test]
     fn an_editor_that_exits_non_zero_is_an_error() {
-        let editor = script("fail", r#"printf x > "$1"; exit 3"#);
+        let (editor, file) = script("fail", r#"printf x > "$1"; exit 3"#);
         let error = edit(&editor, "old").unwrap_err();
         assert!(error.contains("exited with"), "{error}");
         assert!(error.contains("prompt unchanged"), "{error}");
-        let _ = fs::remove_file(editor);
+        let _ = fs::remove_file(file);
     }
 
     #[test]
@@ -109,9 +109,9 @@ mod tests {
 
     #[test]
     fn an_editor_setting_with_arguments_gets_the_file_last() {
-        let editor = script("args", r#"printf '%s' "$1" > "$2""#);
+        let (editor, file) = script("args", r#"printf '%s' "$1" > "$2""#);
         let text = edit(&format!("{editor} --wait"), "x").unwrap();
         assert_eq!(text, "--wait");
-        let _ = fs::remove_file(editor);
+        let _ = fs::remove_file(file);
     }
 }

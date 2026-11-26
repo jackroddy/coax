@@ -1,9 +1,9 @@
 [package]
 name = "coax"
-version = "0.2.0"
+version = "0.3.0"
 description = "a terminal chat for agents that speak the Agent Client Protocol"
 readme = "README.md"
-exclude = ["CLAUDE.md", ".claude", "tmp-claude"]
+exclude = ["CLAUDE.md", ".claude", "tmp-claude", "assets"]
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -14,9 +14,9 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 agent-client-protocol = { version = "5", features = ["process", "stdio", "unstable_end_turn_token_usage"] }
-cmr = { version = "0.2.0", path = "../cmr" }
+cmr = "0.3.0"
 crossterm = "0.29.0"
-decade-channel = { version = "0.1.0", path = "../decade/decade-channel" }
+decade-channel = "0.2.0"
 libc = "0.2"
 ratatui = "0.30"
 serde = "1.0.229"
@@ -25,3 +25,19 @@ textwrap = "0.16.4"
 tokio = { version = "1.54.1", features = ["rt", "macros", "process", "io-util", "sync", "time", "fs"] }
 toml = "1.2.1"
 unicode-width = "0.2"
+
+[features]
+fake-agent = []
+
+[[bin]]
+name = "coax"
+path = "src/main.rs"
+
+[[bin]]
+name = "coax-fake-agent"
+path = "src/bin/coax-fake-agent.rs"
+required-features = ["fake-agent"]
+
+[[test]]
+name = "session"
+required-features = ["fake-agent"]
