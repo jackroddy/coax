@@ -63,6 +63,15 @@ command line, the keys, and the scenario format the fake agent reads.
 
 ### Changed
 
+- The picker shows a `new` pane, listing the agents, to the left of the
+  `sessions` pane. The focused pane has an accent border and holds the
+  highlight. `h` and `l`, Left and Right, or Tab switch panes, and `j`
+  and `k` move within one. Each agent's row starts with `●` when the
+  agent is ready, a spinner while it starts, or `✗` when it failed. A
+  line under the panes shows the highlighted agent's command, or why it
+  failed, with its status and its number of sessions. A session's age
+  reads `23h`, `2d`, then the date, as `nov 18`. An empty folder shows
+  "no earlier sessions here".
 - Each tool call takes one line. Its location and an edit's `+N −M`
   follow the title, where they used to sit on a second line. The `●`
   before a call is now an icon for its kind, and the kind's name takes the
