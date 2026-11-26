@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T04:22:55.345956701Z",
+  "updated_at": "2026-11-26T07:06:53.732936744Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "4261d25a",
+      "at": "2026-11-26T07:06:53.732935824Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Recording setup, agreed with Jack and checked by screenshot:\n\n- ghostty at `--font-size=18` with `--window-decoration=none`, in a scratch pane dragged to 80 columns by 24 rows. That is 1695 × 1189 pixels inside ghostty, and decade's `record` captures 1749 × 1242.\n- `record` with no `width`, so the GIF keeps the captured pixels. 1749 is about twice the width of GitHub's README column, which shows it halved with no blur.\n- The scenarios have to fit 24 rows. At 100 columns, the earlier takes left the prompt far to the right of the replies.\n- `record` cannot start together with the program, so ghostty sleeps 6 seconds before starting coax. The blank lead-in is cut afterwards.",
+      "commit": "4468c62",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4468c62",
