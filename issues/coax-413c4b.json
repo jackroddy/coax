@@ -3,7 +3,7 @@
   "title": "Could coax send its style through ACP's system prompt field?",
   "body": "coax's style lives in `styles/coax.md` as a Claude Code output style. It reaches the agent only through the trial profile, whose `settings.json` sets `outputStyle` to `Coax`. So only Claude gets it, and only when it runs in that profile.\n\nACP has an unstable field that might carry a style to any agent. `agent-client-protocol-schema` 1.15.1, which coax already depends on, gives `NewSessionRequest` and `LoadSessionRequest` a `system_prompt` behind the feature `unstable_session_system_prompt`. A client may send it only when the agent advertises `sessionCapabilities.systemPrompt`. Its `SystemPromptMode` has two named modes:\n\n- `append` adds the client's text to the agent's own instructions. The schema asks agents to give it system-level precedence. Every agent that advertises the capability supports it.\n- `override` replaces the agent's default instructions. It needs a separate capability.\n\nOn `session/load` the schema says clients SHOULD send the same value they used when the session was created.\n\n## Open\n\n- Whether adapter v0.101.0 advertises `sessionCapabilities.systemPrompt`. Its source reads an ACP `systemPrompt` and prefers it over `_meta.systemPrompt`, but nobody checked the advertisement. v0.112.0 is out.\n- Whether the adapter adds an `append` to Claude Code's own prompt or replaces that prompt.\n- Whether an appended prompt holds up through long sessions and compaction as well as an output style does.\n- How this sits against coax-3d286f, which rejected text sent at session start in favour of a real output style. Its reasons were two styles fighting, Dense plus coax's text, and keeping the style through compaction. Jack no longer runs Claude Code outside coax, so Dense no longer applies.\n- A real output style can drop Claude Code's `# Doing tasks` section, and an append cannot. `styles/coax.md` keeps that section with `keep-coding-instructions: true`, and under the lean prompt the section is missing either way (coax-7643d1).",
   "type": "spike",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T04:55:15.705367527Z",
-  "updated_at": "2026-11-26T04:57:05.1246698Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T20:21:29.267270664Z",
+  "closed_at": "2026-11-26T20:21:29.267270664Z",
+  "close_reason": "Folded into coax-7643d1, which now asks both questions. The note there carries this issue's findings.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "4468c62",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e30bc1d",
+      "branch": "dev"
+    }
   }
 }
