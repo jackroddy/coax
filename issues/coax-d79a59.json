@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T08:14:42.349348028Z",
-  "updated_at": "2026-11-26T10:57:59.130974939Z",
+  "updated_at": "2026-11-26T19:14:55.660072516Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -47,6 +47,14 @@
       "at": "2026-11-26T10:57:59.130974839Z",
       "author": "Jack Roddy/df584c97",
       "text": "released at session end",
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    {
+      "id": "f32146bf",
+      "at": "2026-11-26T19:14:55.660071736Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Jack chose to keep the mouse steps for tests and drop the drawn pointer. `POINTER` and `Player::draw_pointer` are gone, along with their calls in `src/app.rs`. `Player` keeps the last played position, because glides start from it. The README recording uses decade's real pointer instead. Uncommitted.",
       "commit": "4468c62",
       "branch": "dev"
     }
