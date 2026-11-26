@@ -39,7 +39,7 @@ use crate::report::{self, Reporter, Snapshot};
 use crate::select::{self, Point, Selection};
 use crate::session::{self, Entry, Marked, Transcript};
 use crate::settings::{Category, Control, Setting, Settings};
-use crate::template::{self, Template};
+use crate::template::Template;
 use crate::ui::{self, Word};
 
 const WHEEL_LINES: usize = 3;
@@ -158,12 +158,11 @@ pub struct App {
     /// The prompt templates from `config.toml`, by name.
     pub templates: BTreeMap<String, Template>,
 
-    /// The blanks of the template in the prompt, empty when there is none.
-    pub blanks: Vec<String>,
+    /// The form of the template being filled in.
+    pub template_form: Option<TemplateForm>,
 
-    /// The blank Tab or a chosen template put the cursor on. Typing replaces
-    /// it, and any other key lets it go.
-    pub chosen_blank: Option<Range<usize>>,
+    /// Where the template form's preview button was drawn.
+    pub preview_button: Option<Rect>,
 
     /// An agent command waiting for a yes before it is sent.
     pub confirm: Option<Confirm>,
@@ -335,6 +334,16 @@ pub struct Permission {
     pub options: Vec<PermissionOption>,
     pub update: Box<ToolCallUpdate>,
     reply: oneshot::Sender<RequestPermissionOutcome>,
+}
+
+/// A template's form, open over the prompt.
+pub struct TemplateForm {
+    /// The template's name in `templates`.
+    pub name: String,
+    pub form: Form,
+
+    /// Whether the filled text shows under the fields.
+    pub preview: bool,
 }
 
 /// A form the agent asked for, with the channel its answer goes back on.
@@ -984,6 +993,15 @@ impl App {
     }
 
     fn click(&mut self, position: Position) -> Action {
+        if let Some(open) = &mut self.template_form {
+            if self
+                .preview_button
+                .is_some_and(|button| button.contains(position))
+            {
+                open.preview = !open.preview;
+            }
+            return Action::None;
+        }
         if self
             .mark_button
             .is_some_and(|button| button.contains(position))
@@ -1141,7 +1159,7 @@ impl App {
     /// Enter on a command: run the command the prompt names, the entry
     /// picked from the list, or the only entry left. With several entries
     /// left and none picked, the list stays open.
-    fn enter_command(&mut self, now: Instant) -> Action {
+    fn enter_command(&mut self) -> Action {
         let settings = self.settings.settings();
         let list = self.popup();
         let picked = self
@@ -1206,7 +1224,7 @@ impl App {
             }
             Kind::Template { name } => {
                 self.clear_input();
-                self.choose_template(&name, now)
+                self.choose_template(&name)
             }
             Kind::Edit => {
                 let text = match command::parse(&self.input) {
@@ -1355,8 +1373,6 @@ impl App {
     fn clear_input(&mut self) {
         self.input.clear();
         self.cursor = 0;
-        self.blanks.clear();
-        self.chosen_blank = None;
     }
 
     fn insert(&mut self, text: &str) {
@@ -1381,9 +1397,9 @@ impl App {
             return;
         }
         self.unknown = None;
-        if let Some(spot) = self.chosen_blank.take() {
-            self.cursor = spot.end;
-            self.remove_between(spot.start);
+        if let Some(open) = &mut self.template_form {
+            open.form.paste(text);
+            return;
         }
         self.insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
     }
@@ -1567,7 +1583,7 @@ impl App {
                 };
                 self.menu = None;
                 self.clear_input();
-                self.choose_template(&name, Instant::now())
+                self.choose_template(&name)
             }
             MenuTarget::Overflow(first) => {
                 let Some(setting) = settings.get(first + menu.cursor) else {
@@ -1596,21 +1612,10 @@ impl App {
     }
 
     /// Enter on plain text: send the prompt, or queue it behind a turn.
-    /// A template's blank still in the text holds the send back.
     fn send(&mut self, now: Instant) -> Action {
         if self.exited || self.input.trim().is_empty() {
             return Action::None;
         }
-        let unfilled = template::spots(&self.input, &self.blanks)
-            .into_iter()
-            .next();
-        if let Some(spot) = unfilled {
-            self.unknown = Some(format!("fill in {} first", &self.input[spot.clone()]));
-            self.cursor = spot.start;
-            self.chosen_blank = Some(spot);
-            return Action::None;
-        }
-        self.blanks.clear();
         let text = std::mem::take(&mut self.input);
         self.cursor = 0;
         self.remember(&text, Some(Time::now()));
@@ -1633,44 +1638,52 @@ impl App {
         Action::Prompt(sent)
     }
 
-    /// Put the template `name` in the prompt with the cursor on its first
-    /// blank, or send it at once when it has none.
-    fn choose_template(&mut self, name: &str, now: Instant) -> Action {
+    /// Open the form of the template `name`, or put its text in the prompt
+    /// when it has no blanks.
+    fn choose_template(&mut self, name: &str) -> Action {
         let Some(chosen) = self.templates.get(name) else {
             self.unknown = Some(format!("no template {name}"));
             return Action::None;
         };
-        let (text, blanks) = chosen.fill();
-        self.set_input(text);
-        self.blanks = blanks;
-        if self.blanks.is_empty() {
-            return self.send(now);
+        if chosen.fields.is_empty() {
+            let text = chosen.fill(&BTreeMap::new()).unwrap_or_default();
+            self.set_input(text);
+            self.edited();
+            return Action::None;
         }
-        self.cursor = 0;
-        self.next_blank(None, true);
+        self.template_form = Some(TemplateForm {
+            name: name.to_string(),
+            form: Form::template(name, chosen),
+            preview: chosen.preview,
+        });
         Action::None
     }
 
-    /// Put the cursor on the next blank after `from`, or the one before it
-    /// when `forward` is false, coming round at either end. With no blank
-    /// chosen, the search starts at the cursor.
-    fn next_blank(&mut self, from: Option<Range<usize>>, forward: bool) {
-        let spots = template::spots(&self.input, &self.blanks);
-        let at = from.as_ref().map_or(self.cursor, |spot| spot.start);
-        let spot = if forward {
-            let on_one = from.is_some();
-            let after = |spot: &&Range<usize>| spot.start > at || (!on_one && spot.start == at);
-            spots.iter().find(after).or(spots.first())
-        } else {
-            spots
-                .iter()
-                .rev()
-                .find(|spot| spot.start < at)
-                .or(spots.last())
+    /// Finish the open template form: its filled text goes in the prompt.
+    /// A field that needs an answer keeps the form open with the cursor on
+    /// it.
+    fn finish_template(&mut self) -> Action {
+        let Some(open) = &mut self.template_form else {
+            return Action::None;
         };
-        if let Some(spot) = spot {
-            self.cursor = spot.start;
-            self.chosen_blank = Some(spot.clone());
+        let Some(template) = self.templates.get(&open.name) else {
+            self.template_form = None;
+            return Action::None;
+        };
+        match template.fill(&open.form.answers()) {
+            Ok(text) => {
+                self.template_form = None;
+                self.set_input(text);
+                self.edited();
+                Action::None
+            }
+            Err((index, message)) => {
+                let key = &template.fields[index].0;
+                if let Some(field) = open.form.fields.iter().position(|f| &f.key == key) {
+                    open.form.refuse(field, message);
+                }
+                Action::None
+            }
         }
     }
 
@@ -1681,7 +1694,6 @@ impl App {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         self.unknown = None;
-        let chosen = self.chosen_blank.take();
         let armed = self.guard.take().filter(|guard| guard.until > now);
         let exit = match key.code {
             KeyCode::Char('c') if ctrl => Some(GuardKey::CtrlC),
@@ -1715,6 +1727,20 @@ impl App {
                 self.answer(action);
             }
             return Action::None;
+        }
+        if let Some(open) = &mut self.template_form {
+            if key.code == KeyCode::Char('p') && ctrl {
+                open.preview = !open.preview;
+                return Action::None;
+            }
+            return match open.form.key(key) {
+                Some(ElicitationAction::Accept(_)) => self.finish_template(),
+                Some(_) => {
+                    self.template_form = None;
+                    Action::None
+                }
+                None => Action::None,
+            };
         }
         if let Some(permission) = &self.permission {
             match key.code {
@@ -1805,23 +1831,9 @@ impl App {
                 Action::None
             }
             KeyCode::Enter if !matches!(command::parse(&self.input), command::Typed::Plain) => {
-                self.enter_command(now)
+                self.enter_command()
             }
             KeyCode::Enter => self.send(now),
-            KeyCode::Tab if !self.blanks.is_empty() => {
-                self.next_blank(chosen, true);
-                Action::None
-            }
-            KeyCode::BackTab if !self.blanks.is_empty() => {
-                self.next_blank(chosen, false);
-                Action::None
-            }
-            KeyCode::Backspace | KeyCode::Delete if chosen.is_some() => {
-                let spot = chosen.unwrap();
-                self.cursor = spot.end;
-                self.remove_between(spot.start);
-                Action::None
-            }
             KeyCode::Backspace => {
                 self.remove_between(prompt::char_before(&self.input, self.cursor));
                 Action::None
@@ -1895,10 +1907,6 @@ impl App {
                 Action::None
             }
             KeyCode::Char(ch) if !ctrl => {
-                if let Some(spot) = chosen {
-                    self.cursor = spot.end;
-                    self.remove_between(spot.start);
-                }
                 self.insert(ch.encode_utf8(&mut [0; 4]));
                 Action::None
             }
@@ -2068,8 +2076,8 @@ async fn session(
         command_picked: false,
         command_cycle: None,
         templates,
-        blanks: Vec::new(),
-        chosen_blank: None,
+        template_form: None,
+        preview_button: None,
         confirm: None,
         expanded: HashSet::new(),
         folds: Vec::new(),
@@ -2481,8 +2489,8 @@ mod tests {
             command_picked: false,
             command_cycle: None,
             templates: BTreeMap::new(),
-            blanks: Vec::new(),
-            chosen_blank: None,
+            template_form: None,
+            preview_button: None,
             confirm: None,
             expanded: HashSet::new(),
             folds: Vec::new(),
@@ -4894,25 +4902,34 @@ mod tests {
 
     fn with_templates() -> App {
         let mut app = app();
-        let template = |text: &str| Template {
-            text: text.to_string(),
-            description: None,
-        };
+        let template = |toml: &str| -> Template { toml::from_str(toml).unwrap() };
         app.templates = BTreeMap::from([
             (
                 "away".to_string(),
-                template("{tasks}\n\nI'm out for {time}. Any questions?"),
+                template(
+                    r#"
+                    text = "{tasks}\n\nI'm out for {time}. Any questions?"
+                    [fields.tasks]
+                    kind = "list"
+                    item = "- {}"
+                    [fields.time]
+                    kind = "choice"
+                    options = ["an hour", "the night"]
+                    other = true
+                    "#,
+                ),
             ),
             (
                 "bookkeeping".to_string(),
-                template("Do commits, cleanups, and foam bookkeeping"),
+                template(r#"text = "Do commits, cleanups, and foam bookkeeping""#),
             ),
+            ("check".to_string(), template("text = \"check {file}\"")),
         ]);
         app
     }
 
     #[test]
-    fn slash_t_and_enter_opens_the_template_box_and_enter_in_it_fills_the_prompt() {
+    fn slash_t_and_enter_opens_the_template_box_and_enter_in_it_opens_the_form() {
         let mut app = with_templates();
         type_text(&mut app, "/t");
         press(&mut app, KeyCode::Enter);
@@ -4923,9 +4940,10 @@ mod tests {
         assert!(app.input.is_empty());
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
         assert!(app.menu.is_none());
-        assert_eq!(app.input, "{tasks}\n\nI'm out for {time}. Any questions?");
-        assert_eq!(app.cursor, 0);
-        assert_eq!(app.chosen_blank, Some(0..7));
+        let open = app.template_form.as_ref().unwrap();
+        assert_eq!(open.name, "away");
+        assert_eq!(open.form.cursor, 0);
+        assert!(app.input.is_empty());
     }
 
     #[test]
@@ -4940,11 +4958,12 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_a_complete_template_name_chooses_it_at_once() {
+    fn enter_on_a_complete_template_name_opens_its_form_at_once() {
         let mut app = with_templates();
         type_text(&mut app, "/t away");
         press(&mut app, KeyCode::Enter);
-        assert_eq!(app.input, "{tasks}\n\nI'm out for {time}. Any questions?");
+        assert!(app.template_form.is_some());
+        assert!(app.input.is_empty());
     }
 
     #[test]
@@ -4956,62 +4975,145 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.input, "/t bookkeeping");
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.input, "/t away");
+        assert_eq!(app.input, "/t check");
         press(&mut app, KeyCode::BackTab);
         assert_eq!(app.input, "/t bookkeeping");
     }
 
     #[test]
-    fn typing_on_a_chosen_blank_replaces_it_and_tab_and_shift_tab_move_between_blanks() {
+    fn the_form_fills_the_prompt_from_its_fields_with_the_cursor_at_the_end() {
         let mut app = with_templates();
         type_text(&mut app, "/t away");
         press(&mut app, KeyCode::Enter);
-        type_text(&mut app, "- fix it");
-        assert!(app.input.starts_with("- fix it\n\nI'm out for {time}."));
-        press(&mut app, KeyCode::Tab);
-        let time = app.input.find("{time}").unwrap();
-        assert_eq!(app.chosen_blank, Some(time..time + 6));
-        type_text(&mut app, "an hour");
-        assert_eq!(app.input, "- fix it\n\nI'm out for an hour. Any questions?");
-        assert!(matches!(press(&mut app, KeyCode::Tab), Action::None));
-        assert_eq!(app.chosen_blank, None);
-
-        let mut app = with_templates();
-        type_text(&mut app, "/t away");
+        type_text(&mut app, "fix it");
         press(&mut app, KeyCode::Enter);
-        press(&mut app, KeyCode::BackTab);
-        let time = app.input.find("{time}").unwrap();
-        assert_eq!(app.chosen_blank, Some(time..time + 6));
+        type_text(&mut app, "write notes");
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.chosen_blank, Some(0..7));
-        press(&mut app, KeyCode::Backspace);
-        assert!(app.input.starts_with("\n\nI'm out"));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.template_form.is_some());
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert!(app.template_form.is_none());
+        assert_eq!(
+            app.input,
+            "- fix it\n- write notes\n\nI'm out for an hour. Any questions?"
+        );
+        assert_eq!(app.cursor, app.input.len());
     }
 
     #[test]
-    fn a_template_without_blanks_is_sent_at_once() {
+    fn a_typed_other_answer_takes_the_place_of_the_pick() {
         let mut app = with_templates();
-        type_text(&mut app, "/t bookkeeping");
-        let sent = press(&mut app, KeyCode::Enter);
-        assert!(
-            matches!(sent, Action::Prompt(text) if text == "Do commits, cleanups, and foam bookkeeping")
-        );
+        type_text(&mut app, "/t away");
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "fix it");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        type_text(&mut app, "a while");
+        ctrl_enter(&mut app);
+        assert_eq!(app.input, "- fix it\n\nI'm out for a while. Any questions?");
+    }
+
+    fn ctrl_enter(app: &mut App) -> Action {
+        app.key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            Instant::now(),
+        )
+    }
+
+    #[test]
+    fn a_field_without_an_answer_keeps_the_form_open_on_it() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t away");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Tab);
+        assert!(matches!(ctrl_enter(&mut app), Action::None));
+        let open = app.template_form.as_ref().unwrap();
+        assert_eq!(open.form.error.as_deref(), Some("tasks needs an answer"));
+        assert_eq!(open.form.cursor, 0);
         assert!(app.input.is_empty());
     }
 
     #[test]
-    fn an_unfilled_blank_holds_the_send_back_and_names_the_blank() {
+    fn esc_closes_the_form_and_leaves_the_prompt_empty() {
         let mut app = with_templates();
         type_text(&mut app, "/t away");
         press(&mut app, KeyCode::Enter);
-        type_text(&mut app, "x");
+        type_text(&mut app, "fix it");
+        press(&mut app, KeyCode::Esc);
+        assert!(app.template_form.is_none());
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn ctrl_p_and_the_preview_button_show_and_hide_the_preview() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t away");
+        press(&mut app, KeyCode::Enter);
+        let preview = |app: &App| app.template_form.as_ref().unwrap().preview;
+        assert!(!preview(&app));
+        app.key(ctrl('p'), Instant::now());
+        assert!(preview(&app));
+        app.preview_button = Some(Rect::new(1, 20, 14, 1));
+        let click = |column| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.mouse(click(30));
+        assert!(preview(&app));
+        app.mouse(click(5));
+        assert!(!preview(&app));
+    }
+
+    #[test]
+    fn a_paste_goes_into_the_field_the_cursor_is_on() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t away");
+        press(&mut app, KeyCode::Enter);
+        app.paste("one\ntwo");
+        ctrl_enter(&mut app);
+        let open = app.template_form.as_ref().unwrap();
+        assert_eq!(open.form.error.as_deref(), Some("time needs an answer"));
+        assert!(matches!(
+            &open.form.fields[0].kind,
+            crate::form::Kind::Text { text, .. } if text == "one\ntwo"
+        ));
+    }
+
+    #[test]
+    fn a_template_without_blanks_fills_the_prompt_and_waits_for_enter() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t bookkeeping");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.unknown.as_deref(), Some("fill in {time} first"));
-        let time = app.input.find("{time}").unwrap();
-        assert_eq!(app.chosen_blank, Some(time..time + 6));
-        type_text(&mut app, "a bit");
-        assert!(matches!(press(&mut app, KeyCode::Enter), Action::Prompt(_)));
-        assert!(app.blanks.is_empty());
+        assert_eq!(app.input, "Do commits, cleanups, and foam bookkeeping");
+        assert!(app.template_form.is_none());
+        let sent = press(&mut app, KeyCode::Enter);
+        assert!(
+            matches!(sent, Action::Prompt(text) if text == "Do commits, cleanups, and foam bookkeeping")
+        );
+    }
+
+    #[test]
+    fn finishing_a_form_with_enter_or_ctrl_enter_leaves_the_text_unsent_until_enter() {
+        for ctrl in [false, true] {
+            let mut app = with_templates();
+            type_text(&mut app, "/t check");
+            press(&mut app, KeyCode::Enter);
+            type_text(&mut app, "the bar");
+            let modifiers = if ctrl {
+                KeyModifiers::CONTROL
+            } else {
+                KeyModifiers::NONE
+            };
+            let finished = app.key(KeyEvent::new(KeyCode::Enter, modifiers), Instant::now());
+            assert!(matches!(finished, Action::None));
+            assert!(app.template_form.is_none());
+            assert_eq!(app.input, "check the bar");
+            let sent = press(&mut app, KeyCode::Enter);
+            assert!(matches!(sent, Action::Prompt(text) if text == "check the bar"));
+        }
     }
 
     #[test]

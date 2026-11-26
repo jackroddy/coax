@@ -13,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, GUARD_WINDOW, Guard, GuardKey, MenuTarget};
+use crate::app::{App, GUARD_WINDOW, Guard, GuardKey, MenuTarget, TemplateForm};
 use crate::clock::Time;
 use crate::command;
 use crate::diff::line_diff;
@@ -25,7 +25,6 @@ use crate::prompt;
 use crate::select::{self, LineText};
 use crate::session::{self, Child, Entry, Message, Tool};
 use crate::settings::{self, Control};
-use crate::template;
 
 const MAX_PLAN_ROWS: usize = 6;
 
@@ -44,14 +43,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         0
     };
-    let form = app.form.as_ref().map(|asked| {
-        form_lines(
-            &asked.form,
-            (area.width as usize).saturating_sub(FORM_FRAME),
-        )
-    });
+    let form_width = (area.width as usize).saturating_sub(FORM_FRAME);
+    let form = match (&app.form, &app.template_form) {
+        (Some(asked), _) => Some(form_lines(&asked.form, form_width)),
+        (None, Some(open)) => Some(template_form_lines(app, open, form_width)),
+        (None, None) => None,
+    };
+    let form_cap = match (&app.form, &app.template_form) {
+        (None, Some(_)) => (area.height as usize).saturating_sub(TEMPLATE_FORM_SPARE),
+        _ => (area.height / 2) as usize,
+    };
     let bottom_rows = match &form {
-        Some((lines, _)) => (lines.len() + 1).clamp(2, (area.height / 2) as usize),
+        Some((lines, _)) => (lines.len() + 1).clamp(2, form_cap.max(2)),
         None => input.height(),
     };
     let now = Instant::now();
@@ -112,23 +115,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let line = working_line(app.spinner, turn, agents);
         frame.render_widget(Paragraph::new(line), working_area);
     }
+    app.preview_button = None;
     match form {
         Some((lines, focus)) => {
             let area = Rect {
                 height: prompt_area.height + 1,
                 ..upper_rule
             };
-            draw_form(frame, area, app, lines, focus);
+            app.preview_button = draw_form(frame, area, app, lines, focus);
         }
         None => {
             draw_rule(frame, upper_rule, THIN);
-            draw_input(
-                frame,
-                prompt_area,
-                &input,
-                prompt_colour(&app.input),
-                &app.blanks,
-            );
+            draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
             draw_commands(frame, app, upper_rule);
         }
     }
@@ -2857,25 +2855,46 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
 
 /// The open form in a box over the prompt's rows and the rule above them,
 /// scrolled to keep the `focus` lines in view, with its keys on the bottom
-/// border.
+/// border, and where a template form's preview button went.
 fn draw_form(
     frame: &mut Frame,
     area: Rect,
     app: &App,
     lines: Vec<Line<'static>>,
     focus: Range<usize>,
-) {
-    if app.form.is_none() {
-        return;
-    }
+) -> Option<Rect> {
     let accent = Style::new().fg(palette::get().accent);
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(accent)
-        .padding(Padding::horizontal(1))
-        .title_bottom(Line::styled(" ↑↓ move · enter pick · esc dismiss ", dim()).right_aligned());
-    if !app.forms.is_empty() {
-        block = block.title_bottom(Line::styled(format!(" {} more ", app.forms.len()), accent));
+        .padding(Padding::horizontal(1));
+    let mut button = None;
+    if app.form.is_some() {
+        block = block.title_bottom(
+            Line::styled(" ↑↓ move · enter pick · esc dismiss ", dim()).right_aligned(),
+        );
+        if !app.forms.is_empty() {
+            block = block.title_bottom(Line::styled(format!(" {} more ", app.forms.len()), accent));
+        }
+    } else if let Some(open) = &app.template_form {
+        let label = if open.preview {
+            " hide preview "
+        } else {
+            " show preview "
+        };
+        button = Some(Rect::new(
+            area.x + 1,
+            area.bottom() - 1,
+            label.width() as u16,
+            1,
+        ));
+        block = block
+            .title_bottom(Line::styled(label, accent))
+            .title_bottom(
+                Line::styled(" tab next · enter done · esc cancel ", dim()).right_aligned(),
+            );
+    } else {
+        return None;
     }
     let body = block.inner(area);
     let skip = focus
@@ -2885,7 +2904,35 @@ fn draw_form(
     let lines: Vec<Line> = lines.into_iter().skip(skip).collect();
     clear(frame, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+    button
 }
+
+/// The template form's lines at `width`: its fields, then the filled text
+/// under a rule when the preview is shown.
+fn template_form_lines(
+    app: &App,
+    open: &TemplateForm,
+    width: usize,
+) -> (Vec<Line<'static>>, Range<usize>) {
+    let (mut lines, focus) = form_lines(&open.form, width);
+    if let Some(template) = app.templates.get(&open.name)
+        && open.preview
+    {
+        lines.push(Line::default());
+        lines.push(Line::styled("─".repeat(width), dim()));
+        let text = template.preview(&open.form.answers());
+        for row in text.split('\n') {
+            for piece in wrap(row, width) {
+                lines.push(Line::styled(piece, dim()));
+            }
+        }
+    }
+    (lines, focus)
+}
+
+/// The rows a template form leaves the rest of the screen: a few of the
+/// conversation, and the rules, context and status lines.
+const TEMPLATE_FORM_SPARE: usize = 10;
 
 /// The columns the form's box takes from the screen's width: two borders and
 /// a column of padding inside each.
@@ -3157,17 +3204,8 @@ fn chip_spans(text: &str, style: Style) -> Vec<Span<'static>> {
     spans
 }
 
-fn draw_input(
-    frame: &mut Frame,
-    area: Rect,
-    input: &InputView,
-    colour: Option<Color>,
-    blanks: &[String],
-) {
+fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<Color>) {
     let text = colour.map_or(Style::default(), |colour| Style::new().fg(colour));
-    let blank = Style::new()
-        .fg(palette::get().accent)
-        .add_modifier(Modifier::UNDERLINED);
     let lines: Vec<Line> = input
         .rows
         .iter()
@@ -3179,15 +3217,7 @@ fn draw_input(
                 Span::raw(PROMPT_LEAD)
             };
             let mut spans = vec![lead];
-            let mut at = 0;
-            for spot in template::spots(row, blanks) {
-                spans.extend(chip_spans(&row[at..spot.start], text));
-                spans.push(Span::styled(row[spot.clone()].to_string(), blank));
-                at = spot.end;
-            }
-            if at < row.len() || at == 0 {
-                spans.extend(chip_spans(&row[at..], text));
-            }
+            spans.extend(chip_spans(row, text));
             Line::from(spans)
         })
         .collect();

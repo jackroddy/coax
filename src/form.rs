@@ -1,5 +1,5 @@
-//! A form the agent asks the person to fill in, from an ACP `elicitation/create`
-//! request in form mode, and the keys that fill it in.
+//! A form the person fills in, from an ACP `elicitation/create` request in
+//! form mode or from a prompt template, and the keys that fill it in.
 
 use std::collections::BTreeMap;
 
@@ -7,7 +7,9 @@ use agent_client_protocol::v1::schema::{
     ElicitationAcceptAction, ElicitationAction, ElicitationContentValue, ElicitationPropertySchema,
     ElicitationSchema, EnumOption, MultiSelectItems,
 };
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::template::{Answer, Kind as TemplateKind, Opt, Template};
 
 pub struct Form {
     /// What the agent asks, the title on the form's rule.
@@ -19,6 +21,10 @@ pub struct Form {
 
     /// Why the last submit was refused.
     pub error: Option<String>,
+
+    /// Whether the form fills a prompt template, where Enter outside a
+    /// many-line field finishes the form.
+    pub template: bool,
 }
 
 pub struct Field {
@@ -49,6 +55,9 @@ pub enum Kind {
     Text {
         text: String,
         number: Option<Number>,
+
+        /// Whether Enter adds a line, rather than moving on.
+        lines: bool,
     },
     Toggle(bool),
 }
@@ -91,7 +100,7 @@ impl Form {
             .map(|(key, property)| field(key, property, required.contains(key)))
             .collect();
         for index in 0..fields.len() {
-            let Some(question) = fields[index].key.strip_suffix("_custom") else {
+            let Some(question) = fields[index].key.strip_suffix(OTHER) else {
                 continue;
             };
             fields[index].other_of = fields.iter().position(|field| {
@@ -104,6 +113,118 @@ impl Form {
             fields,
             cursor: 0,
             error: None,
+            template: false,
+        }
+    }
+
+    /// The form for the template `name`: one field per blank, in order,
+    /// and a typed Other field after each choice that allows one.
+    pub fn template(name: &str, template: &Template) -> Form {
+        let message = match &template.description {
+            Some(description) => format!("{name} · {description}"),
+            None => name.to_string(),
+        };
+        let mut fields = Vec::new();
+        for (key, field) in &template.fields {
+            let text = |text: String, lines: bool| Kind::Text {
+                text,
+                number: None,
+                lines,
+            };
+            let kind = match &field.kind {
+                TemplateKind::Line { default } => text(default.clone(), false),
+                TemplateKind::Text { default } => text(default.clone(), true),
+                TemplateKind::List { default, .. } => text(default.join("\n"), true),
+                TemplateKind::Choice {
+                    options, default, ..
+                } => Kind::Choice {
+                    picked: default
+                        .as_ref()
+                        .and_then(|default| options.iter().position(|o| &o.label == default)),
+                    options: labelled_choices(options),
+                },
+                TemplateKind::Many {
+                    options, default, ..
+                } => Kind::Many {
+                    picked: options.iter().map(|o| default.contains(&o.label)).collect(),
+                    options: labelled_choices(options),
+                },
+                TemplateKind::Toggle { default, .. } => Kind::Toggle(*default),
+            };
+            let index = fields.len();
+            fields.push(Field {
+                key: key.clone(),
+                title: field.label(key).to_string(),
+                description: field.help.clone(),
+                required: false,
+                kind,
+                other_of: None,
+            });
+            if let TemplateKind::Choice { other: true, .. } = field.kind {
+                fields.push(Field {
+                    key: format!("{key}{OTHER}"),
+                    title: "other".to_string(),
+                    description: Some("or type another answer".to_string()),
+                    required: false,
+                    kind: text(String::new(), false),
+                    other_of: Some(index),
+                });
+            }
+        }
+        Form {
+            message,
+            fields,
+            cursor: 0,
+            error: None,
+            template: true,
+        }
+    }
+
+    /// Each field's answer so far, by blank name, with a choice's typed
+    /// Other answer in place of its pick.
+    pub fn answers(&self) -> BTreeMap<String, Answer> {
+        let mut answers = BTreeMap::new();
+        for field in &self.fields {
+            let answer = match &field.kind {
+                Kind::Choice { options, picked } => {
+                    picked.map(|picked| Answer::Text(options[picked].value.clone()))
+                }
+                Kind::Many { options, picked } => Some(Answer::Items(
+                    options
+                        .iter()
+                        .zip(picked)
+                        .filter(|(_, on)| **on)
+                        .map(|(option, _)| option.value.clone())
+                        .collect(),
+                )),
+                Kind::Text { text, .. } if text.trim().is_empty() => None,
+                Kind::Text { text, .. } => Some(Answer::Text(text.clone())),
+                Kind::Toggle(on) => Some(Answer::Toggle(*on)),
+            };
+            let key = match field.other_of {
+                Some(_) => field.key.strip_suffix(OTHER).unwrap_or(&field.key),
+                None => &field.key,
+            };
+            if let Some(answer) = answer {
+                answers.insert(key.to_string(), answer);
+            }
+        }
+        answers
+    }
+
+    /// Add pasted text to the text field the cursor is on, with its
+    /// newlines kept only where the field takes lines.
+    pub fn paste(&mut self, pasted: &str) {
+        let rows = self.rows();
+        if let Some(Row::Text(field)) = rows.get(self.cursor).copied()
+            && let Kind::Text { text, lines, .. } = &mut self.fields[field].kind
+        {
+            let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
+            if *lines {
+                text.push_str(&pasted);
+            } else {
+                text.push_str(&pasted.replace('\n', " "));
+            }
         }
     }
 
@@ -140,12 +261,24 @@ impl Form {
     pub fn key(&mut self, key: KeyEvent) -> Option<ElicitationAction> {
         let rows = self.rows();
         let row = rows[self.cursor.min(rows.len() - 1)];
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let many_lines =
+            |field: usize| matches!(self.fields[field].kind, Kind::Text { lines: true, .. });
         match key.code {
             KeyCode::Esc => return Some(ElicitationAction::Decline),
             KeyCode::Up => self.cursor = self.cursor.saturating_sub(1),
             KeyCode::Down => self.cursor = (self.cursor + 1).min(rows.len() - 1),
+            KeyCode::Tab => self.cursor = self.next_question_row(&rows, self.cursor),
+            KeyCode::BackTab => self.cursor = self.previous_question_row(&rows, self.cursor),
+            KeyCode::Enter if ctrl && self.template => return self.submit(),
             KeyCode::Enter => match row {
                 Row::Submit => return self.submit(),
+                Row::Text(field) if many_lines(field) => {
+                    if let Kind::Text { text, .. } = &mut self.fields[field].kind {
+                        text.push('\n');
+                    }
+                }
+                Row::Text(_) | Row::Toggle(_) if self.template => return self.submit(),
                 Row::Option(field, option) => {
                     self.pick(field, option);
                     if matches!(self.fields[field].kind, Kind::Choice { .. }) {
@@ -192,6 +325,22 @@ impl Form {
             .map_or(at, |offset| at + offset)
     }
 
+    /// The first row of the question before the one at `at`, or of the
+    /// first question when `at` is in it.
+    fn previous_question_row(&self, rows: &[Row], at: usize) -> usize {
+        let question =
+            |row: Row| row_field(row).map(|field| self.fields[field].other_of.unwrap_or(field));
+        let here = question(rows[at]);
+        let before = rows[..at]
+            .iter()
+            .rev()
+            .find_map(|row| question(*row).filter(|q| Some(*q) != here));
+        let target = before.or(here);
+        rows.iter()
+            .position(|row| question(*row) == target && target.is_some())
+            .unwrap_or(at)
+    }
+
     fn pick(&mut self, field: usize, option: usize) {
         match &mut self.fields[field].kind {
             Kind::Choice { picked, .. } => *picked = Some(option),
@@ -223,7 +372,8 @@ impl Form {
         Some(ElicitationAcceptAction::new().content(content).into())
     }
 
-    fn refuse(&mut self, field: usize, message: String) -> Option<ElicitationAction> {
+    /// Refuse to finish: show `message` and put the cursor on `field`.
+    pub fn refuse(&mut self, field: usize, message: String) -> Option<ElicitationAction> {
         self.error = Some(message);
         if let Some(row) = self
             .rows()
@@ -240,6 +390,7 @@ fn field(key: &str, property: &ElicitationPropertySchema, required: bool) -> Fie
     let text = |number| Kind::Text {
         text: String::new(),
         number,
+        lines: false,
     };
     let (title, description, kind) = match property {
         ElicitationPropertySchema::String(string) => {
@@ -259,6 +410,7 @@ fn field(key: &str, property: &ElicitationPropertySchema, required: bool) -> Fie
                 None => Kind::Text {
                     text: string.default.clone().unwrap_or_default(),
                     number: None,
+                    lines: false,
                 },
             };
             (string.title.clone(), string.description.clone(), kind)
@@ -324,6 +476,22 @@ fn preview(option: &EnumOption) -> Option<String> {
     preview.as_str().map(str::to_string)
 }
 
+/// The ending of the key of a choice's typed Other field.
+const OTHER: &str = "_custom";
+
+/// A template's options: each shows its label and answers with its text.
+fn labelled_choices(options: &[Opt]) -> Vec<Choice> {
+    options
+        .iter()
+        .map(|option| Choice {
+            value: option.text.clone(),
+            title: option.label.clone(),
+            description: None,
+            preview: None,
+        })
+        .collect()
+}
+
 fn plain_choices(values: &[String]) -> Vec<Choice> {
     values
         .iter()
@@ -357,7 +525,7 @@ fn value(field: &Field) -> Result<Option<ElicitationContentValue>, String> {
             ElicitationContentValue::StringArray(values)
         }
         Kind::Text { text, .. } if text.trim().is_empty() => return Ok(None),
-        Kind::Text { text, number } => {
+        Kind::Text { text, number, .. } => {
             let text = text.trim();
             let not_a = |what: &str| format!("{} needs {what}", field.title);
             match number {
@@ -407,6 +575,131 @@ mod tests {
             Some(ElicitationAction::Accept(accept)) => accept.content.unwrap_or_default(),
             _ => panic!("the form should be accepted"),
         }
+    }
+
+    fn away() -> Form {
+        let template: Template = toml::from_str(
+            r#"
+            text = "{tasks} for {time}. {ask}"
+            description = "before I go"
+            [fields.tasks]
+            kind = "list"
+            [fields.time]
+            kind = "choice"
+            options = ["an hour", "the night"]
+            other = true
+            [fields.ask]
+            kind = "toggle"
+            "#,
+        )
+        .unwrap();
+        Form::template("away", &template)
+    }
+
+    #[test]
+    fn a_template_form_shows_option_labels_picks_the_default_and_answers_with_texts() {
+        let template: Template = toml::from_str(
+            r#"
+            text = "{ask} {langs}"
+            [fields.ask]
+            kind = "choice"
+            default = "yes"
+            options = [{ label = "yes", text = "ask now" }, { label = "no", text = "carry on" }]
+            [fields.langs]
+            kind = "many"
+            join = " and "
+            default = ["rust"]
+            options = [{ label = "rust", text = "in rust" }, "go"]
+            "#,
+        )
+        .unwrap();
+        let mut form = Form::template("t", &template);
+        let titles = |kind: &Kind| match kind {
+            Kind::Choice { options, .. } | Kind::Many { options, .. } => options
+                .iter()
+                .map(|option| option.title.clone())
+                .collect::<Vec<_>>(),
+            _ => panic!("options"),
+        };
+        assert_eq!(titles(&form.fields[0].kind), ["yes", "no"]);
+        assert!(matches!(
+            form.fields[0].kind,
+            Kind::Choice {
+                picked: Some(0),
+                ..
+            }
+        ));
+        if let Kind::Many { picked, .. } = &mut form.fields[1].kind {
+            picked[1] = true;
+        }
+        assert_eq!(
+            template.fill(&form.answers()).unwrap(),
+            "ask now in rust and go"
+        );
+    }
+
+    #[test]
+    fn a_template_form_has_a_field_per_blank_and_an_other_field_after_a_choice() {
+        let form = away();
+        assert_eq!(form.message, "away · before I go");
+        let keys: Vec<&str> = form.fields.iter().map(|field| field.key.as_str()).collect();
+        assert_eq!(keys, ["tasks", "time", "time_custom", "ask"]);
+        assert_eq!(form.fields[2].other_of, Some(1));
+        assert!(matches!(
+            form.fields[0].kind,
+            Kind::Text { lines: true, .. }
+        ));
+    }
+
+    #[test]
+    fn tab_and_shift_tab_move_a_question_at_a_time_and_enter_adds_a_line_in_a_list() {
+        let mut form = away();
+        assert_eq!(press(&mut form, KeyCode::Enter), None);
+        assert!(matches!(&form.fields[0].kind, Kind::Text { text, .. } if text == "\n"));
+        press(&mut form, KeyCode::Tab);
+        assert_eq!(form.rows()[form.cursor], Row::Option(1, 0));
+        press(&mut form, KeyCode::Tab);
+        assert_eq!(form.rows()[form.cursor], Row::Toggle(3));
+        press(&mut form, KeyCode::BackTab);
+        assert_eq!(form.rows()[form.cursor], Row::Option(1, 0));
+        press(&mut form, KeyCode::BackTab);
+        assert_eq!(form.rows()[form.cursor], Row::Text(0));
+    }
+
+    #[test]
+    fn enter_on_a_toggle_or_ctrl_enter_anywhere_finishes_a_template_form() {
+        let mut form = away();
+        let ctrl_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+        assert!(matches!(
+            form.key(ctrl_enter),
+            Some(ElicitationAction::Accept(_))
+        ));
+        let mut form = away();
+        press(&mut form, KeyCode::Tab);
+        press(&mut form, KeyCode::Tab);
+        assert!(matches!(
+            press(&mut form, KeyCode::Enter),
+            Some(ElicitationAction::Accept(_))
+        ));
+    }
+
+    #[test]
+    fn the_answers_put_a_typed_other_in_place_of_the_pick() {
+        let mut form = away();
+        form.paste("fix it");
+        press(&mut form, KeyCode::Tab);
+        press(&mut form, KeyCode::Enter);
+        let answers = form.answers();
+        assert_eq!(answers["time"], Answer::Text("an hour".to_string()));
+        assert_eq!(answers["tasks"], Answer::Text("fix it".to_string()));
+        form.cursor = form
+            .rows()
+            .iter()
+            .position(|row| *row == Row::Text(2))
+            .unwrap();
+        form.paste("a\nwhile");
+        assert_eq!(form.answers()["time"], Answer::Text("a while".to_string()));
+        assert_eq!(form.answers()["ask"], Answer::Toggle(false));
     }
 
     #[test]

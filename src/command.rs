@@ -318,6 +318,7 @@ mod tests {
         let template = |text: &str, description: Option<&str>| Template {
             text: text.to_string(),
             description: description.map(str::to_string),
+            ..Template::default()
         };
         let templates = BTreeMap::from([
             (

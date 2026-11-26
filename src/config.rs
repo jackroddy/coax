@@ -144,6 +144,17 @@ mod tests {
     }
 
     #[test]
+    fn a_template_field_with_no_options_is_an_error_naming_the_file_and_the_field() {
+        let path = std::env::temp_dir().join(format!("coax-template-{}.toml", std::process::id()));
+        let text = "[templates.away]\ntext = \"{time}\"\n[templates.away.fields.time]\nkind = \"choice\"\n";
+        std::fs::write(&path, text).unwrap();
+        let error = Config::load(&path).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("a choice field needs options"), "{error}");
+    }
+
+    #[test]
     fn glyphs_reads_unicode_or_ascii_and_is_absent_by_default() {
         let read = |text: &str| toml::from_str::<Config>(text).unwrap().glyphs;
         assert_eq!(read(r#"glyphs = "ascii""#), Some(Glyphs::Ascii));

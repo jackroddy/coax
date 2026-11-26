@@ -14,13 +14,25 @@ command line, the keys, and the scenario format the fake agent reads.
 
 - A `[templates.<name>]` table in `config.toml` holds a prompt template:
   its text in `text`, with each blank written `{name}`, and an optional
-  `description`. `/t` and Enter open a box of the templates. `/t` and a
-  name, which Tab completes, choose that template directly. Choosing one
-  puts its text in the prompt with the cursor on the first blank. Typing
-  replaces the blank, and Tab and Shift+Tab move to the next and the
-  previous one. Enter holds the prompt back while a blank is still
-  unfilled. A template with no blanks is sent as soon as it is chosen.
-  `{{` and `}}` write a single brace.
+  `description`. `/t` and Enter open a box of the templates, and `/t` with
+  a name, which Tab completes, chooses one directly. Choosing a template
+  with no blanks puts its text in the prompt. One with blanks opens a form
+  with a field for each blank, in the order the blanks first appear.
+  `[templates.<name>.fields.<blank>]` describes a field: its `kind`, one
+  of `line` (the default), `text`, `list`, `choice`, `many` or `toggle`,
+  and a `label`, `help`, `default` and `optional`. A list writes each of
+  its lines through `item`, where `{}` stands for the line. A choice takes
+  a typed answer as well when `other = true`. An option of a choice or a
+  many is a string, or a table of a `label` the form shows and a `text`
+  the prompt gets, and `default` names options by label. A many joins its
+  ticked options with `join`, and a toggle writes `on` or `off`. In the
+  form, Tab and Shift+Tab move between fields and Enter adds a line to a
+  text or list field. Enter on a one-line field or a toggle, or Ctrl+Enter
+  anywhere, finishes the form, and Esc closes it. A field left empty keeps
+  the form open unless it is optional. The filled text goes into the
+  prompt, and Enter sends it. With `preview = true` the filled text shows
+  under the fields, and Ctrl+P or the form's preview button shows or hides
+  it. `{{` and `}}` write a single brace.
 - A `glyphs` key in `config.toml` sets the characters coax draws with,
   `"unicode"` or `"ascii"`. Under `"ascii"`, coax draws a one-column ASCII
   stand-in for each symbol, border and markdown mark it would draw, so
