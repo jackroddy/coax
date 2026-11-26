@@ -3,7 +3,7 @@
   "title": "Words after a template's name fill its blanks",
   "body": "A prompt template's blanks are filled in the prompt after `/t <name>` chooses it (`src/template.rs`, `choose_template` in `src/app.rs`). Words typed after the name are not read: `/t typos README.md` matches no template.\n\n## Proposal\n\n- Words after the template's name fill its blanks in the order the blanks appear in its text. `/t typos README.md` fills `{file}` and sends, since no blank is left.\n- A blank the words do not reach is left in the prompt to fill as usual.\n\n## Open\n\n- How a value of several words is given: quotes, as in `/t away \"fix the bar\" \"an hour\"`, or another separator.\n- Whether this still applies once templates open a form (see the template form issue), or only to templates with no form.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T21:27:09.532178159Z",
-  "updated_at": "2026-11-26T21:27:09.532178159Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T22:24:06.350301551Z",
+  "closed_at": "2026-11-26T22:24:06.350301551Z",
+  "close_reason": "Jack no longer wants it. Templates open a form now, which makes filling blanks from words after the name less useful.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "14c84b0",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "51b776c",
+      "branch": "dev"
+    }
   }
 }
