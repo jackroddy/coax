@@ -3,7 +3,7 @@
   "title": "The context bar draws its slots from fallback fonts",
   "body": "`context_line` in `src/header.rs` draws the context bar from `FILLED` (`▰`, U+25B0) and `EMPTY` (`▱`, U+25B1). JetBrainsMono Nerd Font, which Jack's ghostty uses, has neither character, so ghostty takes them from fallback fonts such as Noto Sans Mono, DejaVu Sans or Noto Sans Math. In a recording at font size 18 the fallback `▱` is wider than its cell, so neighbouring outlines overlap into `//`. The fallback `▰` is a solid shape with no outline, so filled slots do not look like filled-in empty slots. Jack sees it look wrong some runs and not others.\n\n`fc-query` on `JetBrainsMonoNerdFont-Regular.ttf` lists which candidates the font has:\n\n| characters | in the font |\n|---|---|\n| `▰` `▱` | no |\n| `▮` `▯`, `▬` `▭`, `⬛` `⬜` | no |\n| `■` `□` | yes |\n| `█` `░` `▒` | yes |\n| `━` `─` | yes |\n\n## Open\n\n- Which pair replaces `▰` and `▱`. Box-drawing and block characters such as `━` `─` and `█` `░` are drawn by ghostty itself rather than taken from a font, so they line up in any font. `■` `□` keep separate slots but come from the font.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T07:15:58.152479344Z",
-  "updated_at": "2026-11-26T10:57:59.130971179Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T19:16:12.376278658Z",
+  "closed_at": "2026-11-26T19:16:12.376278658Z",
+  "close_reason": "Landed in 47883db. The notes on this issue describe what changed.",
+  "resolution": "done",
   "notes": [
     {
       "id": "ee02c623",
@@ -40,6 +40,9 @@
       "commit": "4468c62",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "47883db",
+      "branch": "dev"
+    }
   }
 }
