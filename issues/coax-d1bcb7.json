@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T07:44:51.9773926Z",
   "defer_until": null,
   "created_at": "2026-11-26T07:29:51.957014838Z",
-  "updated_at": "2026-11-26T07:41:03.778876441Z",
+  "updated_at": "2026-11-26T07:41:10.704551483Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -30,9 +30,10 @@
       "id": "7149948e",
       "at": "2026-11-26T07:41:03.778875321Z",
       "author": "Jack Roddy/df584c97",
-      "text": "Jack reviewed the first version on screen. Changes he asked for: every call takes one line, with an edit`s `+N -M` on the call`s own line rather than a line under it. An unfolded group draws its calls indented under the group line, with no blank lines between them. Each kind of call gets its own icon and colour, and the kind`s name takes the icon`s colour: read `≡` blue, search `◎` cyan, edit `±` yellow, delete `⌫` orange, move `➜` blue, run `❯` magenta, fetch `↓` cyan, think `∴` muted, mode `◇` accent, agent and other `•` muted. The spinner replaces the icon while a call runs, and a red `✗` replaces it when the call fails. The group line colours each kind`s count the same way. Green stays out of the kinds because it means done. The ASCII stand-ins went to their own issue.",
+      "text": "Jack reviewed the first version on screen and asked for these changes:\n\n- Every call takes one line. An edit's `+N -M` moves onto the call's own line rather than the line under it.\n- An unfolded group draws its calls indented under the group line, with no blank lines between them.\n- Each kind of call gets its own icon and colour, and the kind's name takes the icon's colour: read `≡` blue, search `◎` cyan, edit `±` yellow, delete `⌫` orange, move `➜` blue, run `❯` magenta, fetch `↓` cyan, think `∴` muted, mode `◇` accent, agent and other `•` muted. Green stays out of the kinds because it means done.\n- The spinner replaces the icon while a call runs, and a red `✗` replaces it when the call fails.\n- The group line colours each kind's count the same way.\n\nThe ASCII stand-ins went to coax-b633ab.",
       "commit": "4468c62",
-      "branch": "dev"
+      "branch": "dev",
+      "edited_at": "2026-11-26T07:41:10.704551143Z"
     }
   ],
   "stamps": {
