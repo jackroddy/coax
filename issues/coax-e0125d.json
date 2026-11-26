@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T08:29:17.472281104Z",
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T08:50:02.651690075Z",
+  "updated_at": "2026-11-26T08:58:13.530897178Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -48,6 +48,14 @@
       "at": "2026-11-26T08:50:02.651689335Z",
       "author": "Jack Roddy/df584c97",
       "text": "Jack changed the plan. The README drops the four GIFs for one longer example GIF that walks through a first session: the picker loads a session, a turn's tool calls fold and a click opens them, a markdown reply gets panned, copied and switched to raw, and two passages are marked and answered. Jack judged coax's drawn pointer (coax-d79a59) too crude, so the mouse in that recording will come from decade's real pointer through decade-82f459. The four GIFs in `assets/` stand until the combined one replaces them.",
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    {
+      "id": "d8fd1850",
+      "at": "2026-11-26T08:58:13.530896328Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "`scenarios/readme/tour.json` holds the combined walkthrough. It reuses the sessions from `picker.json`, the tool-call turn from `thread.json`, the reply from `markdown.json` and both acts of `marking.json`, with the context climbing from 15% to 32%. Its `input` loads the second session from the picker, then opens and closes the nine-call group, pans, copies and toggles the code blocks, and marks two passages. For now it uses coax's own mouse steps. It plays through in tmux at 80 × 28 in about 44 seconds, with every click finding its target. The scratch config for the picker now points at `tour.json`. Recording waits for decade-82f459.",
       "commit": "4468c62",
       "branch": "dev"
     }
