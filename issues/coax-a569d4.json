@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-26T19:42:06.865311383Z",
   "defer_until": null,
   "created_at": "2026-11-26T19:27:06.855365299Z",
-  "updated_at": "2026-11-26T19:27:06.865311383Z",
+  "updated_at": "2026-11-26T19:31:51.168278468Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "c6fd7c7e",
+      "at": "2026-11-26T19:31:51.168277768Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Built as the body describes, uncommitted:\n\n- `src/picker.rs` draws `new` left of `sessions` with its own `pane`, which has an accent border and bold title when focused and is dim otherwise. `ui::pane` is unchanged.\n- Focus is the existing `Selected` value. `agent_cursor` and `session_cursor` remember each pane's row while the other has focus. `h`, `l`, Left, Right and Tab switch, and `j` and `k` stay within a pane.\n- `reported` tracks which agents have sent a listing, and an agent is starting until then. `pick` ticks `SPIN` while any agent is starting.\n- The marks sit together at the top of the file: `READY` `●`, `FAILED` `✗`, braille `STARTING` frames, and `CHOSEN` `› `. All are in JetBrainsMono Nerd Font. `header::SPINNER`'s `◐◓◑◒` are not, which matters for coax-b633ab.\n- `detail` draws the line under the panes. `age` gives `now`, `3m`, `5h`, `2d`, then `nov 3`, and adds the year past a year.\n\nChecked in tmux at 80 × 38 and 100 × 30, with a missing command showing `✗` and its reason. `coax --input scenarios/readme/tour.json` still loads the second session with `j` and Enter, and plays through.",
+      "commit": "47883db",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "47883db",
