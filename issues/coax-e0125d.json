@@ -3,7 +3,7 @@
   "title": "The README shows each feature as a GIF",
   "body": "The README's feature sections hold bold placeholders where a GIF goes: the session picker, the context window, markdown, and marking passages. \"a chat that reads like a text thread\" shows the still `assets/chat.png`. GIFs go under `assets/`, which `Cargo.toml` already excludes from the crate.\n\n`scenarios/readme/` holds one scenario per feature for `coax-fake-agent` to play, each checked in tmux:\n\n| scenario | what it plays |\n|---|---|\n| `picker.json` | four earlier sessions, ages 19 hours to a month, each with a short history |\n| `thread.json` | a thought, a read, a reply, an edit, a command with output, a second reply, context at 32% |\n| `context.json` | one act per prompt, stepping context through 20%, 60%, 85% and 97% |\n| `markdown.json` | a heading, a list, a quote, a table, a Rust block too wide for the box, a fenced `markdown` block |\n| `marking.json` | a reply with three points, then an answer to `[1]` and `[2]` |\n\n## Proposal\n\nRecord each GIF in a decade scratch pane with the `record` tool that decade-7fb578 proposes, then put it in place of its placeholder.\n\n## Open\n\n- The picker's agents row shows the agent's command and arguments. A config that names `coax-fake-agent` by an absolute path puts that path in the recording. The recording config should name the binary bare, with `target/debug` on `PATH`, and the scenario by a relative path.\n- The agent's name in that config shows in the picker and in each session row. `fake` reads oddly in a README.\n- Until decade-7fb578 lands, `gpu-screen-recorder` and `ffmpeg` can record the pane's region of the screen, measured by hand.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T11:16:01.166125933Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T20:01:15.192409111Z",
+  "closed_at": "2026-11-26T20:01:15.192409111Z",
+  "close_reason": "The README shows one recorded tour in place of a GIF per feature, at Jack's choice. It landed in ffcfa31 as `assets/tour.gif`, played from `scenarios/readme/tour.json` and recorded through decade's `scratch_input`. The notes on this issue describe how it was made.",
+  "resolution": "done",
   "notes": [
     {
       "id": "4261d25a",
@@ -138,6 +138,9 @@
       "commit": "4468c62",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "ffcfa31",
+      "branch": "dev"
+    }
   }
 }
