@@ -652,7 +652,10 @@ pub async fn pick<'a>(
     let mut spin = 0;
     let mut tick = tokio::time::interval(SPIN);
     let result = loop {
-        match terminal.draw(|frame| picker.draw(frame, now(), spin)) {
+        match terminal.draw(|frame| {
+            picker.draw(frame, now(), spin);
+            crate::glyphs::fold(frame.buffer_mut());
+        }) {
             Ok(frame) if player.due().is_some() => screen = frame.buffer.clone(),
             Ok(_) => {}
             Err(error) => break Err(error),
@@ -938,6 +941,22 @@ mod tests {
             failure: Some(failure),
             ..listing_of(agent, &[])
         }
+    }
+
+    #[test]
+    fn an_ascii_picker_draws_only_ascii() {
+        let config = config(Some("alpha"));
+        let mut picker = Picker::new(&config, Path::new("config.toml"));
+        picker.listing(listing_of(
+            "alpha",
+            &[("s1", "a session", "2026-11-03T10:00:00Z")],
+        ));
+        picker.listing(failed("beta", Failure::Start("no such file".to_string())));
+        let mut buffer = drawn(&picker);
+        crate::glyphs::to_ascii(&mut buffer);
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(text.is_ascii(), "{text}");
+        assert!(text.contains("a session"));
     }
 
     fn drawn(picker: &Picker) -> ratatui::buffer::Buffer {

@@ -86,6 +86,10 @@ fn parse(mut args: Vec<String>) -> Option<Options> {
     })
 }
 
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
 fn load_config() -> (Config, PathBuf) {
     let Some(path) = Config::path() else {
         fail(2, "neither XDG_CONFIG_HOME nor HOME is set");
@@ -94,6 +98,7 @@ fn load_config() -> (Config, PathBuf) {
         Ok(config) => {
             coax::log::info("config", json!({"path": path}));
             coax::palette::init(config.palette.resolve(coax::palette::query_terminal()));
+            coax::glyphs::init(coax::glyphs::detect(config.glyphs, env_var));
             (config, path)
         }
         Err(error) => fail(2, &error),
@@ -164,12 +169,14 @@ async fn main() {
         keys: app::key_thread(),
         player: player(options.input.as_deref()),
         links: LinksConfig::default(),
+        templates: Default::default(),
         registry: None,
         resume_args,
     };
     let result = match options.launch {
         Launch::Command(words) => match AcpAgent::from_args(words.clone()) {
             Ok(agent) => {
+                coax::glyphs::init(coax::glyphs::detect(None, env_var));
                 log::info("agent.chosen", json!({"command": words}));
                 open(agent, None, opening).await
             }
@@ -181,6 +188,7 @@ async fn main() {
                 Some(agent) => {
                     log::info("agent.chosen", json!({"name": name}));
                     opening.links = config.links.clone();
+                    opening.templates = config.templates.clone();
                     opening.registry = config.registries.get(&name).cloned();
                     open(AcpAgent::new(agent.clone()), Some(name), opening).await
                 }
@@ -224,6 +232,7 @@ async fn open(agent: AcpAgent, name: Option<String>, mut opening: Opening) -> Re
 /// open the one chosen.
 async fn pick(config: &Config, path: &Path, mut opening: Opening) -> Result<(), Error> {
     opening.links = config.links.clone();
+    opening.templates = config.templates.clone();
     let cwd = std::env::current_dir().map_err(Error::into_internal_error)?;
     let mut agents = Agents::start(config, &cwd);
     let choice = picker::pick(

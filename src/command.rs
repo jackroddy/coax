@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+
 use agent_client_protocol::v1::schema::AvailableCommand;
 
 use crate::settings::Setting;
+use crate::template::Template;
 
 /// What the prompt's text starts with.
 #[derive(Debug, PartialEq, Eq)]
@@ -48,6 +51,9 @@ fn split_name(rest: &str) -> (&str, &str) {
 
 /// What to say when `text` names no command, or `None` for plain text.
 pub fn unknown(text: &str) -> Option<String> {
+    if let Some(name) = template_name(text).filter(|name| !name.is_empty()) {
+        return Some(format!("no template {name}"));
+    }
     match parse(text) {
         Typed::Plain => None,
         Typed::Coax { name, .. } => Some(format!("no command /{name}")),
@@ -55,12 +61,23 @@ pub fn unknown(text: &str) -> Option<String> {
     }
 }
 
-/// Whether the cursor is still inside the command's name, so a list of
-/// matches makes sense.
+/// Whether the cursor is still inside the command's name, or a template's
+/// name after `/t `, so a list of matches makes sense.
 pub fn naming(text: &str) -> bool {
+    if let Some(name) = template_name(text) {
+        return !name.contains(char::is_whitespace);
+    }
     text.starts_with('/')
         && !text.contains(char::is_whitespace)
         && !matches!(parse(text), Typed::Plain)
+}
+
+/// The template name typed after `/t `, empty until one is typed.
+pub fn template_name(text: &str) -> Option<&str> {
+    text.strip_prefix("/t").and_then(|rest| {
+        rest.starts_with(char::is_whitespace)
+            .then(|| rest.trim_start())
+    })
 }
 
 /// What a setting is called as a command: lowercase, spaces as `-`.
@@ -90,6 +107,14 @@ pub enum Kind {
 
     /// `/log`, which is not a setting.
     Log,
+
+    /// `/t`, before a template is named.
+    Templates,
+
+    /// `/t name`, the template of that name.
+    Template {
+        name: String,
+    },
     Agent {
         name: String,
     },
@@ -101,19 +126,37 @@ fn builtins(typed: &str) -> impl Iterator<Item = Candidate> + '_ {
         ("edit", Kind::Edit, "edit the prompt in $EDITOR"),
         ("history", Kind::History, "pick an earlier prompt"),
         ("log", Kind::Log, "show this run's log file"),
+        ("t", Kind::Templates, "fill in a prompt template"),
     ]
     .into_iter()
     .filter(move |(name, ..)| name.starts_with(typed))
     .map(|(name, kind, description)| Candidate {
-        fill: format!("/{name}"),
+        // `/t` leaves room to type a template's name
+        fill: format!("/{name}{}", if kind == Kind::Templates { " " } else { "" }),
         description: description.to_string(),
         kind,
     })
 }
 
-/// The commands whose names start with what is typed, coax's for `/` and the
-/// agent's for `//`.
-pub fn matches(text: &str, settings: &[Setting], agent: &[AvailableCommand]) -> Vec<Candidate> {
+/// The commands whose names start with what is typed, coax's for `/`, the
+/// agent's for `//` and the templates after `/t `.
+pub fn matches(
+    text: &str,
+    settings: &[Setting],
+    agent: &[AvailableCommand],
+    templates: &BTreeMap<String, Template>,
+) -> Vec<Candidate> {
+    if let Some(typed) = template_name(text) {
+        return templates
+            .iter()
+            .filter(|(name, _)| name.starts_with(typed))
+            .map(|(name, template)| Candidate {
+                fill: format!("/t {name}"),
+                description: template.summary().to_string(),
+                kind: Kind::Template { name: name.clone() },
+            })
+            .collect();
+    }
     match parse(text) {
         Typed::Plain => Vec::new(),
         Typed::Coax { name, .. } => {
@@ -235,21 +278,21 @@ mod tests {
     #[test]
     fn a_prefix_matches_every_coax_command_that_starts_with_it() {
         let settings = [setting("Mode"), setting("Model"), setting("Fast")];
-        let names: Vec<String> = matches("/mo", &settings, &[])
+        let names: Vec<String> = matches("/mo", &settings, &[], &BTreeMap::new())
             .into_iter()
             .map(|candidate| candidate.fill)
             .collect();
         assert_eq!(names, ["/mode", "/model"]);
-        assert_eq!(matches("/", &settings, &[]).len(), 6);
-        assert!(matches("/x", &settings, &[]).is_empty());
-        assert_eq!(matches("/MO", &settings, &[]).len(), 2);
+        assert_eq!(matches("/", &settings, &[], &BTreeMap::new()).len(), 7);
+        assert!(matches("/x", &settings, &[], &BTreeMap::new()).is_empty());
+        assert_eq!(matches("/MO", &settings, &[], &BTreeMap::new()).len(), 2);
     }
 
     #[test]
     fn edit_and_history_are_listed_after_the_settings_and_match_by_prefix() {
         let settings = [setting("Mode")];
-        let found = matches("/", &settings, &[]);
-        assert_eq!(found.len(), 4);
+        let found = matches("/", &settings, &[], &BTreeMap::new());
+        assert_eq!(found.len(), 5);
         assert_eq!(found[1].fill, "/edit");
         assert_eq!(found[1].kind, Kind::Edit);
         assert_eq!(found[1].description, "edit the prompt in $EDITOR");
@@ -257,14 +300,52 @@ mod tests {
         assert_eq!(found[2].kind, Kind::History);
         assert_eq!(found[3].fill, "/log");
         assert_eq!(found[3].kind, Kind::Log);
-        assert_eq!(matches("/h", &settings, &[]).len(), 1);
-        assert_eq!(matches("/ed", &settings, &[]).len(), 1);
+        assert_eq!(matches("/h", &settings, &[], &BTreeMap::new()).len(), 1);
+        assert_eq!(matches("/ed", &settings, &[], &BTreeMap::new()).len(), 1);
         assert!(
-            matches("/mo", &settings, &[])
+            matches("/mo", &settings, &[], &BTreeMap::new())
                 .iter()
                 .all(|c| c.kind != Kind::Edit)
         );
-        assert_eq!(matches("/edit some text", &settings, &[]).len(), 1);
+        assert_eq!(
+            matches("/edit some text", &settings, &[], &BTreeMap::new()).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn slash_t_lists_the_templates_whose_names_start_with_what_follows_it() {
+        let template = |text: &str, description: Option<&str>| Template {
+            text: text.to_string(),
+            description: description.map(str::to_string),
+        };
+        let templates = BTreeMap::from([
+            (
+                "away".to_string(),
+                template("{tasks}", Some("before I step out")),
+            ),
+            (
+                "bookkeeping".to_string(),
+                template("Do commits\nand more", None),
+            ),
+        ]);
+        let found = matches("/t ", &[], &[], &templates);
+        let fills: Vec<&str> = found.iter().map(|c| c.fill.as_str()).collect();
+        assert_eq!(fills, ["/t away", "/t bookkeeping"]);
+        assert_eq!(found[0].description, "before I step out");
+        assert_eq!(found[1].description, "Do commits");
+        assert_eq!(
+            found[0].kind,
+            Kind::Template {
+                name: "away".to_string()
+            }
+        );
+        assert_eq!(matches("/t bo", &[], &[], &templates).len(), 1);
+        assert!(naming("/t ") && naming("/t bo") && !naming("/t bo x"));
+        let slash_t = matches("/t", &[], &[], &templates);
+        assert_eq!(slash_t[0].fill, "/t ");
+        assert_eq!(slash_t[0].kind, Kind::Templates);
+        assert_eq!(template_name("/tabs"), None);
     }
 
     #[test]
@@ -277,12 +358,12 @@ mod tests {
                 )),
             ),
         ];
-        let found = matches("//re", &[], &agent);
+        let found = matches("//re", &[], &agent, &BTreeMap::new());
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].fill, "//review ");
         assert_eq!(found[0].description, "Review code");
-        assert_eq!(matches("//", &[], &agent).len(), 2);
-        assert!(matches("/co", &[], &agent).is_empty());
+        assert_eq!(matches("//", &[], &agent, &BTreeMap::new()).len(), 2);
+        assert!(matches("/co", &[], &agent, &BTreeMap::new()).is_empty());
     }
 
     #[test]

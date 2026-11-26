@@ -8,6 +8,37 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 0.3 is a breaking release and 0.2.0 to 0.2.1 is not. What is versioned is the
 command line, the keys, and the scenario format the fake agent reads.
 
+## [Unreleased]
+
+### Added
+
+- A `[templates.<name>]` table in `config.toml` holds a prompt template:
+  its text in `text`, with each blank written `{name}`, and an optional
+  `description`. `/t` and Enter open a box of the templates. `/t` and a
+  name, which Tab completes, choose that template directly. Choosing one
+  puts its text in the prompt with the cursor on the first blank. Typing
+  replaces the blank, and Tab and Shift+Tab move to the next and the
+  previous one. Enter holds the prompt back while a blank is still
+  unfilled. A template with no blanks is sent as soon as it is chosen.
+  `{{` and `}}` write a single brace.
+- A `glyphs` key in `config.toml` sets the characters coax draws with,
+  `"unicode"` or `"ascii"`. Under `"ascii"`, coax draws a one-column ASCII
+  stand-in for each symbol, border and markdown mark it would draw, so
+  nothing on the screen moves. Boxes are drawn with `+`, `-` and `|`. The
+  tool icons read `=` for a read, `?` for a search, `+` for an edit, `x`
+  for a delete, `>` for a move, `$` for a run, `v` for a fetch, `:` for a
+  think and `~` for a mode change. The chips `①` to `⑳` read `1` to `9`,
+  then `A` to `K`. Without the key, coax draws in ASCII when the locale is
+  not UTF-8 or `TERM` is `linux`, the Linux console.
+
+### Changed
+
+- Enter in the command list runs a command at once when the prompt names
+  it in full, or when it is the only match for what is typed. Before, a
+  first Enter filled in the name and a second ran it. With several
+  matches, Enter waits until the arrows pick one. Tab fills in the first
+  match, and more presses of Tab or Shift+Tab cycle through the rest.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

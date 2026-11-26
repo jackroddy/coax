@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 use agent_client_protocol::AcpAgentConfig;
 use serde::Deserialize;
 
+use crate::glyphs::Glyphs;
 use crate::links::LinksConfig;
 use crate::palette::PaletteConfig;
+use crate::template::Template;
 
 /// The settings read from `config.toml`.
 #[derive(Debug, Default, Deserialize)]
@@ -27,6 +29,12 @@ pub struct Config {
 
     /// What the links in agent text do.
     pub links: LinksConfig,
+
+    /// The characters to draw with, when the config names them.
+    pub glyphs: Option<Glyphs>,
+
+    /// The prompt templates, by name.
+    pub templates: BTreeMap<String, Template>,
 }
 
 #[derive(Deserialize)]
@@ -39,6 +47,9 @@ struct RawConfig {
     palette: PaletteConfig,
     #[serde(default)]
     links: LinksConfig,
+    glyphs: Option<Glyphs>,
+    #[serde(default)]
+    templates: BTreeMap<String, Template>,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +83,8 @@ impl From<RawConfig> for Config {
             registries,
             palette: raw.palette,
             links: raw.links,
+            glyphs: raw.glyphs,
+            templates: raw.templates,
         }
     }
 }
@@ -102,6 +115,51 @@ mod tests {
     use ratatui::style::Color;
 
     use super::*;
+
+    #[test]
+    fn a_template_has_its_text_and_an_optional_description() {
+        let config: Config = toml::from_str(
+            r#"
+            [templates.away]
+            text = "{tasks}\n\naway for {time}"
+            description = "before I step out"
+
+            [templates.bookkeeping]
+            text = "Do commits, cleanups, and foam bookkeeping"
+            "#,
+        )
+        .unwrap();
+        let away = &config.templates["away"];
+        assert_eq!(away.text, "{tasks}\n\naway for {time}");
+        assert_eq!(away.description.as_deref(), Some("before I step out"));
+        assert_eq!(config.templates["bookkeeping"].description, None);
+    }
+
+    #[test]
+    fn a_template_without_text_or_with_an_unknown_key_is_an_error() {
+        let read = |text: &str| toml::from_str::<Config>(text).unwrap_err().to_string();
+        assert!(read("[templates.away]\ndescription = \"x\"").contains("text"));
+        let unknown = read("[templates.away]\ntext = \"x\"\nkeys = 1");
+        assert!(unknown.contains("keys"), "{unknown}");
+    }
+
+    #[test]
+    fn glyphs_reads_unicode_or_ascii_and_is_absent_by_default() {
+        let read = |text: &str| toml::from_str::<Config>(text).unwrap().glyphs;
+        assert_eq!(read(r#"glyphs = "ascii""#), Some(Glyphs::Ascii));
+        assert_eq!(read(r#"glyphs = "unicode""#), Some(Glyphs::Unicode));
+        assert_eq!(read(""), None);
+    }
+
+    #[test]
+    fn an_unknown_glyphs_value_is_an_error_naming_the_file() {
+        let path = std::env::temp_dir().join(format!("coax-glyphs-{}.toml", std::process::id()));
+        std::fs::write(&path, "glyphs = \"emoji\"\n").unwrap();
+        let error = Config::load(&path).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("glyphs"), "{error}");
+    }
 
     #[test]
     fn an_agent_entry_reads_its_command_args_and_env() {

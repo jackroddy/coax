@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -29,6 +29,7 @@ use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
 use crate::form::Form;
+use crate::glyphs;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
 use crate::playback::Player;
@@ -38,6 +39,7 @@ use crate::report::{self, Reporter, Snapshot};
 use crate::select::{self, Point, Selection};
 use crate::session::{self, Entry, Marked, Transcript};
 use crate::settings::{Category, Control, Setting, Settings};
+use crate::template::{self, Template};
 use crate::ui::{self, Word};
 
 const WHEEL_LINES: usize = 3;
@@ -144,6 +146,24 @@ pub struct App {
 
     /// Whether Esc has closed the command list for the text typed so far.
     pub command_closed: bool,
+
+    /// Whether Up or Down has moved through the command list since the last
+    /// edit, so that Enter runs the highlighted entry.
+    command_picked: bool,
+
+    /// The text typed before Tab began filling in matches, and the match Tab
+    /// filled in last.
+    command_cycle: Option<(String, usize)>,
+
+    /// The prompt templates from `config.toml`, by name.
+    pub templates: BTreeMap<String, Template>,
+
+    /// The blanks of the template in the prompt, empty when there is none.
+    pub blanks: Vec<String>,
+
+    /// The blank Tab or a chosen template put the cursor on. Typing replaces
+    /// it, and any other key lets it go.
+    pub chosen_blank: Option<Range<usize>>,
 
     /// An agent command waiting for a yes before it is sent.
     pub confirm: Option<Confirm>,
@@ -400,6 +420,9 @@ pub enum MenuTarget {
 
     /// The prompts sent earlier, newest first.
     History,
+
+    /// The prompt templates, by name.
+    Templates,
 }
 
 pub enum Action {
@@ -604,7 +627,7 @@ impl App {
                 .iter()
                 .skip(*first)
                 .any(|setting| setting.id == id),
-            MenuTarget::History => false,
+            MenuTarget::History | MenuTarget::Templates => false,
         }
     }
 
@@ -1111,22 +1134,25 @@ impl App {
             &self.input,
             &self.settings.settings(),
             &self.settings.commands,
+            &self.templates,
         )
     }
 
-    /// Enter on a command: fill the highlighted entry of the list, or run
-    /// the command when the prompt already holds it.
-    fn enter_command(&mut self) -> Action {
+    /// Enter on a command: run the command the prompt names, the entry
+    /// picked from the list, or the only entry left. With several entries
+    /// left and none picked, the list stays open.
+    fn enter_command(&mut self, now: Instant) -> Action {
         let settings = self.settings.settings();
         let list = self.popup();
-        let entry = match list.get(self.command_cursor.min(list.len().saturating_sub(1))) {
-            Some(entry) if self.input.trim_end() != entry.fill.trim_end() => {
-                self.set_input(entry.fill.clone());
-                self.command_cursor = 0;
-                return Action::None;
-            }
-            Some(entry) => Some(entry.clone()),
-            None => self.exact(&settings),
+        let picked = self
+            .command_picked
+            .then(|| list.get(self.command_cursor).cloned())
+            .flatten();
+        let entry = match self.exact(&settings).or(picked) {
+            Some(entry) => Some(entry),
+            None if list.len() == 1 => list.into_iter().next(),
+            None if list.len() > 1 => return Action::None,
+            None => None,
         };
         let Some(entry) = entry else {
             self.unknown = command::unknown(&self.input);
@@ -1163,6 +1189,25 @@ impl App {
                 self.open_history();
                 Action::None
             }
+            Kind::Templates => {
+                self.clear_input();
+                if self.templates.is_empty() {
+                    self.unknown = Some("no templates in config.toml".to_string());
+                    return Action::None;
+                }
+                self.menu = Some(Menu {
+                    target: MenuTarget::Templates,
+                    cursor: 0,
+                    anchor: 0,
+                    error: None,
+                    confirm: None,
+                });
+                Action::None
+            }
+            Kind::Template { name } => {
+                self.clear_input();
+                self.choose_template(&name, now)
+            }
             Kind::Edit => {
                 let text = match command::parse(&self.input) {
                     command::Typed::Coax { input, .. } => input.to_string(),
@@ -1188,15 +1233,61 @@ impl App {
         }
     }
 
+    /// Fill the next match of what was typed into the prompt, or the one
+    /// before when `forward` is false, coming round at either end.
+    fn complete(&mut self, forward: bool) {
+        let typed = match &self.command_cycle {
+            Some((typed, _)) => typed.clone(),
+            None => self.input.clone(),
+        };
+        let list = command::matches(
+            &typed,
+            &self.settings.settings(),
+            &self.settings.commands,
+            &self.templates,
+        );
+        if list.is_empty() {
+            return;
+        }
+        let next = match self.command_cycle {
+            Some((_, at)) if forward => (at + 1) % list.len(),
+            Some((_, at)) => (at + list.len() - 1) % list.len(),
+            None if forward => 0,
+            None => list.len() - 1,
+        };
+        self.set_input(list[next].fill.clone());
+        self.command_cursor = 0;
+        self.command_picked = false;
+        self.command_cycle = Some((typed, next));
+    }
+
     /// The command named exactly by the prompt's text, if there is one.
+    /// `/t ` with no name yet names the template list.
     fn exact(&self, settings: &[Setting]) -> Option<Candidate> {
+        if let Some(name) = command::template_name(&self.input) {
+            let all = &self.settings.commands;
+            return if name.trim().is_empty() {
+                command::matches("/t", settings, all, &self.templates)
+                    .into_iter()
+                    .find(|candidate| candidate.kind == Kind::Templates)
+            } else {
+                command::matches(&self.input, settings, all, &self.templates)
+                    .into_iter()
+                    .find(|candidate| candidate.fill == format!("/t {}", name.trim_end()))
+            };
+        }
         let name = match command::parse(&self.input) {
             command::Typed::Coax { name, .. } | command::Typed::Agent { name, .. } => name,
             command::Typed::Plain => return None,
         };
-        command::matches(&self.input, settings, &self.settings.commands)
-            .into_iter()
-            .find(|candidate| candidate.fill.trim_start_matches('/').trim_end() == name)
+        command::matches(
+            &self.input,
+            settings,
+            &self.settings.commands,
+            &self.templates,
+        )
+        .into_iter()
+        .find(|candidate| candidate.fill.trim_start_matches('/').trim_end() == name)
     }
 
     fn confirm_key(&mut self, key: KeyEvent) -> Action {
@@ -1264,6 +1355,8 @@ impl App {
     fn clear_input(&mut self) {
         self.input.clear();
         self.cursor = 0;
+        self.blanks.clear();
+        self.chosen_blank = None;
     }
 
     fn insert(&mut self, text: &str) {
@@ -1288,6 +1381,10 @@ impl App {
             return;
         }
         self.unknown = None;
+        if let Some(spot) = self.chosen_blank.take() {
+            self.cursor = spot.end;
+            self.remove_between(spot.start);
+        }
         self.insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
     }
 
@@ -1306,6 +1403,8 @@ impl App {
     fn edited(&mut self) {
         self.command_cursor = 0;
         self.command_closed = false;
+        self.command_picked = false;
+        self.command_cycle = None;
         let input = &self.input;
         self.marks
             .retain(|mark| input.contains(session::chip(mark.number)));
@@ -1392,6 +1491,7 @@ impl App {
             ),
             MenuTarget::Overflow(first) => settings.len().saturating_sub(*first),
             MenuTarget::History => self.history.len(),
+            MenuTarget::Templates => self.templates.len(),
         }
     }
 
@@ -1461,6 +1561,14 @@ impl App {
                 self.edited();
                 Action::None
             }
+            MenuTarget::Templates => {
+                let Some(name) = self.templates.keys().nth(menu.cursor).cloned() else {
+                    return Action::None;
+                };
+                self.menu = None;
+                self.clear_input();
+                self.choose_template(&name, Instant::now())
+            }
             MenuTarget::Overflow(first) => {
                 let Some(setting) = settings.get(first + menu.cursor) else {
                     return Action::None;
@@ -1487,6 +1595,85 @@ impl App {
         }
     }
 
+    /// Enter on plain text: send the prompt, or queue it behind a turn.
+    /// A template's blank still in the text holds the send back.
+    fn send(&mut self, now: Instant) -> Action {
+        if self.exited || self.input.trim().is_empty() {
+            return Action::None;
+        }
+        let unfilled = template::spots(&self.input, &self.blanks)
+            .into_iter()
+            .next();
+        if let Some(spot) = unfilled {
+            self.unknown = Some(format!("fill in {} first", &self.input[spot.clone()]));
+            self.cursor = spot.start;
+            self.chosen_blank = Some(spot);
+            return Action::None;
+        }
+        self.blanks.clear();
+        let text = std::mem::take(&mut self.input);
+        self.cursor = 0;
+        self.remember(&text, Some(Time::now()));
+        self.scroll = 0;
+        let marks = self.take_marks(&text);
+        let sent = session::sent_text(&text, &marks);
+        let held = self.queueing && self.waiting.is_empty() && self.transcript.held(now);
+        if held {
+            self.held_replies += 1;
+            self.transcript.end_turn();
+        } else if self.transcript.in_flight {
+            self.waiting.push_back(Queued { text, marks });
+            return if self.queueing {
+                Action::Prompt(sent)
+            } else {
+                Action::None
+            };
+        }
+        self.transcript.prompt_marked(text, marks);
+        Action::Prompt(sent)
+    }
+
+    /// Put the template `name` in the prompt with the cursor on its first
+    /// blank, or send it at once when it has none.
+    fn choose_template(&mut self, name: &str, now: Instant) -> Action {
+        let Some(chosen) = self.templates.get(name) else {
+            self.unknown = Some(format!("no template {name}"));
+            return Action::None;
+        };
+        let (text, blanks) = chosen.fill();
+        self.set_input(text);
+        self.blanks = blanks;
+        if self.blanks.is_empty() {
+            return self.send(now);
+        }
+        self.cursor = 0;
+        self.next_blank(None, true);
+        Action::None
+    }
+
+    /// Put the cursor on the next blank after `from`, or the one before it
+    /// when `forward` is false, coming round at either end. With no blank
+    /// chosen, the search starts at the cursor.
+    fn next_blank(&mut self, from: Option<Range<usize>>, forward: bool) {
+        let spots = template::spots(&self.input, &self.blanks);
+        let at = from.as_ref().map_or(self.cursor, |spot| spot.start);
+        let spot = if forward {
+            let on_one = from.is_some();
+            let after = |spot: &&Range<usize>| spot.start > at || (!on_one && spot.start == at);
+            spots.iter().find(after).or(spots.first())
+        } else {
+            spots
+                .iter()
+                .rev()
+                .find(|spot| spot.start < at)
+                .or(spots.last())
+        };
+        if let Some(spot) = spot {
+            self.cursor = spot.start;
+            self.chosen_blank = Some(spot.clone());
+        }
+    }
+
     /// Handle a key pressed at `now`. Any key but the one that completes
     /// the guard disarms it.
     pub fn key(&mut self, key: KeyEvent, now: Instant) -> Action {
@@ -1494,6 +1681,7 @@ impl App {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         self.unknown = None;
+        let chosen = self.chosen_blank.take();
         let armed = self.guard.take().filter(|guard| guard.until > now);
         let exit = match key.code {
             KeyCode::Char('c') if ctrl => Some(GuardKey::CtrlC),
@@ -1551,10 +1739,20 @@ impl App {
         match key.code {
             KeyCode::Up if list > 0 => {
                 self.command_cursor = self.command_cursor.saturating_sub(1);
+                self.command_picked = true;
                 return Action::None;
             }
             KeyCode::Down if list > 0 => {
                 self.command_cursor = (self.command_cursor + 1).min(list - 1);
+                self.command_picked = true;
+                return Action::None;
+            }
+            KeyCode::Tab if list > 0 => {
+                self.complete(true);
+                return Action::None;
+            }
+            KeyCode::BackTab if list > 0 => {
+                self.complete(false);
                 return Action::None;
             }
             KeyCode::Esc if list > 0 => {
@@ -1607,32 +1805,22 @@ impl App {
                 Action::None
             }
             KeyCode::Enter if !matches!(command::parse(&self.input), command::Typed::Plain) => {
-                self.enter_command()
+                self.enter_command(now)
             }
-            KeyCode::Enter => {
-                if self.exited || self.input.trim().is_empty() {
-                    return Action::None;
-                }
-                let text = std::mem::take(&mut self.input);
-                self.cursor = 0;
-                self.remember(&text, Some(Time::now()));
-                self.scroll = 0;
-                let marks = self.take_marks(&text);
-                let sent = session::sent_text(&text, &marks);
-                let held = self.queueing && self.waiting.is_empty() && self.transcript.held(now);
-                if held {
-                    self.held_replies += 1;
-                    self.transcript.end_turn();
-                } else if self.transcript.in_flight {
-                    self.waiting.push_back(Queued { text, marks });
-                    return if self.queueing {
-                        Action::Prompt(sent)
-                    } else {
-                        Action::None
-                    };
-                }
-                self.transcript.prompt_marked(text, marks);
-                Action::Prompt(sent)
+            KeyCode::Enter => self.send(now),
+            KeyCode::Tab if !self.blanks.is_empty() => {
+                self.next_blank(chosen, true);
+                Action::None
+            }
+            KeyCode::BackTab if !self.blanks.is_empty() => {
+                self.next_blank(chosen, false);
+                Action::None
+            }
+            KeyCode::Backspace | KeyCode::Delete if chosen.is_some() => {
+                let spot = chosen.unwrap();
+                self.cursor = spot.end;
+                self.remove_between(spot.start);
+                Action::None
             }
             KeyCode::Backspace => {
                 self.remove_between(prompt::char_before(&self.input, self.cursor));
@@ -1707,6 +1895,10 @@ impl App {
                 Action::None
             }
             KeyCode::Char(ch) if !ctrl => {
+                if let Some(spot) = chosen {
+                    self.cursor = spot.end;
+                    self.remove_between(spot.start);
+                }
                 self.insert(ch.encode_utf8(&mut [0; 4]));
                 Action::None
             }
@@ -1736,6 +1928,7 @@ pub struct Opening {
     /// Keys a scenario types in, after the person's own.
     pub player: Player,
     pub links: LinksConfig,
+    pub templates: BTreeMap<String, Template>,
 
     /// The agent's id in the ACP registry, for the new-version check.
     pub registry: Option<String>,
@@ -1784,6 +1977,7 @@ async fn session(
         mut keys,
         mut player,
         links,
+        templates,
         registry: registry_id,
         resume_args,
     } = opening;
@@ -1821,7 +2015,10 @@ async fn session(
         tokio::pin!(opened);
         loop {
             terminal
-                .draw(|frame| ui::draw_waiting(frame, &waiting))
+                .draw(|frame| {
+                    ui::draw_waiting(frame, &waiting);
+                    glyphs::fold(frame.buffer_mut());
+                })
                 .map_err(Error::into_internal_error)?;
             tokio::select! {
                 session = &mut opened => break session?,
@@ -1868,6 +2065,11 @@ async fn session(
         show_plan: false,
         command_cursor: 0,
         command_closed: false,
+        command_picked: false,
+        command_cycle: None,
+        templates,
+        blanks: Vec::new(),
+        chosen_blank: None,
         confirm: None,
         expanded: HashSet::new(),
         folds: Vec::new(),
@@ -1961,6 +2163,7 @@ async fn session(
         if redraw {
             let drawn = terminal.draw(|frame| {
                 ui::draw(frame, &mut app);
+                glyphs::fold(frame.buffer_mut());
                 if player.due().is_some() {
                     screen = frame.buffer_mut().clone();
                 }
@@ -2275,6 +2478,11 @@ mod tests {
             show_plan: false,
             command_cursor: 0,
             command_closed: false,
+            command_picked: false,
+            command_cycle: None,
+            templates: BTreeMap::new(),
+            blanks: Vec::new(),
+            chosen_blank: None,
             confirm: None,
             expanded: HashSet::new(),
             folds: Vec::new(),
@@ -4684,6 +4892,136 @@ mod tests {
         app.key(KeyEvent::new(code, KeyModifiers::NONE), Instant::now())
     }
 
+    fn with_templates() -> App {
+        let mut app = app();
+        let template = |text: &str| Template {
+            text: text.to_string(),
+            description: None,
+        };
+        app.templates = BTreeMap::from([
+            (
+                "away".to_string(),
+                template("{tasks}\n\nI'm out for {time}. Any questions?"),
+            ),
+            (
+                "bookkeeping".to_string(),
+                template("Do commits, cleanups, and foam bookkeeping"),
+            ),
+        ]);
+        app
+    }
+
+    #[test]
+    fn slash_t_and_enter_opens_the_template_box_and_enter_in_it_fills_the_prompt() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t");
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(
+            app.menu.as_ref().map(|menu| &menu.target),
+            Some(MenuTarget::Templates)
+        ));
+        assert!(app.input.is_empty());
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert!(app.menu.is_none());
+        assert_eq!(app.input, "{tasks}\n\nI'm out for {time}. Any questions?");
+        assert_eq!(app.cursor, 0);
+        assert_eq!(app.chosen_blank, Some(0..7));
+    }
+
+    #[test]
+    fn slash_t_with_a_space_and_no_name_also_opens_the_template_box() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t ");
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(
+            app.menu.as_ref().map(|menu| &menu.target),
+            Some(MenuTarget::Templates)
+        ));
+    }
+
+    #[test]
+    fn enter_on_a_complete_template_name_chooses_it_at_once() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t away");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.input, "{tasks}\n\nI'm out for {time}. Any questions?");
+    }
+
+    #[test]
+    fn tab_completes_a_template_name_and_cycles_through_the_matches() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t ");
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.input, "/t away");
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.input, "/t bookkeeping");
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.input, "/t away");
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.input, "/t bookkeeping");
+    }
+
+    #[test]
+    fn typing_on_a_chosen_blank_replaces_it_and_tab_and_shift_tab_move_between_blanks() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t away");
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "- fix it");
+        assert!(app.input.starts_with("- fix it\n\nI'm out for {time}."));
+        press(&mut app, KeyCode::Tab);
+        let time = app.input.find("{time}").unwrap();
+        assert_eq!(app.chosen_blank, Some(time..time + 6));
+        type_text(&mut app, "an hour");
+        assert_eq!(app.input, "- fix it\n\nI'm out for an hour. Any questions?");
+        assert!(matches!(press(&mut app, KeyCode::Tab), Action::None));
+        assert_eq!(app.chosen_blank, None);
+
+        let mut app = with_templates();
+        type_text(&mut app, "/t away");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::BackTab);
+        let time = app.input.find("{time}").unwrap();
+        assert_eq!(app.chosen_blank, Some(time..time + 6));
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.chosen_blank, Some(0..7));
+        press(&mut app, KeyCode::Backspace);
+        assert!(app.input.starts_with("\n\nI'm out"));
+    }
+
+    #[test]
+    fn a_template_without_blanks_is_sent_at_once() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t bookkeeping");
+        let sent = press(&mut app, KeyCode::Enter);
+        assert!(
+            matches!(sent, Action::Prompt(text) if text == "Do commits, cleanups, and foam bookkeeping")
+        );
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn an_unfilled_blank_holds_the_send_back_and_names_the_blank() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t away");
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "x");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert_eq!(app.unknown.as_deref(), Some("fill in {time} first"));
+        let time = app.input.find("{time}").unwrap();
+        assert_eq!(app.chosen_blank, Some(time..time + 6));
+        type_text(&mut app, "a bit");
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::Prompt(_)));
+        assert!(app.blanks.is_empty());
+    }
+
+    #[test]
+    fn slash_t_with_a_name_no_template_has_says_so_in_a_notice() {
+        let mut app = with_templates();
+        type_text(&mut app, "/t nope");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.unknown.as_deref(), Some("no template nope"));
+    }
+
     #[test]
     fn a_slash_prefix_lists_the_coax_commands_that_start_with_it() {
         let mut app = with_commands();
@@ -4695,12 +5033,13 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_a_listed_coax_command_fills_it_and_a_second_enter_opens_its_box() {
+    fn enter_on_several_matches_waits_and_on_a_complete_name_runs_it_at_once() {
         let mut app = with_commands();
         type_text(&mut app, "/mo");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.input, "/mode");
+        assert_eq!(app.input, "/mo");
         assert!(app.menu.is_none());
+        type_text(&mut app, "de");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
         assert!(matches!(
             &app.menu.as_ref().unwrap().target,
@@ -4710,12 +5049,41 @@ mod tests {
     }
 
     #[test]
-    fn the_arrows_move_within_the_list_before_enter_fills_an_entry() {
+    fn tab_fills_the_first_match_cycles_on_and_shift_tab_goes_back() {
+        let mut app = with_commands();
+        type_text(&mut app, "/mo");
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.input, "/mode");
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.input, "/model");
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.input, "/mode");
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.input, "/model");
+        type_text(&mut app, "x");
+        press(&mut app, KeyCode::Backspace);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.input, "/model");
+    }
+
+    #[test]
+    fn a_double_slash_prefix_with_one_match_goes_straight_to_the_confirm() {
+        let mut app = with_commands();
+        type_text(&mut app, "//comp");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.confirm.as_ref().unwrap().text(), "/compact");
+    }
+
+    #[test]
+    fn the_arrows_pick_an_entry_and_enter_runs_it() {
         let mut app = with_commands();
         type_text(&mut app, "/mo");
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
-        assert_eq!(app.input, "/model");
+        assert!(matches!(
+            &app.menu.as_ref().unwrap().target,
+            MenuTarget::Setting(id) if id == "model"
+        ));
     }
 
     #[test]
@@ -5044,14 +5412,12 @@ mod tests {
     }
 
     #[test]
-    fn edit_is_in_the_slash_list_and_enter_on_it_asks_for_the_editor_with_no_text() {
+    fn enter_on_a_prefix_with_one_match_runs_it_at_once() {
         let mut app = app();
         type_text(&mut app, "/ed");
         let list = app.popup();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].description, "edit the prompt in $EDITOR");
-        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.input, "/edit");
         let Action::Edit(text) = press(&mut app, KeyCode::Enter) else {
             panic!("enter on /edit should open the editor");
         };
@@ -5615,6 +5981,51 @@ mod tests {
         app.mouse(event(MouseEventKind::Drag(MouseButton::Left), to));
         header_buffer(app, 80);
         app.mouse(event(MouseEventKind::Up(MouseButton::Left), to))
+    }
+
+    #[test]
+    fn an_ascii_screen_draws_messages_tools_the_context_bar_and_status_line_in_ascii_only() {
+        use crate::session::Tool;
+        use agent_client_protocol::v1::schema::{
+            ToolCallId, ToolCallStatus, ToolKind, UsageUpdate,
+        };
+
+        let tool = |id: &str, kind: ToolKind, status: ToolCallStatus| {
+            Entry::Tool(Tool {
+                id: ToolCallId::new(id.to_string()),
+                title: format!("tool {id}"),
+                kind,
+                status,
+                locations: Vec::new(),
+                content: Vec::new(),
+                cancelled: false,
+                changed: (2, 1),
+                revision: 0,
+                agent: false,
+                children: Vec::new(),
+                last_child_update: None,
+            })
+        };
+        let mut app = with_settings();
+        let usage = UsageUpdate::new(60_000, 200_000);
+        app.settings
+            .apply(&agent_client_protocol::v1::schema::SessionUpdate::UsageUpdate(usage));
+        app.transcript.entries = vec![
+            prompt("① can you look at this?"),
+            Entry::Thought("a thought".to_string()),
+            tool("r1", ToolKind::Read, ToolCallStatus::Completed),
+            tool("e1", ToolKind::Edit, ToolCallStatus::Completed),
+            tool("x1", ToolKind::Execute, ToolCallStatus::Failed),
+            reply(
+                "## a header\n\n- a list\n  - nested\n\n> a quote\n\n---\n\n\
+                 | a | b |\n|---|---|\n| 1 | 2 |\n\n```rust\nlet number = 42;\n```",
+            ),
+        ];
+        let mut buffer = header_buffer(&mut app, 80);
+        crate::glyphs::to_ascii(&mut buffer);
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(text.is_ascii(), "{text}");
+        assert!(text.contains("3 tools"), "{text}");
     }
 
     fn drawn_with(entries: Vec<Entry>) -> App {

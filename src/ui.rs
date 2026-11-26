@@ -25,6 +25,7 @@ use crate::prompt;
 use crate::select::{self, LineText};
 use crate::session::{self, Child, Entry, Message, Tool};
 use crate::settings::{self, Control};
+use crate::template;
 
 const MAX_PLAN_ROWS: usize = 6;
 
@@ -121,7 +122,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         None => {
             draw_rule(frame, upper_rule, THIN);
-            draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
+            draw_input(
+                frame,
+                prompt_area,
+                &input,
+                prompt_colour(&app.input),
+                &app.blanks,
+            );
             draw_commands(frame, app, upper_rule);
         }
     }
@@ -3150,8 +3157,17 @@ fn chip_spans(text: &str, style: Style) -> Vec<Span<'static>> {
     spans
 }
 
-fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<Color>) {
+fn draw_input(
+    frame: &mut Frame,
+    area: Rect,
+    input: &InputView,
+    colour: Option<Color>,
+    blanks: &[String],
+) {
     let text = colour.map_or(Style::default(), |colour| Style::new().fg(colour));
+    let blank = Style::new()
+        .fg(palette::get().accent)
+        .add_modifier(Modifier::UNDERLINED);
     let lines: Vec<Line> = input
         .rows
         .iter()
@@ -3163,7 +3179,15 @@ fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<C
                 Span::raw(PROMPT_LEAD)
             };
             let mut spans = vec![lead];
-            spans.extend(chip_spans(row, text));
+            let mut at = 0;
+            for spot in template::spots(row, blanks) {
+                spans.extend(chip_spans(&row[at..spot.start], text));
+                spans.push(Span::styled(row[spot.clone()].to_string(), blank));
+                at = spot.end;
+            }
+            if at < row.len() || at == 0 {
+                spans.extend(chip_spans(&row[at..], text));
+            }
             Line::from(spans)
         })
         .collect();
@@ -3368,6 +3392,14 @@ pub fn draw_menu(frame: &mut Frame, app: &mut App, floor: u16, now: Time) {
                 .collect();
             ("history".to_string(), rows)
         }
+        MenuTarget::Templates => {
+            let rows = app
+                .templates
+                .iter()
+                .map(|(name, template)| (name.clone(), Some(template.summary().to_string()), false))
+                .collect();
+            ("templates".to_string(), rows)
+        }
     };
     let screen = frame.area();
     let row_width = |(name, note, _): &(String, Option<String>, bool)| {
@@ -3399,7 +3431,7 @@ pub fn draw_menu(frame: &mut Frame, app: &mut App, floor: u16, now: Time) {
                 app.settings.context.as_ref().map(|c| c.used),
             ))
         }
-        MenuTarget::Overflow(_) | MenuTarget::History => None,
+        MenuTarget::Overflow(_) | MenuTarget::History | MenuTarget::Templates => None,
     });
     let width = if warning.is_some() {
         width.max(60.min(screen.width))
