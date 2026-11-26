@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T10:47:09.919056789Z",
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T10:42:37.468187151Z",
+  "updated_at": "2026-11-26T10:48:29.122762177Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -89,6 +89,14 @@
       "at": "2026-11-26T10:42:37.468185931Z",
       "author": "Jack Roddy/df584c97",
       "text": "The markdown reply's table now has longer filler cells: one wraps onto a second line, one holds inline code and bold, and the numbers vary in width. `assets/tour.gif` is retaken with it, 927 KB.",
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    {
+      "id": "6111964b",
+      "at": "2026-11-26T10:48:29.122760947Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "The tour now drags the Rust block's scroll-bar thumb to pan the long string into view: `drag` from the start of `━━━` to the block's copy button. Panning moves the block's `rust` label and copy button out of view along with the code. A second drag, back to `wrap`, pans home in tmux, but in the ghostty take the block stayed panned. Nobody has found out why yet. `assets/tour.gif` is that take: 40 seconds, 1.0 MB.",
       "commit": "4468c62",
       "branch": "dev"
     }
