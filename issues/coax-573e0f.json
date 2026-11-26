@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-26T07:31:00.63536762Z",
   "defer_until": null,
   "created_at": "2026-11-26T07:15:58.162778858Z",
-  "updated_at": "2026-11-26T07:16:00.63536762Z",
+  "updated_at": "2026-11-26T07:23:13.035465716Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "a7894dd7",
+      "at": "2026-11-26T07:23:13.035464656Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Landed, uncommitted on `dev`:\n\n- `Scenario::input` in `src/scenario.rs`, a list of `InputStep`: `{\"type\": text, \"per_char_ms\": N}`, `{\"key\": name}`, `{\"delay_ms\": N}` and `{\"wait\": \"idle\"}`. A scenario without it parses as before.\n- `Player` in `src/playback.rs` turns the steps into `KeyEvent`s. `Player::new` refuses a key name that is neither a named key nor one character. A `wait idle` step holds until `transcript.in_flight` is false.\n- `session` in `src/app.rs` and `picker::pick` each take the player's next key in their `select!` and pass it to `App::key` or `Picker::key`, the same calls a keyboard event reaches. In the picker a wait counts as idle.\n- `coax --input <scenario.json>` sets it up, and `parse` in `src/main.rs` reads the flag only under `cfg(feature = \"fake-agent\")`. A build without the feature prints the usage line for `--input`.\n- `scenarios/readme/thread.json` has three exchanges, with nine tool calls in the second, and an `input` list that types all three prompts. It plays end to end in tmux at 80 × 28 in about 20 seconds.",
+      "commit": "4468c62",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4468c62",
