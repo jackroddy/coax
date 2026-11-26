@@ -1,6 +1,6 @@
 [package]
 name = "coax"
-version = "0.2.0"
+version = "0.3.0"
 description = "a terminal chat for agents that speak the Agent Client Protocol"
 readme = "README.md"
 exclude = ["CLAUDE.md", ".claude", "tmp-claude", "assets"]
