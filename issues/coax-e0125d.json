@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T07:06:53.732936744Z",
+  "updated_at": "2026-11-26T08:09:52.728842973Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-26T07:06:53.732935824Z",
       "author": "Jack Roddy/df584c97",
       "text": "Recording setup, agreed with Jack and checked by screenshot:\n\n- ghostty at `--font-size=18` with `--window-decoration=none`, in a scratch pane dragged to 80 columns by 24 rows. That is 1695 × 1189 pixels inside ghostty, and decade's `record` captures 1749 × 1242.\n- `record` with no `width`, so the GIF keeps the captured pixels. 1749 is about twice the width of GitHub's README column, which shows it halved with no blur.\n- The scenarios have to fit 24 rows. At 100 columns, the earlier takes left the prompt far to the right of the replies.\n- `record` cannot start together with the program, so ghostty sleeps 6 seconds before starting coax. The blank lead-in is cut afterwards.",
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    {
+      "id": "be675e93",
+      "at": "2026-11-26T08:09:52.728842153Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "`assets/thread.gif` replaces `assets/chat.png` under \"a chat that reads like a text thread\". It plays `scenarios/readme/thread.json` through `--input` (coax-573e0f), with the folded run of tool calls from coax-d1bcb7 and the status line filled in. 1749 × 1403, 18 seconds, 504 KB. The other four GIFs are still to record.",
       "commit": "4468c62",
       "branch": "dev"
     }
