@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T08:29:17.472281104Z",
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T08:26:09.302645121Z",
+  "updated_at": "2026-11-26T08:50:02.651690075Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -42,6 +42,14 @@
       "commit": "4468c62",
       "branch": "dev",
       "edited_at": "2026-11-26T08:26:09.302644671Z"
+    },
+    {
+      "id": "2aee90d1",
+      "at": "2026-11-26T08:50:02.651689335Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Jack changed the plan. The README drops the four GIFs for one longer example GIF that walks through a first session: the picker loads a session, a turn's tool calls fold and a click opens them, a markdown reply gets panned, copied and switched to raw, and two passages are marked and answered. Jack judged coax's drawn pointer (coax-d79a59) too crude, so the mouse in that recording will come from decade's real pointer through decade-82f459. The four GIFs in `assets/` stand until the combined one replaces them.",
+      "commit": "4468c62",
+      "branch": "dev"
     }
   ],
   "stamps": {
