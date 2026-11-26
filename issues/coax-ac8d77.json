@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-26T21:56:47.743596402Z",
   "defer_until": null,
   "created_at": "2026-11-26T21:39:17.839565399Z",
-  "updated_at": "2026-11-26T21:41:47.743596402Z",
+  "updated_at": "2026-11-26T21:49:47.19276735Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "e07b2216",
+      "at": "2026-11-26T21:49:47.19276657Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "The form is built and uncommitted on `dev`. What landed:\n\n- `src/template.rs` parses `[templates.<name>]` through `RawTemplate` and each field through `RawField`, into `Template` and `Field` with a `Kind` per field kind. Each kind carries only its own settings. A key that belongs to another kind, a choice or many without options, a default of the wrong type, or a field table that names no blank in the text is a config error, which `Config::load` reports with the file's path. `Template::fill` writes the answers into the text, or returns the first field that needs an answer. `Template::preview` leaves each unanswered blank as `{name}`.\n- `src/form.rs` adds `Form::template`, which builds the same `Form` the `AskUserQuestion` box draws. It has one field per blank and a typed Other field, keyed `<blank>_custom`, after a choice with `other = true`. `Form::answers` reads the fields back, with a typed Other taking the place of the pick. `Kind::Text` gains `lines`, so Enter adds a line in a `text` or `list` field. Tab and Shift+Tab move a question at a time in any form. In a template form, Enter on a one-line field or a toggle finishes, and so does Ctrl+Enter anywhere.\n- `src/app.rs` holds the open form as `TemplateForm` with its `preview` flag. Ctrl+P and a click on the form's preview button flip it. Finishing fills the prompt with the cursor at the end, or sends it when the template sets `send = true`. The in-place blanks are gone: `blanks`, `chosen_blank`, `next_blank`, `spots`, and the blank drawing in `draw_input`.\n- `src/ui.rs` draws the template form in the space of the agent's form, with the preview under a rule. A template form may grow to all but 10 rows of the screen, where an agent's form stops at half.\n\nThe two open points are settled:\n\n- A `list` field draws as a plain text area, one item per line. The `item` prefix shows only in the preview and in the sent text.\n- A `list` default may be an array of items or a string of lines.\n\nJack's five templates in his `config.toml` use the new syntax. `away` has a list, a choice with Other, a toggle and `preview = true`. Each of the others labels its one field.",
+      "commit": "14c84b0",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "14c84b0",
