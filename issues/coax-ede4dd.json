@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T07:47:08.868636021Z",
-  "updated_at": "2026-11-26T07:47:08.868636021Z",
+  "updated_at": "2026-11-26T19:14:00.003835962Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "a328c05a",
+      "at": "2026-11-26T19:14:00.003835322Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Ten runs of the full suite and eight of the library tests with `-j 4 --test-threads 4` all passed, so the failure did not reproduce. The test helper `script` wrote a shell script, made it executable and ran it as the editor. That is the pattern that fails with ETXTBSY when another test thread forks while the write is still open. The helper now writes the script as plain text and passes `sh <path>` as the editor, so nothing executes a freshly written file. The tests pass. Uncommitted, and closed with the commit that carries it.",
+      "commit": "4468c62",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4468c62",
