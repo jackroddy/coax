@@ -3,7 +3,7 @@
   "title": "editor::tests::the_editor_gets_the_prompt_text_in_the_file fails some runs of the full suite",
   "body": "A background agent saw `the_editor_gets_the_prompt_text_in_the_file` in `src/editor.rs` fail about one run in four of `cargo test --all-features -- --test-threads 4`, while working on coax-d1bcb7. `src/editor.rs` is unchanged since 4468c62. Run alone twelve times, the test passed every time. That points at another test running in parallel with it, perhaps one that sets `VISUAL` or `EDITOR` or shares a file. Nobody has looked further yet.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T07:47:08.868636021Z",
-  "updated_at": "2026-11-26T19:14:00.003835962Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T19:16:12.4161006Z",
+  "closed_at": "2026-11-26T19:16:12.4161006Z",
+  "close_reason": "Landed in 47883db. The notes on this issue describe what changed.",
+  "resolution": "done",
   "notes": [
     {
       "id": "a328c05a",
@@ -32,6 +32,9 @@
       "commit": "4468c62",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "47883db",
+      "branch": "dev"
+    }
   }
 }
