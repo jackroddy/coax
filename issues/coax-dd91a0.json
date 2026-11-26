@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T02:11:00.313180761Z",
-  "updated_at": "2026-11-25T02:11:00.313180761Z",
+  "updated_at": "2026-11-26T22:24:06.370985636Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "25c24b0f",
+      "at": "2026-11-26T22:24:06.370984896Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Jack: this waits on foam being integrated into decade, so that decade has a pane that can show a foam issue.",
+      "commit": "51b776c",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "57bfece",
