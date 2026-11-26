@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-26T20:42:33.543226835Z",
   "defer_until": null,
   "created_at": "2026-11-25T21:42:36.303795033Z",
-  "updated_at": "2026-11-26T20:27:33.543226835Z",
+  "updated_at": "2026-11-26T20:27:33.554011795Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "a49d761f",
+      "at": "2026-11-26T20:27:33.554011085Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Jack chose these answers to the open questions:\n\n- Templates live in `config.toml`, one table per template under `[templates.<name>]`.\n- A template is chosen with `/t <name>`, which the command list offers as the name is typed.\n- Choosing a template places its text in the input with each `{blank}` marked. The cursor starts on the first blank, and Tab moves to the next. This is an edit in place, not a separate form.\n\nThe implementer settles the rest. A template with no blanks is sent at once, as the proposal says. A list blank is ordinary text, so a list is typed one item per line with Alt+Enter.",
+      "commit": "e30bc1d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "98a3304",
