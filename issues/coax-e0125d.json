@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T10:47:09.919056789Z",
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T10:32:09.919056789Z",
+  "updated_at": "2026-11-26T10:34:35.995968362Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -73,6 +73,14 @@
       "at": "2026-11-26T09:27:26.105793486Z",
       "author": "Jack Roddy/df584c97",
       "text": "released at session end",
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    {
+      "id": "7114d00b",
+      "at": "2026-11-26T10:34:35.995967272Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "`assets/tour.gif` is retaken at 80 × 38: 1749 × 1886, 36 seconds with the end hold, 883 KB. The markdown reply now shows two heading levels, bold, italic, inline code, a link, a numbered list, a nested bullet list, a quote, a rule and a table, besides the two code blocks. The marking turn marks the first and third bullets and types a line after each chip, with `Alt+Enter` between them. Two playback changes made that possible: a key step can carry modifiers, and a negative `nth` counts matches from the bottom, so a `mark` click no longer lands on the word `markdown` higher up. coax now copies the frame for target lookup before drawing its pointer, which had hidden the text under the pointer from the next click.",
       "commit": "4468c62",
       "branch": "dev"
     }
