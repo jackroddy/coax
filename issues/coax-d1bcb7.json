@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T07:44:51.9773926Z",
   "defer_until": null,
   "created_at": "2026-11-26T07:29:51.957014838Z",
-  "updated_at": "2026-11-26T07:46:43.766024263Z",
+  "updated_at": "2026-11-26T07:54:58.269527907Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -40,6 +40,14 @@
       "at": "2026-11-26T07:46:43.766023493Z",
       "author": "Jack Roddy/df584c97",
       "text": "The changes from Jack's review landed in `src/ui.rs`, uncommitted on `dev`:\n\n- `tool_rows` draws every call on one line: the icon, the kind, the title, then the location and an edit's `+N −M` while they fit. The `⎿` second row is gone.\n- `tool_icon` is the one table from a call to its icon and colour, so coax-b633ab can swap in ASCII there. The spinner replaces the icon while a call runs, and a red `✗` replaces it when the call fails.\n- `group_row` starts with `✓`, the spinner or `✗`, and colours each kind's count like the kind's icon. It is laid out in the same width as the calls, so its `▸` lines up with theirs.\n- In `build_transcript`, an unfolded run draws its calls `RUN_INDENT` in from the group row, with no blank rows between them. A permission row inside the run is laid out in the narrower width.\n\nThe spinner frame reaches the rows through a `spin` argument on `tool_view`, `tool_block`, `tool_rows`, `group_row` and the subagent helpers.",
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    {
+      "id": "29372c84",
+      "at": "2026-11-26T07:54:58.269526897Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Third round, uncommitted on `dev`:\n\n- `with_marker` gave way to `marker` and `behind_marker` in `src/ui.rs`. The fold arrow now leads the row, ahead of the icon. A call that cannot unfold gets two blank columns there. Every row of a call shifts two columns, and so does its diff or output when unfolded, which now starts at column 6.\n- The group line puts the run's combined diff after the edit count, as in `edit 2 (+3 −2)`. Each count is in the foreground colour, and each kind's name stays in its kind's colour.\n- `progress_line` in `src/header.rs` takes `App::show_plan` and draws `▸ plan` while the plan is hidden and `▾ plan` while it shows, in place of `▶ plan`.",
       "commit": "4468c62",
       "branch": "dev"
     }
