@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T08:29:17.472281104Z",
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T09:18:58.596414606Z",
+  "updated_at": "2026-11-26T09:19:02.32273069Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -63,9 +63,10 @@
       "id": "04ba5d73",
       "at": "2026-11-26T09:18:58.596413876Z",
       "author": "Jack Roddy/df584c97",
-      "text": "`assets/tour.gif` is in the README at the top of `## features`, and the four separate GIFs are deleted. It plays `scenarios/readme/tour.json`, which `input` retimed from 44 to 18 seconds, still with coax's own pointer. 1749 × 1426, 21.7 seconds, 778 KB. The first take came out at 35 columns because of decade-6e (see the decade bug about a window opened after Chrome), and the retake is at 80 × 28. The other scenario files in `scenarios/readme/` stay until Jack decides whether to keep them.",
+      "text": "`assets/tour.gif` is in the README at the top of `## features`, and the four separate GIFs are deleted. It plays `scenarios/readme/tour.json`, which `input` retimed from 44 to 18 seconds, still with coax's own pointer. 1749 × 1426, 21.7 seconds, 778 KB. The first take came out at 35 columns because of decade-893ae9, and the retake is at 80 × 28. The other scenario files in `scenarios/readme/` stay until Jack decides whether to keep them.",
       "commit": "4468c62",
-      "branch": "dev"
+      "branch": "dev",
+      "edited_at": "2026-11-26T09:19:02.32273027Z"
     }
   ],
   "stamps": {
