@@ -1,0 +1,28 @@
+{
+  "id": "coax-af5843",
+  "title": "Circled chip numbers sit apart in tmux and touch in ghostty",
+  "body": "In the marking scenario, a prompt holding two chips and then typed text draws as `① ②  blah` in tmux at 80 × 28 and as `①②blah` in ghostty at font size 18, from the same key presses. The circled digits (U+2460 on) have East Asian ambiguous width, so coax and the terminal may disagree on whether a chip takes one column or two. The README scenario types a leading space to look right in ghostty. Nobody has checked which width coax gives a chip.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T08:26:02.702028657Z",
+  "updated_at": "2026-11-26T08:26:02.702028657Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
