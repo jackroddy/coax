@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T08:29:17.472281104Z",
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T08:14:17.472281104Z",
+  "updated_at": "2026-11-26T08:26:02.691988488Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -31,6 +31,14 @@
       "at": "2026-11-26T08:09:52.728842153Z",
       "author": "Jack Roddy/df584c97",
       "text": "`assets/thread.gif` replaces `assets/chat.png` under \"a chat that reads like a text thread\". It plays `scenarios/readme/thread.json` through `--input` (coax-573e0f), with the folded run of tool calls from coax-d1bcb7 and the status line filled in. 1749 × 1403, 18 seconds, 504 KB. The other four GIFs are still to record.",
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    {
+      "id": "75930f15",
+      "at": "2026-11-26T08:26:02.691987788Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "All four GIFs are recorded and in the README: `assets/picker.gif`, `assets/thread.gif`, `assets/markdown.gif` and `assets/marking.gif`, 140 to 504 KB each, at 1749 pixels wide. The context-window section and `scenarios/readme/context.json` are dropped at Jack`s word, since every GIF shows the context bar. Each GIF plays its scenario through `--input`, mouse steps included (coax-d79a59), in ghostty at font size 18 with `--app-notifications=no-clipboard-copy`, which keeps the copy button from raising a toast in the frame. The picker take runs with `XDG_CONFIG_HOME` pointing at a scratch config whose `[agents.claude]` names `coax-fake-agent` bare. Uncommitted.",
       "commit": "4468c62",
       "branch": "dev"
     }
