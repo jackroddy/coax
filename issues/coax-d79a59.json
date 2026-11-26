@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-26T08:29:42.358957406Z",
   "defer_until": null,
   "created_at": "2026-11-26T08:14:42.349348028Z",
-  "updated_at": "2026-11-26T08:14:42.358957406Z",
+  "updated_at": "2026-11-26T08:20:43.974813742Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "0288a58c",
+      "at": "2026-11-26T08:20:43.974813052Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Landed, uncommitted:\n\n- `InputStep` in `src/scenario.rs` gains `Move`, `Click`, `Double` and `Drag`, each with an optional `ms` for the glide. A `Target` is a string, aimed at the middle of its first match, or `{\"text\", \"nth\", \"at\"}` with `at` one of `start`, `middle` or `end`.\n- `Player` in `src/playback.rs` keeps one queue of timed events for typed keys and mouse glides. `find` resolves a target against the frame coax last drew, one row at a time, so a target cannot span a wrapped line. A target missing from the screen is retried for 3 s (`LOST_FOR`), and then playback logs an error and stops.\n- `Player::draw_pointer` draws `POINTER` (`↖`, reversed) where played mouse input last landed. The session loop in `src/app.rs` keeps the drawn frame while input plays and sends played mouse events through `App::pointer`. The picker takes only played keys.\n- `scenarios/readme/markdown.json`, `marking.json` and `picker.json` carry `input` lists, and each plays end to end at 80 × 28.",
+      "commit": "4468c62",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4468c62",
