@@ -3,20 +3,20 @@
   "title": "The picker puts new sessions beside earlier ones",
   "body": "The picker in `src/picker.rs` opens on a bare `coax` launch. It stacks a `sessions` pane, listing earlier sessions for the folder, above an `agents` pane. Each agent row shows the agent's name and its full command. `j` and `k` move through the sessions and then the agents, and Enter loads a session or starts a new one on an agent.\n\n## Proposal\n\nJack approved this layout:\n\n```text\n coax · pick a session or start a new one\n─────────────────────────────────────────────────────────────────────\n╭ new ───────────╮╭ sessions ───────────────────────────────────────╮\n│ ● claude       ││ › this is a session                claude   23h │\n│ ◐ codex        ││   blah blah blah                   claude    2d │\n│ ✗ gemini       ││   another session                  claude nov 18│\n╰────────────────╯╰─────────────────────────────────────────────────╯\n claude-agent-acp                                     ready · 4 sessions\n j/k move   h/l or tab switch   enter start   esc quit\n```\n\n- The `new` pane, holding the agents, sits on the left at the width of its longest agent name. `sessions` takes the rest, and both run the screen's full height.\n- The focused pane's border and title are in the accent colour, and the other pane is dimmed. Only the focused pane shows `›` and the selection bar. `h` and `l`, or Tab, switch panes. Focus starts on the newest session, or on the `default` agent when there is none.\n- Each agent's row starts with `●` in green when the agent is ready, the spinner while it starts, or a red `✗` when it failed.\n- A dim line under the panes shows the selected agent's command, its status and its session count, or a failed agent's reason.\n- A session row shows the title, then a dim agent name and age, right-aligned. Ages are short: `23h`, `2d`, then the date, as `nov 18`, past a week.\n- A folder with no sessions shows \"no earlier sessions here\", dimmed, in the sessions pane. No configured agents shows the config path in the new pane.\n- Enter on an agent starts a new session at once, as it does today.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/df584c97",
-  "lease_expires": "2026-11-26T19:42:06.865311383Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T19:27:06.855365299Z",
-  "updated_at": "2026-11-26T19:31:51.168278468Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T19:40:30.40414299Z",
+  "closed_at": "2026-11-26T19:40:30.40414299Z",
+  "close_reason": "Landed in a5ec44a.",
+  "resolution": "done",
   "notes": [
     {
       "id": "c6fd7c7e",
@@ -32,6 +32,9 @@
       "commit": "47883db",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "a5ec44a",
+      "branch": "dev"
+    }
   }
 }
