@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T04:22:55.345956701Z",
-  "updated_at": "2026-11-26T11:06:27.451020437Z",
+  "updated_at": "2026-11-26T11:16:01.166125933Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -121,6 +121,14 @@
       "at": "2026-11-26T11:06:27.451018827Z",
       "author": "Jack Roddy/df584c97",
       "text": "First take with decade's real pointer (decade-82f459's `scratch_input`): coax ran on its picker with no `--input`, and decade played a 54-step script of keys, clicks and drags by terminal cell, with `record` drawing the pointer. The cells came from a dry run of the same steps in tmux at 80 × 38, which sends coax SGR mouse sequences and reads each target's cell from `capture-pane`. Cell grid in ghostty at font size 18: 21.1875 × 48.21 pixels, starting 27 pixels in from the left and the top. The run also found why the Rust block stayed panned: the drag back aimed at the first `wrap` on screen, inside the table's \"wraps onto\" cell. It now aims at `wrap pan`, in `tour.json` too. The take is 56 seconds and 1.1 MB, because decade's script waits a fixed time for each agent turn.",
+      "commit": "4468c62",
+      "branch": "dev"
+    },
+    {
+      "id": "8f708dc2",
+      "at": "2026-11-26T11:16:01.166123893Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "`assets/tour.gif` is now driven by decade's `scratch_input` with the real pointer: 30.6 seconds, 1.06 MB, at 80 × 38. How it was made:\n\n- coax runs on its picker with no `--input`. decade plays a 54-step script of keys, clicks and drags by terminal cell, with cell grid 21.1875 × 48.21 pixels starting 27 pixels from the left and the top, ghostty at font size 18.\n- The cells and pauses come from a dry run of the same steps in tmux at 80 × 38, which sends coax SGR mouse sequences, reads each target's cell from `capture-pane`, and times the one long agent turn. The fake agent's other turns end in under 0.6 seconds.\n- The pauses are scaled to 0.55 of the earlier ones, glides to 0.7 and typing to 0.75, which brought the script from 48 to 29.5 seconds.\n- decade draws its recorded pointer as a 17-pixel arrow (decade-b70332), about 8 pixels on GitHub. Each frame gets an arrow three times that size drawn over decade's, found by its black-and-white pattern, before ffmpeg encodes the GIF.\n- The drag that pans the Rust block back now ends at the scroll bar's left end, column 2, so the block returns to no pan.",
       "commit": "4468c62",
       "branch": "dev"
     }
