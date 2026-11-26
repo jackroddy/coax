@@ -3,7 +3,7 @@
   "title": "A scenario's input clicks and drags on text it names on the screen",
   "body": "A scenario's `input` list (coax-573e0f) plays key presses into coax, but the README's markdown and marking GIFs need the mouse: a click on a code block's `wrap pan` or `render raw`, a click on the copy button, a drag over a passage, a click on `mark`. Clicking the real pointer from a script needs `/dev/uinput`, which Jack's account cannot open, and Hyprland has no click command. decade's `record` draws only the real pointer.\n\n## Proposal\n\n- `input` gains mouse steps aimed at text on the screen rather than at coordinates: `{\"move\": <target>}`, `{\"click\": <target>}`, `{\"double\": <target>}` and `{\"drag\": {\"from\": <target>, \"to\": <target>}}`. A target is a string, the first place it appears in the last frame coax drew, or `{\"text\": <string>, \"nth\": N, \"at\": \"start\" | \"end\"}`. A move or drag glides through the cells between, at a pace the step can set.\n- While `--input` plays any mouse step, coax draws a pointer at the played position, so a recording shows where each click lands.\n- Both exist only with the `fake-agent` feature, like `--input`.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T08:14:42.349348028Z",
-  "updated_at": "2026-11-26T19:14:55.660072516Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T19:16:12.406111822Z",
+  "closed_at": "2026-11-26T19:16:12.406111822Z",
+  "close_reason": "Landed in 47883db. The notes on this issue describe what changed.",
+  "resolution": "done",
   "notes": [
     {
       "id": "0288a58c",
@@ -64,6 +64,9 @@
       "commit": "4468c62",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "47883db",
+      "branch": "dev"
+    }
   }
 }
