@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T04:53:49.279007464Z",
-  "updated_at": "2026-11-26T04:56:56.978768297Z",
+  "updated_at": "2026-11-26T20:21:29.257538636Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "14909bb5",
+      "at": "2026-11-26T20:21:29.257538046Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "coax-413c4b is folded into this spike. It asked whether coax could send its style, `styles/coax.md`, through ACP's unstable `system_prompt` field on `session/new` and `session/load`. That field is available behind `unstable_session_system_prompt` in agent-client-protocol-schema 1.15.1, and an agent that supports it advertises `sessionCapabilities.systemPrompt`. Both issues ask how instructions reach a coax session, so one spike answers both: whether the Claude adapter advertises the capability, what `append` does to the lean system prompt, and whether that brings back the `doing_tasks` guidelines.",
+      "commit": "e30bc1d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4468c62",
