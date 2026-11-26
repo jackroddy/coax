@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-26T22:11:58.062113137Z",
   "defer_until": null,
   "created_at": "2026-11-26T21:39:17.839565399Z",
-  "updated_at": "2026-11-26T21:56:58.072893463Z",
+  "updated_at": "2026-11-26T22:04:38.138772938Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -31,6 +31,14 @@
       "at": "2026-11-26T21:56:58.072892813Z",
       "author": "Jack Roddy/df584c97",
       "text": "Jack sent the `away` template from his own coax, filled through the form: four `- blah` tasks, \"an hour\" from the choice, and the questions toggle off. The text arrived as the template describes it.",
+      "commit": "14c84b0",
+      "branch": "dev"
+    },
+    {
+      "id": "92945ed2",
+      "at": "2026-11-26T22:04:38.138771798Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "Jack reversed the `send = true` opt-in: it goes entirely. No template sends by itself. Finishing the form, or choosing a template with no blanks, puts the text in the prompt, and Enter sends it.",
       "commit": "14c84b0",
       "branch": "dev"
     }
