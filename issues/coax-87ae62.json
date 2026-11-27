@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T05:20:52.906566641Z",
-  "updated_at": "2026-11-27T01:48:48.844200011Z",
+  "updated_at": "2026-11-27T01:48:52.629368036Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -38,9 +38,10 @@
       "id": "0ed1a89a",
       "at": "2026-11-27T01:48:48.844199271Z",
       "author": "Jack Roddy/ef0f44df",
-      "text": "Jack settled the open questions on wording and batching. Every notice held during a turn goes to the agent as one prompt, so the agent takes a single turn for all of them. Either form of wording works, going by the trial in note 18009602's follow-up. What remains open is the link to coax-8f3b7d and decade shipping `notify`.",
+      "text": "Jack settled the open questions on wording and batching. Every notice held during a turn goes to the agent as one prompt, so the agent takes a single turn for all of them. Either wording works, as the trial in the note above found. Two things stay open: how this relates to coax-8f3b7d, and decade shipping `notify`.",
       "commit": "51b776c",
-      "branch": "dev"
+      "branch": "dev",
+      "edited_at": "2026-11-27T01:48:52.629367736Z"
     }
   ],
   "stamps": {
