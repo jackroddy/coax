@@ -1,0 +1,10 @@
+{
+  "slug": "readme-tour-recording",
+  "text": "The README's `assets/tour.gif` is recorded by driving coax through decade's `scratch_input` with the real pointer, not by coax's own `--input`. The setup: ghostty at font size 18 in an 80 × 38 scratch pane, a config whose `[agents.claude]` runs `coax-fake-agent scenarios/readme/tour.json`, and a cell grid of 21.1875 × 48.21 pixels from 27 pixels in. The cells came from a tmux dry run, and a 3× arrow was drawn over decade's pointer afterwards. The full method is in the notes on the closed coax-e0125d.",
+  "created_at": "2026-11-27T01:18:24.47640237Z",
+  "updated_at": "2026-11-27T01:18:24.47640237Z",
+  "stamp": {
+    "commit": "51b776c",
+    "branch": "dev"
+  }
+}
