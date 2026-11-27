@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T05:20:52.906566641Z",
-  "updated_at": "2026-11-26T05:20:52.906566641Z",
+  "updated_at": "2026-11-27T01:18:24.454407799Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "18009602",
+      "at": "2026-11-27T01:18:24.454407059Z",
+      "author": "Jack Roddy/df584c97",
+      "text": "decade has not shipped `notify` yet, checked on decade's dev at 9efedb9: decade-channel 0.2.0 has no such message, and decade-9418f7 is still open.\n\nProposed next step, waiting on Jack's go-ahead because it uses his Claude login: test how Claude handles a notice before decade can send one. coax built with `--all-features` can run `--input` against the real adapter in a scratch folder. The test sends a notice-shaped message in two forms, a plain user message starting \"decade:\" and one wrapped in a marker tag such as `<notice from=\"decade\">`. Each form is sent twice:\n\n- while the session is idle\n- during a turn, where the adapter queues it until the next tool result\n\nWhat to watch for in each case is whether Claude treats the notice as information, acts on it, or loses track of the task it was on. The answers settle this issue's open questions on wording and on interrupting a turn.",
+      "commit": "51b776c",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4468c62",
