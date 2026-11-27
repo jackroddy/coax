@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-27T01:35:36.99291487Z",
   "defer_until": null,
   "created_at": "2026-11-26T05:20:52.906566641Z",
-  "updated_at": "2026-11-27T01:20:36.99291487Z",
+  "updated_at": "2026-11-27T01:23:19.297167382Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-27T01:18:24.454407059Z",
       "author": "Jack Roddy/df584c97",
       "text": "decade has not shipped `notify` yet, checked on decade's dev at 9efedb9: decade-channel 0.2.0 has no such message, and decade-9418f7 is still open.\n\nProposed next step, waiting on Jack's go-ahead because it uses his Claude login: test how Claude handles a notice before decade can send one. coax built with `--all-features` can run `--input` against the real adapter in a scratch folder. The test sends a notice-shaped message in two forms, a plain user message starting \"decade:\" and one wrapped in a marker tag such as `<notice from=\"decade\">`. Each form is sent twice:\n\n- while the session is idle\n- during a turn, where the adapter queues it until the next tool result\n\nWhat to watch for in each case is whether Claude treats the notice as information, acts on it, or loses track of the task it was on. The answers settle this issue's open questions on wording and on interrupting a turn.",
+      "commit": "51b776c",
+      "branch": "dev"
+    },
+    {
+      "id": "29f9ad1d",
+      "at": "2026-11-27T01:23:19.297166522Z",
+      "author": "Jack Roddy/ef0f44df",
+      "text": "Ran the test proposed in note 18009602. It used the Claude adapter v0.101.0 with Opus 5.5, through coax with `--allow`, in four new sessions. The notice said that decade's recording of pane \"scratch\" had finished and was saved to `./demo.mp4`. It went in two forms. One was a plain user message starting \"decade:\". The other was wrapped in `<notice from=\"decade\">`.\n\n| case | what Claude did |\n|---|---|\n| idle, plain | Acknowledged it. Said it had not started that recording and would leave the file alone. |\n| idle, tag | Restated it. Said its earlier file listing was out of date if the file landed in this folder. |\n| turn, plain | Finished the task, then reported the notice at the end of its answer. |\n| turn, tag | The same as the plain form. |\n\nThe task in the turn cases was to run `sleep 20`, then `ls -A`, then read `main.rs` and describe it. The notice went in about 4 s into the `sleep`. In both forms Claude ran every step in order and dropped none. The adapter held the notice until the `sleep` returned, as the memory `claude-adapter-queues-prompts` describes. coax drew a single answer that covered both the task and the notice.\n\nWhat this settles, for this adapter and model:\n\n- Wording: either form works. Claude read both as information and took no action of its own. It treated the tagged form no differently from the plain one.\n- Interrupting: a notice sent mid-turn did no harm here. The task was short and mechanical. A long task, and a notice that asks for action, were not tried.\n\nEach case ran once, so each result is one sample.",
       "commit": "51b776c",
       "branch": "dev"
     }
