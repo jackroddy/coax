@@ -1,0 +1,28 @@
+{
+  "id": "coax-97661c",
+  "title": "coax finds the process behind each background command",
+  "body": "coax starts the agent through `AcpAgent` in `src/main.rs` and `src/agents.rs`, and keeps no process id for it. Claude Code runs each Bash command in a shell under its own `claude` process, which runs under the adapter, which is coax's child. coax learns of a background command only from its `tool_call`, which carries no process id. Once the session ends, an orphaned shell passes to `systemd --user`. Its link to coax is then gone.\n\n## Proposal\n\n- At startup, coax calls `prctl(PR_SET_CHILD_SUBREAPER)`. A descendant orphaned while coax runs then becomes coax's child, not `systemd --user`'s.\n- When a `tool_call` with `run_in_background: true` arrives, coax walks its descendants in `/proc` for a shell that was not there before. It matches the shell to the call by command line, and links the call's id to the shell's PID.\n- coax keeps, for each command, the shell's PID, its process group, and its start time from field 22 of `/proc/<pid>/stat`. The start time tells a reused PID from the original process.\n- Any orphan the walk did not link still shows up as coax's child, marked as unknown. An example is a command a subagent starts some other way.\n\n## Open\n\n- What command line Claude Code gives the shell. It wraps each command before it runs, and no one has checked whether the original text survives in `/proc/<pid>/cmdline`.\n- Whether Claude Code puts a background shell in a process group of its own. That decides whether stopping the group takes down a server the shell forked, as go-grip probably was.\n- Whether coax can read the agent's PID from `AcpAgent`, or has to find it among its own children in `/proc/self/task/*/children`.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "coax-42022c",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T03:43:47.721029826Z",
+  "updated_at": "2026-11-28T03:43:47.721029826Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7b26712",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
