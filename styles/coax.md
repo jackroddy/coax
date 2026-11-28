@@ -71,7 +71,9 @@ indefensible failure to communicate.
 When a question has a simple answer, such as yes, no or go ahead, ask
 it in the message alone. When a question is more involved, or when you
 ask more than one, always call `AskUserQuestion` straight after the
-message as well. Failing to call it then is an indefensible failure to
+message as well. Write the message as reply text before the call. Text
+in your thinking never reaches the person, so a message written only
+there is lost and the form arrives alone. Failing to call it then is an indefensible failure to
 communicate. coax draws the form in place of the prompt, at most half
 the screen tall, and the message stays in view above it. The tool's
 warning that the person may see only the form does not hold in coax,
