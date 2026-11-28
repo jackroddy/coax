@@ -9,6 +9,7 @@ use agent_client_protocol::v1::schema::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::prompt::{Keyed, TextField};
 use crate::template::{Answer, Kind as TemplateKind, Opt, Template};
 
 pub struct Form {
@@ -25,6 +26,9 @@ pub struct Form {
     /// Whether the form fills a prompt template, where Enter outside a
     /// many-line field finishes the form.
     pub template: bool,
+
+    /// Columns of a text field's text at the last draw.
+    pub width: usize,
 }
 
 pub struct Field {
@@ -53,7 +57,7 @@ pub enum Kind {
         picked: Vec<bool>,
     },
     Text {
-        text: String,
+        text: TextField,
         number: Option<Number>,
 
         /// Whether Enter adds a line, rather than moving on.
@@ -114,6 +118,7 @@ impl Form {
             cursor: 0,
             error: None,
             template: false,
+            width: 80,
         }
     }
 
@@ -127,7 +132,7 @@ impl Form {
         let mut fields = Vec::new();
         for (key, field) in &template.fields {
             let text = |text: String, lines: bool| Kind::Text {
-                text,
+                text: TextField::new(text),
                 number: None,
                 lines,
             };
@@ -177,6 +182,7 @@ impl Form {
             cursor: 0,
             error: None,
             template: true,
+            width: 80,
         }
     }
 
@@ -197,8 +203,8 @@ impl Form {
                         .map(|(option, _)| option.value.clone())
                         .collect(),
                 )),
-                Kind::Text { text, .. } if text.trim().is_empty() => None,
-                Kind::Text { text, .. } => Some(Answer::Text(text.clone())),
+                Kind::Text { text, .. } if text.text.trim().is_empty() => None,
+                Kind::Text { text, .. } => Some(Answer::Text(text.text.clone())),
                 Kind::Toggle(on) => Some(Answer::Toggle(*on)),
             };
             let key = match field.other_of {
@@ -231,7 +237,7 @@ impl Form {
                         .collect();
                     (!titles.is_empty()).then(|| titles.join(", "))
                 }
-                Kind::Text { text, .. } => typed(text),
+                Kind::Text { text, .. } => typed(&text.text),
                 Kind::Toggle(on) => Some(if *on { "yes" } else { "no" }.to_string()),
             };
             let other = self
@@ -239,7 +245,7 @@ impl Form {
                 .iter()
                 .find(|other| other.other_of == Some(index))
                 .and_then(|other| match &other.kind {
-                    Kind::Text { text, .. } => typed(text),
+                    Kind::Text { text, .. } => typed(&text.text),
                     _ => None,
                 });
             let answer = match (picked, other) {
@@ -261,9 +267,9 @@ impl Form {
         {
             let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
             if *lines {
-                text.push_str(&pasted);
+                text.insert(&pasted);
             } else {
-                text.push_str(&pasted.replace('\n', " "));
+                text.insert(&pasted.replace('\n', " "));
             }
         }
     }
@@ -302,22 +308,39 @@ impl Form {
         let rows = self.rows();
         let row = rows[self.cursor.min(rows.len() - 1)];
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let many_lines =
-            |field: usize| matches!(self.fields[field].kind, Kind::Text { lines: true, .. });
         match key.code {
             KeyCode::Esc => return Some(ElicitationAction::Decline),
+            KeyCode::Tab => {
+                self.cursor = self.next_question_row(&rows, self.cursor);
+                return None;
+            }
+            KeyCode::BackTab => {
+                self.cursor = self.previous_question_row(&rows, self.cursor);
+                return None;
+            }
+            KeyCode::Enter if ctrl && self.template => return self.submit(),
+            _ => {}
+        }
+        if let Row::Text(field) = row
+            && let Kind::Text { text, lines, .. } = &mut self.fields[field].kind
+        {
+            let enter = key.code == KeyCode::Enter
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT);
+            if enter && *lines {
+                text.insert("\n");
+                return None;
+            }
+            if !enter && text.key(&key, self.width) != Keyed::Unused {
+                return None;
+            }
+        }
+        match key.code {
             KeyCode::Up => self.cursor = self.cursor.saturating_sub(1),
             KeyCode::Down => self.cursor = (self.cursor + 1).min(rows.len() - 1),
-            KeyCode::Tab => self.cursor = self.next_question_row(&rows, self.cursor),
-            KeyCode::BackTab => self.cursor = self.previous_question_row(&rows, self.cursor),
-            KeyCode::Enter if ctrl && self.template => return self.submit(),
             KeyCode::Enter => match row {
                 Row::Submit => return self.submit(),
-                Row::Text(field) if many_lines(field) => {
-                    if let Kind::Text { text, .. } = &mut self.fields[field].kind {
-                        text.push('\n');
-                    }
-                }
                 Row::Text(_) | Row::Toggle(_) if self.template => return self.submit(),
                 Row::Option(field, option) => {
                     self.pick(field, option);
@@ -328,25 +351,11 @@ impl Form {
                 Row::Toggle(field) => self.flip(field),
                 Row::Text(_) => self.cursor = self.next_question_row(&rows, self.cursor),
             },
-            KeyCode::Char(' ') if !matches!(row, Row::Text(_)) => match row {
+            KeyCode::Char(' ') => match row {
                 Row::Option(field, option) => self.pick(field, option),
                 Row::Toggle(field) => self.flip(field),
                 _ => {}
             },
-            KeyCode::Char(ch) => {
-                if let Row::Text(field) = row
-                    && let Kind::Text { text, .. } = &mut self.fields[field].kind
-                {
-                    text.push(ch);
-                }
-            }
-            KeyCode::Backspace => {
-                if let Row::Text(field) = row
-                    && let Kind::Text { text, .. } = &mut self.fields[field].kind
-                {
-                    text.pop();
-                }
-            }
             _ => {}
         }
         None
@@ -433,7 +442,7 @@ fn typed(text: &str) -> Option<String> {
 
 fn field(key: &str, property: &ElicitationPropertySchema, required: bool) -> Field {
     let text = |number| Kind::Text {
-        text: String::new(),
+        text: TextField::default(),
         number,
         lines: false,
     };
@@ -453,7 +462,7 @@ fn field(key: &str, property: &ElicitationPropertySchema, required: bool) -> Fie
                     Kind::Choice { options, picked }
                 }
                 None => Kind::Text {
-                    text: string.default.clone().unwrap_or_default(),
+                    text: TextField::new(string.default.clone().unwrap_or_default()),
                     number: None,
                     lines: false,
                 },
@@ -569,9 +578,9 @@ fn value(field: &Field) -> Result<Option<ElicitationContentValue>, String> {
             }
             ElicitationContentValue::StringArray(values)
         }
-        Kind::Text { text, .. } if text.trim().is_empty() => return Ok(None),
+        Kind::Text { text, .. } if text.text.trim().is_empty() => return Ok(None),
         Kind::Text { text, number, .. } => {
-            let text = text.trim();
+            let text = text.text.trim();
             let not_a = |what: &str| format!("{} needs {what}", field.title);
             match number {
                 None => ElicitationContentValue::String(text.to_string()),
@@ -700,7 +709,7 @@ mod tests {
     fn tab_and_shift_tab_move_a_question_at_a_time_and_enter_adds_a_line_in_a_list() {
         let mut form = away();
         assert_eq!(press(&mut form, KeyCode::Enter), None);
-        assert!(matches!(&form.fields[0].kind, Kind::Text { text, .. } if text == "\n"));
+        assert!(matches!(&form.fields[0].kind, Kind::Text { text, .. } if text.text == "\n"));
         press(&mut form, KeyCode::Tab);
         assert_eq!(form.rows()[form.cursor], Row::Option(1, 0));
         press(&mut form, KeyCode::Tab);
@@ -745,6 +754,64 @@ mod tests {
         form.paste("a\nwhile");
         assert_eq!(form.answers()["time"], Answer::Text("a while".to_string()));
         assert_eq!(form.answers()["ask"], Answer::Toggle(false));
+    }
+
+    fn type_in(form: &mut Form, text: &str) {
+        for ch in text.chars() {
+            press(form, KeyCode::Char(ch));
+        }
+    }
+
+    fn typed_text(form: &Form, field: usize) -> &str {
+        match &form.fields[field].kind {
+            Kind::Text { text, .. } => &text.text,
+            _ => panic!("field {field} is not a text field"),
+        }
+    }
+
+    #[test]
+    fn shift_enter_adds_a_line_in_any_text_field_and_enter_still_moves_on() {
+        let mut form = questions();
+        form.cursor = 2;
+        type_in(&mut form, "a");
+        form.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        type_in(&mut form, "b");
+        assert_eq!(typed_text(&form, 1), "a\nb");
+        assert_eq!(form.cursor, 2);
+        press(&mut form, KeyCode::Enter);
+        assert_ne!(form.cursor, 2);
+    }
+
+    #[test]
+    fn the_cursor_keys_edit_a_form_text_field_in_the_middle_of_its_text() {
+        let mut form = questions();
+        form.cursor = 2;
+        type_in(&mut form, "ac");
+        press(&mut form, KeyCode::Left);
+        type_in(&mut form, "b");
+        assert_eq!(typed_text(&form, 1), "abc");
+        press(&mut form, KeyCode::Home);
+        press(&mut form, KeyCode::Delete);
+        assert_eq!(typed_text(&form, 1), "bc");
+        press(&mut form, KeyCode::End);
+        press(&mut form, KeyCode::Backspace);
+        assert_eq!(typed_text(&form, 1), "b");
+        type_in(&mut form, " x");
+        assert_eq!(typed_text(&form, 1), "b x");
+    }
+
+    #[test]
+    fn up_in_a_text_field_moves_a_row_within_it_before_it_leaves_the_field() {
+        let mut form = questions();
+        form.cursor = 2;
+        // rows "one " "two"
+        type_in(&mut form, "one two");
+        form.width = 4;
+        press(&mut form, KeyCode::Up);
+        assert_eq!(form.cursor, 2);
+        assert_eq!(typed_text(&form, 1), "one two");
+        press(&mut form, KeyCode::Up);
+        assert_eq!(form.cursor, 1);
     }
 
     #[test]

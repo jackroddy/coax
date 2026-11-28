@@ -21,7 +21,7 @@ use crate::form::{self, Form, Kind as FormKind, Row};
 use crate::header;
 use crate::links::{self, Kind};
 use crate::palette;
-use crate::prompt;
+use crate::prompt::TextField;
 use crate::select::{self, LineText};
 use crate::session::{self, Child, Entry, Message, Tool};
 use crate::settings::{self, Control};
@@ -32,26 +32,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     frame.buffer_mut().set_style(area, palette::base());
     app.prompt_width = (area.width as usize).saturating_sub(PROMPT_LEAD.len());
-    let input = input_view(
-        &app.input,
-        app.cursor,
-        app.prompt_width,
-        (area.height / 2) as usize,
-    );
+    let input = input_view(&app.prompt, app.prompt_width, (area.height / 2) as usize);
     let plan_rows = if app.show_plan {
         app.transcript.plan.len().min(MAX_PLAN_ROWS)
     } else {
         0
     };
     let form_width = (area.width as usize).saturating_sub(FORM_FRAME);
-    let form = match (&app.form, &app.template_form) {
-        (Some(asked), _) => Some(form_lines(&asked.form, form_width)),
-        (None, Some(open)) => Some(template_form_lines(app, open, form_width)),
-        (None, None) => None,
-    };
     let form_cap = match (&app.form, &app.template_form) {
         (None, Some(_)) => (area.height as usize).saturating_sub(TEMPLATE_FORM_SPARE),
         _ => (area.height / 2) as usize,
+    };
+    let field_rows = form_cap / 2;
+    let text_width = form_width.saturating_sub(FORM_LEAD + FIELD_LEAD);
+    if let Some(asked) = &mut app.form {
+        asked.form.width = text_width;
+    }
+    if let Some(open) = &mut app.template_form {
+        open.form.width = text_width;
+    }
+    let form = match (&app.form, &app.template_form) {
+        (Some(asked), _) => Some(form_lines(&asked.form, form_width, field_rows)),
+        (None, Some(open)) => Some(template_form_lines(app, open, form_width, field_rows)),
+        (None, None) => None,
     };
     let bottom_rows = match &form {
         Some((lines, _)) => (lines.len() + 1).clamp(2, form_cap.max(2)),
@@ -126,7 +129,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         None => {
             draw_rule(frame, upper_rule, THIN);
-            draw_input(frame, prompt_area, &input, prompt_colour(&app.input));
+            draw_input(frame, prompt_area, &input, prompt_colour(&app.prompt.text));
             draw_commands(frame, app, upper_rule);
         }
     }
@@ -2943,8 +2946,9 @@ fn template_form_lines(
     app: &App,
     open: &TemplateForm,
     width: usize,
+    field_rows: usize,
 ) -> (Vec<Line<'static>>, Range<usize>) {
-    let (mut lines, focus) = form_lines(&open.form, width);
+    let (mut lines, focus) = form_lines(&open.form, width, field_rows);
     if let Some(template) = app.templates.get(&open.name)
         && open.preview
     {
@@ -2971,9 +2975,14 @@ const FORM_FRAME: usize = 4;
 /// The columns before each row's text, where the cursor's bar is drawn.
 const FORM_LEAD: usize = 2;
 
-/// The form's lines at `width`, and the lines to keep in view: the cursor's
-/// row through the end of the preview it shows.
-fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, Range<usize>) {
+/// The columns a text field takes from its row: the `› ` before the text and
+/// one after it for the cursor.
+const FIELD_LEAD: usize = 3;
+
+/// The form's lines at `width`, with each text field at most `field_rows`
+/// rows, and the lines to keep in view: the cursor's row through the end of
+/// the preview it shows.
+fn form_lines(form: &Form, width: usize, field_rows: usize) -> (Vec<Line<'static>>, Range<usize>) {
     let rows = form.rows();
     let preview = form.focused_preview();
     let room = width.saturating_sub(FORM_LEAD);
@@ -3017,7 +3026,7 @@ fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, Range<usize>) {
         }
         shown_field = field;
         let focused = index == form.cursor;
-        let row_lines = form_row(form, *row, room, focused);
+        let row_lines = form_row(form, *row, room, field_rows, focused);
         if focused {
             focus = lines.len()..lines.len() + row_lines.len();
         }
@@ -3106,8 +3115,15 @@ fn title_column(options: &[form::Choice], mark: usize, width: usize) -> Option<u
     (cap > mark).then(|| (widest + mark).min(cap))
 }
 
-/// A row's lines, at most `width` wide.
-fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'static>> {
+/// A row's lines, at most `width` wide, and a text field's at most
+/// `field_rows` rows.
+fn form_row(
+    form: &Form,
+    row: Row,
+    width: usize,
+    field_rows: usize,
+    focused: bool,
+) -> Vec<Line<'static>> {
     let accent = Style::new().fg(palette::get().accent);
     let green = Style::new().fg(palette::get().green);
     let mark_style = |on: bool| if on { green } else { dim() };
@@ -3166,30 +3182,45 @@ fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'sta
             let FormKind::Text { text, .. } = &field.kind else {
                 return Vec::new();
             };
-            let room = width.saturating_sub(2);
-            let mut pieces: Vec<Vec<Span>> = if text.is_empty() {
+            let room = width.saturating_sub(FIELD_LEAD);
+            let block = Style::new().add_modifier(Modifier::REVERSED);
+            let pieces: Vec<Vec<Span>> = if text.is_empty() {
                 let placeholder = match (&field.description, field.other_of) {
                     (Some(description), Some(_)) => description.as_str(),
                     _ => "type here",
                 };
-                wrap(placeholder, room)
+                let mut pieces: Vec<Vec<Span>> = wrap(placeholder, room)
                     .into_iter()
                     .map(|piece| vec![Span::styled(piece, dim())])
-                    .collect()
+                    .collect();
+                if focused {
+                    pieces[0].insert(0, Span::styled(" ", block));
+                }
+                pieces
             } else {
-                prompt::wrap_rows(text, room)
-                    .into_iter()
-                    .map(|range| vec![Span::raw(text[range].to_string())])
+                let view = text.view(room, field_rows);
+                view.rows
+                    .iter()
+                    .enumerate()
+                    .map(|(n, range)| {
+                        let shown = &text.text[range.clone()];
+                        if !focused || n != view.cursor.1 {
+                            return vec![Span::raw(shown.to_string())];
+                        }
+                        let at = text.cursor.clamp(range.start, range.end) - range.start;
+                        let under = shown[at..].chars().next().map_or(0, char::len_utf8);
+                        let under = &shown[at..at + under];
+                        vec![
+                            Span::raw(shown[..at].to_string()),
+                            Span::styled(
+                                if under.is_empty() { " " } else { under }.to_string(),
+                                block,
+                            ),
+                            Span::raw(shown[at + under.len()..].to_string()),
+                        ]
+                    })
                     .collect()
             };
-            if focused {
-                let block = Span::styled(" ", Style::new().add_modifier(Modifier::REVERSED));
-                if text.is_empty() {
-                    pieces[0].insert(0, block);
-                } else if let Some(last) = pieces.last_mut() {
-                    last.push(block);
-                }
-            }
             pieces
                 .into_iter()
                 .enumerate()
@@ -3272,7 +3303,7 @@ fn draw_commands(frame: &mut Frame, app: &App, above: Rect) {
     if list.is_empty() {
         return;
     }
-    let colour = prompt_colour(&app.input).unwrap_or_default();
+    let colour = prompt_colour(&app.prompt.text).unwrap_or_default();
     let screen = frame.area();
     let shown = list.len().min(6).min((above.y as usize).saturating_sub(2));
     if shown == 0 {
@@ -3364,26 +3395,19 @@ impl InputView {
     }
 }
 
-fn input_view(text: &str, cursor: usize, width: usize, max_rows: usize) -> InputView {
-    let all = prompt::wrap_rows(text, width);
-    let shown = max_rows.max(PROMPT_ROWS);
-    let cursor = cursor.min(text.len());
-    let cursor_row = prompt::cursor_row(&all, cursor);
-    let skipped = all.len().saturating_sub(shown).min(cursor_row);
-    let end = (skipped + shown).min(all.len());
-    let rows = all[skipped..end]
-        .iter()
-        .map(|row| text[row.clone()].to_string())
-        .collect();
-    let column = text[all[cursor_row].start..cursor].width();
-    let cursor = (
-        (PROMPT_LEAD.len() + column.min(width.max(1) - 1)) as u16,
-        (cursor_row - skipped) as u16,
-    );
+fn input_view(field: &TextField, width: usize, max_rows: usize) -> InputView {
+    let view = field.view(width, max_rows.max(PROMPT_ROWS));
     InputView {
-        rows,
-        starts_here: skipped == 0,
-        cursor,
+        rows: view
+            .rows
+            .iter()
+            .map(|row| field.text[row.clone()].to_string())
+            .collect(),
+        starts_here: view.starts_here,
+        cursor: (
+            (PROMPT_LEAD.len() + view.cursor.0) as u16,
+            view.cursor.1 as u16,
+        ),
     }
 }
 
@@ -3603,6 +3627,14 @@ mod tests {
 
     use super::*;
 
+    fn view_of(text: &str, cursor: usize, width: usize, max_rows: usize) -> InputView {
+        let field = TextField {
+            text: text.to_string(),
+            cursor,
+        };
+        input_view(&field, width, max_rows)
+    }
+
     fn yellow_rule(line: &Line) -> usize {
         let yellow = Style::new().fg(palette::get().yellow);
         line.spans
@@ -3785,41 +3817,41 @@ mod tests {
 
     #[test]
     fn the_cursor_follows_trailing_spaces() {
-        let view = input_view("hi   ", 5, 20, 10);
+        let view = view_of("hi   ", 5, 20, 10);
         assert_eq!(view.cursor, (2 + 5, 0));
     }
 
     #[test]
     fn a_row_filled_to_the_edge_puts_the_cursor_on_a_new_row() {
-        let view = input_view("abcd", 4, 4, 10);
+        let view = view_of("abcd", 4, 4, 10);
         assert_eq!(view.rows, ["abcd", ""]);
         assert_eq!(view.cursor, (2, 1));
     }
 
     #[test]
     fn the_cursor_sits_where_the_text_is_edited_across_wrapped_rows() {
-        let view = input_view("one two three", 4, 9, 10);
+        let view = view_of("one two three", 4, 9, 10);
         assert_eq!(view.rows, ["one two ", "three"]);
         assert_eq!(view.cursor, (2 + 4, 0));
-        let view = input_view("one two three", 8, 9, 10);
+        let view = view_of("one two three", 8, 9, 10);
         assert_eq!(view.cursor, (2, 1));
-        let view = input_view("one two three", 0, 9, 10);
+        let view = view_of("one two three", 0, 9, 10);
         assert_eq!(view.cursor, (2, 0));
     }
 
     #[test]
     fn a_cursor_on_a_break_space_past_the_width_draws_at_the_end_of_its_row() {
-        let view = input_view("one two three", 7, 7, 10);
+        let view = view_of("one two three", 7, 7, 10);
         assert_eq!(view.rows, ["one two ", "three"]);
         assert_eq!(view.cursor, (2 + 6, 0));
-        let view = input_view("one two three", 8, 7, 10);
+        let view = view_of("one two three", 8, 7, 10);
         assert_eq!(view.cursor, (2, 1));
     }
 
     #[test]
     fn the_window_follows_a_cursor_above_the_last_rows() {
         let text = "a ".repeat(30);
-        let view = input_view(&text, 0, 4, 5);
+        let view = view_of(&text, 0, 4, 5);
         assert!(view.starts_here);
         assert_eq!(view.cursor, (2, 0));
     }
@@ -3860,7 +3892,7 @@ mod tests {
             panic!("the second step asks the questions");
         };
         let form = Form::new(asked.message.clone(), &asked.requested_schema);
-        let (lines, _) = form_lines(&form, 80);
+        let (lines, _) = form_lines(&form, 80, 10);
         let span = |text: &str| {
             lines
                 .iter()
@@ -3905,36 +3937,36 @@ mod tests {
     #[test]
     fn the_cursor_column_is_the_display_width_before_it() {
         let text = "日本語";
-        let view = input_view(text, 6, 20, 10);
+        let view = view_of(text, 6, 20, 10);
         assert_eq!(view.cursor, (2 + 4, 0));
-        let view = input_view("a😀b", 5, 20, 10);
+        let view = view_of("a😀b", 5, 20, 10);
         assert_eq!(view.cursor, (2 + 3, 0));
-        let view = input_view("日本語日", 12, 6, 10);
+        let view = view_of("日本語日", 12, 6, 10);
         assert_eq!(view.cursor, (2 + 2, 1));
     }
 
     #[test]
     fn the_cursor_is_on_the_row_after_a_newline() {
-        let view = input_view("ab\ncd", 3, 20, 10);
+        let view = view_of("ab\ncd", 3, 20, 10);
         assert_eq!(view.cursor, (2, 1));
-        let view = input_view("ab\ncd", 2, 20, 10);
+        let view = view_of("ab\ncd", 2, 20, 10);
         assert_eq!(view.cursor, (4, 0));
-        let view = input_view("ab\n", 3, 20, 10);
+        let view = view_of("ab\n", 3, 20, 10);
         assert_eq!(view.cursor, (2, 1));
         assert_eq!(view.height(), 2);
     }
 
     #[test]
     fn the_prompt_shows_one_row_for_short_text_and_grows_with_long_text() {
-        assert_eq!(input_view("", 0, 20, 10).height(), 1);
+        assert_eq!(view_of("", 0, 20, 10).height(), 1);
         let long = "word ".repeat(12);
-        assert_eq!(input_view(&long, long.len(), 20, 10).height(), 4);
+        assert_eq!(view_of(&long, long.len(), 20, 10).height(), 4);
     }
 
     #[test]
     fn past_the_limit_the_prompt_shows_the_last_rows() {
         let text = "a ".repeat(30);
-        let view = input_view(&text, text.len(), 4, 5);
+        let view = view_of(&text, text.len(), 4, 5);
         assert_eq!(view.rows.len(), 5);
         assert!(!view.starts_here);
         assert_eq!(view.cursor.1, 4);

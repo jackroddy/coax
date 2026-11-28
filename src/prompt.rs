@@ -1,16 +1,148 @@
-//! Cursor movement over the prompt's text. A cursor is a byte index on a char
-//! boundary, a line is the text between newlines, and a row is the part of a
-//! line drawn on one screen row.
+//! The text field every editable box uses: the prompt and a form's text
+//! fields. A cursor is a byte index on a char boundary, a line is the text
+//! between newlines, and a row is the part of a line drawn on one screen row.
 
 use std::ops::Range;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub fn char_before(text: &str, at: usize) -> usize {
+/// Editable text and the cursor in it.
+#[derive(Default)]
+pub struct TextField {
+    pub text: String,
+
+    /// The cursor's byte index into `text`, always on a char boundary.
+    pub cursor: usize,
+}
+
+/// What a key did to a field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Keyed {
+    Unused,
+    Moved,
+    Edited,
+}
+
+/// The rows of a field shown at a width and a most-rows limit.
+#[derive(Debug, PartialEq, Eq)]
+pub struct View {
+    /// Each shown row's byte range in the text.
+    pub rows: Vec<Range<usize>>,
+
+    /// Whether `rows` begins at the start of the text.
+    pub starts_here: bool,
+
+    /// Column and row of the cursor among `rows`.
+    pub cursor: (usize, usize),
+}
+
+impl TextField {
+    /// A field holding `text`, with the cursor at its end.
+    pub fn new(text: String) -> TextField {
+        TextField {
+            cursor: text.len(),
+            text,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.cursor = 0;
+    }
+
+    /// The text, leaving the field empty.
+    pub fn take(&mut self) -> String {
+        self.cursor = 0;
+        std::mem::take(&mut self.text)
+    }
+
+    /// Insert `text` at the cursor and move the cursor past it.
+    pub fn insert(&mut self, text: &str) {
+        self.text.insert_str(self.cursor, text);
+        self.cursor += text.len();
+    }
+
+    /// Remove the text from `from` to the cursor, or from the cursor to
+    /// `from` when that is later.
+    fn remove_between(&mut self, from: usize) {
+        let (start, end) = (from.min(self.cursor), from.max(self.cursor));
+        self.text.replace_range(start..end, "");
+        self.cursor = start;
+    }
+
+    /// Handle an editing key, with the text drawn `width` columns wide.
+    pub fn key(&mut self, key: &KeyEvent, width: usize) -> Keyed {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let text = &self.text;
+        let at = self.cursor;
+        let moved = match key.code {
+            KeyCode::Up => row_above(text, at, width),
+            KeyCode::Down => row_below(text, at, width),
+            KeyCode::Left if alt || ctrl => Some(word_before(text, at)),
+            KeyCode::Char('b') if alt => Some(word_before(text, at)),
+            KeyCode::Right if alt || ctrl => Some(word_after(text, at)),
+            KeyCode::Char('f') if alt => Some(word_after(text, at)),
+            KeyCode::Left => Some(char_before(text, at)),
+            KeyCode::Right => Some(char_after(text, at)),
+            KeyCode::Char('a') if ctrl => Some(line_start(text, at)),
+            KeyCode::Char('e') if ctrl => Some(line_end(text, at)),
+            KeyCode::Home => Some(0),
+            KeyCode::End => Some(text.len()),
+            _ => None,
+        };
+        if let Some(at) = moved {
+            self.cursor = at;
+            return Keyed::Moved;
+        }
+        match key.code {
+            KeyCode::Enter if alt || shift => self.insert("\n"),
+            KeyCode::Backspace => self.remove_between(char_before(text, at)),
+            KeyCode::Delete => self.remove_between(char_after(text, at)),
+            KeyCode::Char('w') if ctrl => self.remove_between(word_before(text, at)),
+            KeyCode::Char('k') if ctrl => {
+                let mut end = line_end(text, at);
+                if end == at {
+                    end = char_after(text, end);
+                }
+                self.remove_between(end);
+            }
+            KeyCode::Char('u') if ctrl => self.clear(),
+            KeyCode::Char(ch) if !ctrl => self.insert(ch.encode_utf8(&mut [0; 4])),
+            _ => return Keyed::Unused,
+        }
+        Keyed::Edited
+    }
+
+    /// The rows shown at `width` columns and at most `max_rows` rows, a
+    /// window that keeps the cursor's row in view.
+    pub fn view(&self, width: usize, max_rows: usize) -> View {
+        let all = wrap_rows(&self.text, width);
+        let shown = max_rows.max(1);
+        let cursor = self.cursor.min(self.text.len());
+        let cursor_row = cursor_row(&all, cursor);
+        let skipped = all.len().saturating_sub(shown).min(cursor_row);
+        let end = (skipped + shown).min(all.len());
+        let column = self.text[all[cursor_row].start..cursor].width();
+        View {
+            rows: all[skipped..end].to_vec(),
+            starts_here: skipped == 0,
+            cursor: (column.min(width.max(1) - 1), cursor_row - skipped),
+        }
+    }
+}
+
+fn char_before(text: &str, at: usize) -> usize {
     text[..at].char_indices().next_back().map_or(0, |(i, _)| i)
 }
 
-pub fn char_after(text: &str, at: usize) -> usize {
+fn char_after(text: &str, at: usize) -> usize {
     text[at..]
         .chars()
         .next()
@@ -18,7 +150,7 @@ pub fn char_after(text: &str, at: usize) -> usize {
 }
 
 /// The start of the word before `at`. A word is a run of non-whitespace.
-pub fn word_before(text: &str, at: usize) -> usize {
+fn word_before(text: &str, at: usize) -> usize {
     let head = text[..at].trim_end();
     head.rfind(char::is_whitespace).map_or(0, |i| {
         i + text[i..].chars().next().map_or(1, char::len_utf8)
@@ -26,7 +158,7 @@ pub fn word_before(text: &str, at: usize) -> usize {
 }
 
 /// The end of the word after `at`.
-pub fn word_after(text: &str, at: usize) -> usize {
+fn word_after(text: &str, at: usize) -> usize {
     let tail = &text[at..];
     let word_start = tail.len() - tail.trim_start().len();
     let word = &tail[word_start..];
@@ -34,23 +166,23 @@ pub fn word_after(text: &str, at: usize) -> usize {
     at + word_start + word_len
 }
 
-pub fn line_start(text: &str, at: usize) -> usize {
+fn line_start(text: &str, at: usize) -> usize {
     text[..at].rfind('\n').map_or(0, |i| i + 1)
 }
 
-pub fn line_end(text: &str, at: usize) -> usize {
+fn line_end(text: &str, at: usize) -> usize {
     text[at..].find('\n').map_or(text.len(), |i| at + i)
 }
 
 /// The same display column one drawn row up, or `None` on the first row.
-pub fn row_above(text: &str, at: usize, width: usize) -> Option<usize> {
+fn row_above(text: &str, at: usize, width: usize) -> Option<usize> {
     let rows = wrap_rows(text, width);
     let row = cursor_row(&rows, at);
     Some(same_column(text, &rows, row, row.checked_sub(1)?, at))
 }
 
 /// The same display column one drawn row down, or `None` on the last row.
-pub fn row_below(text: &str, at: usize, width: usize) -> Option<usize> {
+fn row_below(text: &str, at: usize, width: usize) -> Option<usize> {
     let rows = wrap_rows(text, width);
     let row = cursor_row(&rows, at);
     if row + 1 == rows.len() {
@@ -61,7 +193,7 @@ pub fn row_below(text: &str, at: usize, width: usize) -> Option<usize> {
 
 /// The row of `rows` the cursor at `at` is drawn on. Where two rows of one
 /// line meet, the cursor is drawn at the start of the second.
-pub fn cursor_row(rows: &[Range<usize>], at: usize) -> usize {
+fn cursor_row(rows: &[Range<usize>], at: usize) -> usize {
     rows.iter().rposition(|row| row.start <= at).unwrap_or(0)
 }
 
@@ -100,7 +232,7 @@ fn at_column(line: &str, wanted: usize) -> usize {
 /// column past `width` if need be. Each line, ended by a newline, starts a new
 /// row. A word longer than a row is split, and the last row is never full, so
 /// the cursor always has a column after the last character.
-pub fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
+fn wrap_rows(text: &str, width: usize) -> Vec<Range<usize>> {
     let width = width.max(1);
     let mut rows = Vec::new();
     let mut offset = 0;
@@ -149,6 +281,107 @@ fn wrap_line(line: &str, offset: usize, width: usize, rows: &mut Vec<Range<usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn press(field: &mut TextField, code: KeyCode, modifiers: KeyModifiers) -> Keyed {
+        field.key(&KeyEvent::new(code, modifiers), 80)
+    }
+
+    #[test]
+    fn typed_characters_go_in_at_the_cursor() {
+        let mut field = TextField::new("ac".to_string());
+        press(&mut field, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(
+            press(&mut field, KeyCode::Char('b'), KeyModifiers::NONE),
+            Keyed::Edited
+        );
+        assert_eq!(field.text, "abc");
+        assert_eq!(field.cursor, 2);
+        press(&mut field, KeyCode::Enter, KeyModifiers::SHIFT);
+        press(&mut field, KeyCode::Enter, KeyModifiers::ALT);
+        assert_eq!(field.text, "ab\n\nc");
+    }
+
+    #[test]
+    fn the_deleting_keys_remove_a_char_a_word_or_to_the_end_of_the_line() {
+        let mut field = TextField::new("one two\nthree".to_string());
+        press(&mut field, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(field.text, "one two\nthre");
+        press(&mut field, KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert_eq!(field.text, "one two\n");
+        press(&mut field, KeyCode::Home, KeyModifiers::NONE);
+        press(&mut field, KeyCode::Delete, KeyModifiers::NONE);
+        assert_eq!(field.text, "ne two\n");
+        press(&mut field, KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(field.text, "\n");
+        press(&mut field, KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(field.text, "");
+        field.insert("again");
+        press(&mut field, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert!(field.is_empty());
+        assert_eq!(field.cursor, 0);
+    }
+
+    #[test]
+    fn a_move_leaves_the_text_and_up_on_the_first_row_is_not_used() {
+        let mut field = TextField::new("one two".to_string());
+        let moves = [
+            (KeyCode::Left, KeyModifiers::CONTROL, 4),
+            (KeyCode::Char('b'), KeyModifiers::ALT, 0),
+            (KeyCode::Char('f'), KeyModifiers::ALT, 3),
+            (KeyCode::Right, KeyModifiers::NONE, 4),
+            (KeyCode::Char('e'), KeyModifiers::CONTROL, 7),
+            (KeyCode::Char('a'), KeyModifiers::CONTROL, 0),
+            (KeyCode::End, KeyModifiers::NONE, 7),
+        ];
+        for (code, modifiers, at) in moves {
+            assert_eq!(press(&mut field, code, modifiers), Keyed::Moved);
+            assert_eq!(field.cursor, at, "{code:?}");
+        }
+        assert_eq!(field.text, "one two");
+        assert_eq!(
+            press(&mut field, KeyCode::Up, KeyModifiers::NONE),
+            Keyed::Unused
+        );
+        assert_eq!(
+            press(&mut field, KeyCode::Down, KeyModifiers::NONE),
+            Keyed::Unused
+        );
+        assert_eq!(
+            press(&mut field, KeyCode::Esc, KeyModifiers::NONE),
+            Keyed::Unused
+        );
+    }
+
+    #[test]
+    fn a_view_gives_each_shown_row_as_a_byte_range_of_the_text() {
+        // rows "one two " "three " "four"
+        let field = TextField {
+            text: "one two three four".to_string(),
+            cursor: 10,
+        };
+        let view = field.view(9, 10);
+        assert_eq!(view.rows, [0..8, 8..14, 14..18]);
+        assert!(view.starts_here);
+        assert_eq!(view.cursor, (2, 1));
+    }
+
+    #[test]
+    fn a_view_shorter_than_the_text_keeps_the_cursors_row_in_view() {
+        // rows "ab" "cd" "ef" "gh" "", two at a time
+        let mut field = TextField::new("ab\ncd\nef\ngh\n".to_string());
+        let view = field.view(20, 2);
+        assert_eq!(view.rows, [9..11, 12..12]);
+        assert!(!view.starts_here);
+        assert_eq!(view.cursor, (0, 1));
+        field.cursor = 4;
+        let view = field.view(20, 2);
+        assert_eq!(view.rows, [3..5, 6..8]);
+        assert_eq!(view.cursor, (1, 0));
+        field.cursor = 0;
+        let view = field.view(20, 2);
+        assert_eq!(view.rows, [0..2, 3..5]);
+        assert!(view.starts_here);
+    }
 
     #[test]
     fn a_step_over_a_multibyte_char_lands_on_a_boundary() {

@@ -48,6 +48,12 @@ command line, the keys, and the scenario format the fake agent reads.
   A note typed in a question's Other field follows its pick. A form
   closed without an answer reads `dismissed` in yellow, with "no answer"
   under each question.
+- A form's text field edits as the prompt does. The arrow keys, Home and
+  End, the word moves and the deleting keys work anywhere in its text.
+  The cursor is drawn where the next character goes. A long answer wraps,
+  and the field grows to at most half the rows the form may take.
+  Shift+Enter or Alt+Enter adds a line in any text field. Enter keeps its
+  meaning in a form.
 
 ### Changed
 

@@ -33,7 +33,7 @@ use crate::glyphs;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
 use crate::playback::Player;
-use crate::prompt;
+use crate::prompt::{Keyed, TextField};
 use crate::registry;
 use crate::report::{self, Reporter, Snapshot};
 use crate::select::{self, Point, Selection};
@@ -131,10 +131,7 @@ pub struct Queued {
 
 pub struct App {
     pub transcript: Transcript,
-    pub input: String,
-
-    /// The cursor's byte index into `input`, always on a char boundary.
-    pub cursor: usize,
+    pub prompt: TextField,
 
     /// The prompts sent in this run, oldest first, each with its send time.
     pub history: Vec<(String, Option<Time>)>,
@@ -615,8 +612,8 @@ impl App {
             .drain(..)
             .map(|queued| session::sent_text(&queued.text, &queued.marks))
             .collect();
-        if !self.input.is_empty() {
-            texts.push(std::mem::take(&mut self.input));
+        if !self.prompt.text.is_empty() {
+            texts.push(self.prompt.take());
         }
         self.set_input(texts.join("\n\n"));
     }
@@ -1155,11 +1152,11 @@ impl App {
     /// typed.
     pub fn popup(&self) -> Vec<Candidate> {
         let busy = self.permission.is_some() || self.menu.is_some() || self.confirm.is_some();
-        if busy || self.command_closed || !command::naming(&self.input) {
+        if busy || self.command_closed || !command::naming(&self.prompt.text) {
             return Vec::new();
         }
         command::matches(
-            &self.input,
+            &self.prompt.text,
             &self.settings.settings(),
             &self.settings.commands,
             &self.templates,
@@ -1183,7 +1180,7 @@ impl App {
             None => None,
         };
         let Some(entry) = entry else {
-            self.unknown = command::unknown(&self.input);
+            self.unknown = command::unknown(&self.prompt.text);
             if let Some(text) = &self.unknown {
                 log::info("notice", json!({"text": text}));
             }
@@ -1237,7 +1234,7 @@ impl App {
                 self.choose_template(&name)
             }
             Kind::Edit => {
-                let text = match command::parse(&self.input) {
+                let text = match command::parse(&self.prompt.text) {
                     command::Typed::Coax { input, .. } => input.to_string(),
                     _ => String::new(),
                 };
@@ -1247,7 +1244,7 @@ impl App {
                 if self.transcript.in_flight || self.exited {
                     return Action::None;
                 }
-                let input = match command::parse(&self.input) {
+                let input = match command::parse(&self.prompt.text) {
                     command::Typed::Agent { input, .. } => input.trim_end().to_string(),
                     _ => String::new(),
                 };
@@ -1266,7 +1263,7 @@ impl App {
     fn complete(&mut self, forward: bool) {
         let typed = match &self.command_cycle {
             Some((typed, _)) => typed.clone(),
-            None => self.input.clone(),
+            None => self.prompt.text.clone(),
         };
         let list = command::matches(
             &typed,
@@ -1292,24 +1289,24 @@ impl App {
     /// The command named exactly by the prompt's text, if there is one.
     /// `/t ` with no name yet names the template list.
     fn exact(&self, settings: &[Setting]) -> Option<Candidate> {
-        if let Some(name) = command::template_name(&self.input) {
+        if let Some(name) = command::template_name(&self.prompt.text) {
             let all = &self.settings.commands;
             return if name.trim().is_empty() {
                 command::matches("/t", settings, all, &self.templates)
                     .into_iter()
                     .find(|candidate| candidate.kind == Kind::Templates)
             } else {
-                command::matches(&self.input, settings, all, &self.templates)
+                command::matches(&self.prompt.text, settings, all, &self.templates)
                     .into_iter()
                     .find(|candidate| candidate.fill == format!("/t {}", name.trim_end()))
             };
         }
-        let name = match command::parse(&self.input) {
+        let name = match command::parse(&self.prompt.text) {
             command::Typed::Coax { name, .. } | command::Typed::Agent { name, .. } => name,
             command::Typed::Plain => return None,
         };
         command::matches(
-            &self.input,
+            &self.prompt.text,
             settings,
             &self.settings.commands,
             &self.templates,
@@ -1376,27 +1373,15 @@ impl App {
     }
 
     fn set_input(&mut self, text: String) {
-        self.cursor = text.len();
-        self.input = text;
+        self.prompt = TextField::new(text);
     }
 
     fn clear_input(&mut self) {
-        self.input.clear();
-        self.cursor = 0;
+        self.prompt.clear();
     }
 
     fn insert(&mut self, text: &str) {
-        self.input.insert_str(self.cursor, text);
-        self.cursor += text.len();
-        self.edited();
-    }
-
-    /// Remove the text from `from` to the cursor, or from the cursor to
-    /// `from` when that is later.
-    fn remove_between(&mut self, from: usize) {
-        let (start, end) = (from.min(self.cursor), from.max(self.cursor));
-        self.input.replace_range(start..end, "");
-        self.cursor = start;
+        self.prompt.insert(text);
         self.edited();
     }
 
@@ -1431,7 +1416,7 @@ impl App {
         self.command_closed = false;
         self.command_picked = false;
         self.command_cycle = None;
-        let input = &self.input;
+        let input = &self.prompt.text;
         self.marks
             .retain(|mark| input.contains(session::chip(mark.number)));
     }
@@ -1474,7 +1459,7 @@ impl App {
         // since fonts draw a circled digit wider than the one column it
         // takes and it would run into the cursor or the text beside it
         let mut chip = String::new();
-        if self.input[..self.cursor]
+        if self.prompt.text[..self.prompt.cursor]
             .chars()
             .last()
             .is_some_and(|ch| !ch.is_whitespace())
@@ -1623,11 +1608,10 @@ impl App {
 
     /// Enter on plain text: send the prompt, or queue it behind a turn.
     fn send(&mut self, now: Instant) -> Action {
-        if self.exited || self.input.trim().is_empty() {
+        if self.exited || self.prompt.text.trim().is_empty() {
             return Action::None;
         }
-        let text = std::mem::take(&mut self.input);
-        self.cursor = 0;
+        let text = self.prompt.take();
         self.remember(&text, Some(Time::now()));
         self.scroll = 0;
         let marks = self.take_marks(&text);
@@ -1707,7 +1691,7 @@ impl App {
         let armed = self.guard.take().filter(|guard| guard.until > now);
         let exit = match key.code {
             KeyCode::Char('c') if ctrl => Some(GuardKey::CtrlC),
-            KeyCode::Char('d') if ctrl && self.input.is_empty() => Some(GuardKey::CtrlD),
+            KeyCode::Char('d') if ctrl && self.prompt.text.is_empty() => Some(GuardKey::CtrlD),
             _ => None,
         };
         if let Some(exit) = exit {
@@ -1722,7 +1706,7 @@ impl App {
                 });
                 return self.cancel();
             }
-            if exit == GuardKey::CtrlC && !self.input.is_empty() {
+            if exit == GuardKey::CtrlC && !self.prompt.text.is_empty() {
                 self.clear_input();
                 return Action::None;
             }
@@ -1802,12 +1786,7 @@ impl App {
                 self.show_plan = !self.show_plan;
                 Action::None
             }
-            KeyCode::Char('g') if ctrl => Action::Edit(self.input.clone()),
-            KeyCode::Char('u') if ctrl => {
-                self.clear_input();
-                self.edited();
-                Action::None
-            }
+            KeyCode::Char('g') if ctrl => Action::Edit(self.prompt.text.clone()),
             KeyCode::Esc if self.transcript.in_flight => {
                 if armed.is_some_and(|guard| guard.key == GuardKey::Esc) {
                     return self.cancel();
@@ -1818,88 +1797,20 @@ impl App {
                 });
                 Action::None
             }
-            KeyCode::Enter if alt || shift => {
-                self.insert("\n");
-                Action::None
-            }
-            KeyCode::Up if self.input.is_empty() => {
+            KeyCode::Up if self.prompt.is_empty() => {
                 if !self.history.is_empty() {
                     self.open_history();
                 }
                 Action::None
             }
-            KeyCode::Up => {
-                if let Some(at) = prompt::row_above(&self.input, self.cursor, self.prompt_width) {
-                    self.cursor = at;
-                }
-                Action::None
-            }
-            KeyCode::Down => {
-                if let Some(at) = prompt::row_below(&self.input, self.cursor, self.prompt_width) {
-                    self.cursor = at;
-                }
-                Action::None
-            }
-            KeyCode::Enter if !matches!(command::parse(&self.input), command::Typed::Plain) => {
+            KeyCode::Enter
+                if !alt
+                    && !shift
+                    && !matches!(command::parse(&self.prompt.text), command::Typed::Plain) =>
+            {
                 self.enter_command()
             }
-            KeyCode::Enter => self.send(now),
-            KeyCode::Backspace => {
-                self.remove_between(prompt::char_before(&self.input, self.cursor));
-                Action::None
-            }
-            KeyCode::Delete => {
-                self.remove_between(prompt::char_after(&self.input, self.cursor));
-                Action::None
-            }
-            KeyCode::Char('w') if ctrl => {
-                self.remove_between(prompt::word_before(&self.input, self.cursor));
-                Action::None
-            }
-            KeyCode::Char('k') if ctrl => {
-                let mut end = prompt::line_end(&self.input, self.cursor);
-                if end == self.cursor {
-                    end = prompt::char_after(&self.input, end);
-                }
-                self.remove_between(end);
-                Action::None
-            }
-            KeyCode::Left if alt || ctrl => {
-                self.cursor = prompt::word_before(&self.input, self.cursor);
-                Action::None
-            }
-            KeyCode::Char('b') if alt => {
-                self.cursor = prompt::word_before(&self.input, self.cursor);
-                Action::None
-            }
-            KeyCode::Right if alt || ctrl => {
-                self.cursor = prompt::word_after(&self.input, self.cursor);
-                Action::None
-            }
-            KeyCode::Char('f') if alt => {
-                self.cursor = prompt::word_after(&self.input, self.cursor);
-                Action::None
-            }
-            KeyCode::Left => {
-                self.cursor = prompt::char_before(&self.input, self.cursor);
-                Action::None
-            }
-            KeyCode::Right => {
-                self.cursor = prompt::char_after(&self.input, self.cursor);
-                Action::None
-            }
-            KeyCode::Char('a') if ctrl => {
-                self.cursor = prompt::line_start(&self.input, self.cursor);
-                Action::None
-            }
-            KeyCode::Char('e') if ctrl => {
-                self.cursor = prompt::line_end(&self.input, self.cursor);
-                Action::None
-            }
-            KeyCode::Home => {
-                self.cursor = 0;
-                Action::None
-            }
+            KeyCode::Enter if !alt && !shift => self.send(now),
             KeyCode::PageUp => {
                 self.scroll += self.page;
                 Action::None
@@ -1908,19 +1819,16 @@ impl App {
                 self.scroll = self.scroll.saturating_sub(self.page);
                 Action::None
             }
-            KeyCode::End if self.input.is_empty() => {
+            KeyCode::End if self.prompt.is_empty() => {
                 self.scroll = 0;
                 Action::None
             }
-            KeyCode::End => {
-                self.cursor = self.input.len();
+            _ => {
+                if self.prompt.key(&key, self.prompt_width) == Keyed::Edited {
+                    self.edited();
+                }
                 Action::None
             }
-            KeyCode::Char(ch) if !ctrl => {
-                self.insert(ch.encode_utf8(&mut [0; 4]));
-                Action::None
-            }
-            _ => Action::None,
         }
     }
 }
@@ -2076,8 +1984,7 @@ async fn session(
     };
     let mut app = App {
         transcript: Transcript::default(),
-        input: String::new(),
-        cursor: 0,
+        prompt: TextField::default(),
         history: Vec::new(),
         scroll: 0,
         show_plan: false,
@@ -2481,7 +2388,7 @@ mod tests {
         }
         assert_eq!(sent, ["hi"]);
         assert!(app.transcript.in_flight);
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
         app.transcript
             .finished(agent_client_protocol::v1::schema::StopReason::EndTurn);
         for _ in 0..10 {
@@ -2494,8 +2401,7 @@ mod tests {
     fn app() -> App {
         App {
             transcript: Transcript::default(),
-            input: String::new(),
-            cursor: 0,
+            prompt: TextField::default(),
             history: Vec::new(),
             scroll: 0,
             show_plan: false,
@@ -3484,7 +3390,7 @@ mod tests {
         typed(&mut app, "/nope");
         app.key(enter(), Instant::now());
         assert_eq!(app.unknown.as_deref(), Some("no command /nope"));
-        assert_eq!(app.input, "/nope");
+        assert_eq!(app.prompt.text, "/nope");
         assert!(app.menu.is_none());
     }
 
@@ -3494,7 +3400,7 @@ mod tests {
         typed(&mut app, "//nope");
         app.key(enter(), Instant::now());
         assert_eq!(app.unknown.as_deref(), Some("no agent command //nope"));
-        assert_eq!(app.input, "//nope");
+        assert_eq!(app.prompt.text, "//nope");
     }
 
     #[test]
@@ -3752,9 +3658,9 @@ mod tests {
     #[test]
     fn ctrl_c_with_text_in_the_prompt_clears_it() {
         let mut app = app();
-        app.input = "half a thought".to_string();
+        app.prompt.text = "half a thought".to_string();
         assert!(matches!(app.key(ctrl('c'), Instant::now()), Action::None));
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
         assert!(app.guard.is_none());
     }
 
@@ -3804,10 +3710,10 @@ mod tests {
     #[test]
     fn ctrl_d_with_text_in_the_prompt_does_nothing() {
         let mut app = app();
-        app.input = "text".to_string();
+        app.prompt.text = "text".to_string();
         assert!(matches!(app.key(ctrl('d'), Instant::now()), Action::None));
         assert!(app.guard.is_none());
-        assert_eq!(app.input, "text");
+        assert_eq!(app.prompt.text, "text");
     }
 
     #[test]
@@ -4409,7 +4315,7 @@ mod tests {
         app.transcript.prompt("one".to_string());
         type_text(&mut app, "two");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.input, "");
+        assert_eq!(app.prompt.text, "");
         done(&mut app, StopReason::EndTurn);
         assert_eq!(app.take_outbox().as_deref(), Some("two"));
         assert_eq!(users(&app), ["one", "two"]);
@@ -4478,7 +4384,7 @@ mod tests {
         type_text(&mut app, "four");
         assert!(matches!(press(&mut app, KeyCode::Esc), Action::None));
         assert!(matches!(press(&mut app, KeyCode::Esc), Action::Cancel));
-        assert_eq!(app.input, "two\n\nthree\n\nfour");
+        assert_eq!(app.prompt.text, "two\n\nthree\n\nfour");
         assert!(app.waiting.is_empty());
         for _ in 0..3 {
             done(&mut app, StopReason::Cancelled);
@@ -4538,7 +4444,7 @@ mod tests {
             "{screen}"
         );
         type_text(&mut app, "x");
-        assert_eq!(app.input, "");
+        assert_eq!(app.prompt.text, "");
         press(&mut app, KeyCode::Esc);
         assert!(app.form.is_none());
         assert!(matches!(answer.try_recv(), Ok(ElicitationAction::Decline)));
@@ -5039,13 +4945,13 @@ mod tests {
             app.menu.as_ref().map(|menu| &menu.target),
             Some(MenuTarget::Templates)
         ));
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
         assert!(app.menu.is_none());
         let open = app.template_form.as_ref().unwrap();
         assert_eq!(open.name, "away");
         assert_eq!(open.form.cursor, 0);
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
     }
 
     #[test]
@@ -5065,7 +4971,7 @@ mod tests {
         type_text(&mut app, "/t away");
         press(&mut app, KeyCode::Enter);
         assert!(app.template_form.is_some());
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
     }
 
     #[test]
@@ -5073,13 +4979,13 @@ mod tests {
         let mut app = with_templates();
         type_text(&mut app, "/t ");
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.input, "/t away");
+        assert_eq!(app.prompt.text, "/t away");
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.input, "/t bookkeeping");
+        assert_eq!(app.prompt.text, "/t bookkeeping");
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.input, "/t check");
+        assert_eq!(app.prompt.text, "/t check");
         press(&mut app, KeyCode::BackTab);
-        assert_eq!(app.input, "/t bookkeeping");
+        assert_eq!(app.prompt.text, "/t bookkeeping");
     }
 
     #[test]
@@ -5096,10 +5002,10 @@ mod tests {
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
         assert!(app.template_form.is_none());
         assert_eq!(
-            app.input,
+            app.prompt.text,
             "- fix it\n- write notes\n\nI'm out for an hour. Any questions?"
         );
-        assert_eq!(app.cursor, app.input.len());
+        assert_eq!(app.prompt.cursor, app.prompt.text.len());
     }
 
     #[test]
@@ -5113,7 +5019,10 @@ mod tests {
         press(&mut app, KeyCode::Down);
         type_text(&mut app, "a while");
         ctrl_enter(&mut app);
-        assert_eq!(app.input, "- fix it\n\nI'm out for a while. Any questions?");
+        assert_eq!(
+            app.prompt.text,
+            "- fix it\n\nI'm out for a while. Any questions?"
+        );
     }
 
     fn ctrl_enter(app: &mut App) -> Action {
@@ -5133,7 +5042,7 @@ mod tests {
         let open = app.template_form.as_ref().unwrap();
         assert_eq!(open.form.error.as_deref(), Some("tasks needs an answer"));
         assert_eq!(open.form.cursor, 0);
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
     }
 
     #[test]
@@ -5144,7 +5053,7 @@ mod tests {
         type_text(&mut app, "fix it");
         press(&mut app, KeyCode::Esc);
         assert!(app.template_form.is_none());
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
     }
 
     #[test]
@@ -5180,7 +5089,7 @@ mod tests {
         assert_eq!(open.form.error.as_deref(), Some("time needs an answer"));
         assert!(matches!(
             &open.form.fields[0].kind,
-            crate::form::Kind::Text { text, .. } if text == "one\ntwo"
+            crate::form::Kind::Text { text, .. } if text.text == "one\ntwo"
         ));
     }
 
@@ -5189,7 +5098,10 @@ mod tests {
         let mut app = with_templates();
         type_text(&mut app, "/t bookkeeping");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.input, "Do commits, cleanups, and foam bookkeeping");
+        assert_eq!(
+            app.prompt.text,
+            "Do commits, cleanups, and foam bookkeeping"
+        );
         assert!(app.template_form.is_none());
         let sent = press(&mut app, KeyCode::Enter);
         assert!(
@@ -5212,7 +5124,7 @@ mod tests {
             let finished = app.key(KeyEvent::new(KeyCode::Enter, modifiers), Instant::now());
             assert!(matches!(finished, Action::None));
             assert!(app.template_form.is_none());
-            assert_eq!(app.input, "check the bar");
+            assert_eq!(app.prompt.text, "check the bar");
             let sent = press(&mut app, KeyCode::Enter);
             assert!(matches!(sent, Action::Prompt(text) if text == "check the bar"));
         }
@@ -5241,7 +5153,7 @@ mod tests {
         let mut app = with_commands();
         type_text(&mut app, "/mo");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.input, "/mo");
+        assert_eq!(app.prompt.text, "/mo");
         assert!(app.menu.is_none());
         type_text(&mut app, "de");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
@@ -5249,7 +5161,7 @@ mod tests {
             &app.menu.as_ref().unwrap().target,
             MenuTarget::Setting(id) if id == "mode"
         ));
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
     }
 
     #[test]
@@ -5257,17 +5169,17 @@ mod tests {
         let mut app = with_commands();
         type_text(&mut app, "/mo");
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.input, "/mode");
+        assert_eq!(app.prompt.text, "/mode");
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.input, "/model");
+        assert_eq!(app.prompt.text, "/model");
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.input, "/mode");
+        assert_eq!(app.prompt.text, "/mode");
         press(&mut app, KeyCode::BackTab);
-        assert_eq!(app.input, "/model");
+        assert_eq!(app.prompt.text, "/model");
         type_text(&mut app, "x");
         press(&mut app, KeyCode::Backspace);
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.input, "/model");
+        assert_eq!(app.prompt.text, "/model");
     }
 
     #[test]
@@ -5307,7 +5219,7 @@ mod tests {
         let mut app = with_commands();
         type_text(&mut app, "/nothing");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.input, "/nothing");
+        assert_eq!(app.prompt.text, "/nothing");
         assert!(app.menu.is_none());
     }
 
@@ -5349,7 +5261,7 @@ mod tests {
         };
         assert_eq!(text, "/compact");
         assert!(app.confirm.is_none());
-        assert!(app.input.is_empty());
+        assert!(app.prompt.text.is_empty());
     }
 
     #[test]
@@ -5371,7 +5283,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Esc);
         assert!(app.confirm.is_none());
-        assert_eq!(app.input, "//compact");
+        assert_eq!(app.prompt.text, "//compact");
     }
 
     #[test]
@@ -5406,24 +5318,24 @@ mod tests {
         let mut app = with_input("ac");
         chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
         type_text(&mut app, "b");
-        assert_eq!(app.input, "abc");
-        assert_eq!(app.cursor, 2);
+        assert_eq!(app.prompt.text, "abc");
+        assert_eq!(app.prompt.cursor, 2);
     }
 
     #[test]
     fn left_and_right_step_over_whole_multibyte_chars() {
         let mut app = with_input("a日😀");
         chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 4);
+        assert_eq!(app.prompt.cursor, 4);
         chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 1);
+        assert_eq!(app.prompt.cursor, 1);
         type_text(&mut app, "é");
-        assert_eq!(app.input, "aé日😀");
+        assert_eq!(app.prompt.text, "aé日😀");
         chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 6);
+        assert_eq!(app.prompt.cursor, 6);
         chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
-        assert_eq!(app.cursor, app.input.len());
+        assert_eq!(app.prompt.cursor, app.prompt.text.len());
     }
 
     #[test]
@@ -5431,47 +5343,47 @@ mod tests {
         let mut app = with_input("a日b");
         chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
-        assert_eq!(app.input, "ab");
-        assert_eq!(app.cursor, 1);
+        assert_eq!(app.prompt.text, "ab");
+        assert_eq!(app.prompt.cursor, 1);
         chord(&mut app, KeyCode::Delete, KeyModifiers::NONE);
-        assert_eq!(app.input, "a");
+        assert_eq!(app.prompt.text, "a");
         chord(&mut app, KeyCode::Delete, KeyModifiers::NONE);
-        assert_eq!(app.input, "a");
+        assert_eq!(app.prompt.text, "a");
         chord(&mut app, KeyCode::Home, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
-        assert_eq!(app.input, "a");
+        assert_eq!(app.prompt.text, "a");
     }
 
     #[test]
     fn alt_arrows_and_alt_b_f_jump_by_words() {
         let mut app = with_input("one 日本 three");
         chord(&mut app, KeyCode::Left, KeyModifiers::ALT);
-        assert_eq!(app.cursor, 11);
+        assert_eq!(app.prompt.cursor, 11);
         chord(&mut app, KeyCode::Char('b'), KeyModifiers::ALT);
-        assert_eq!(app.cursor, 4);
+        assert_eq!(app.prompt.cursor, 4);
         chord(&mut app, KeyCode::Right, KeyModifiers::ALT);
-        assert_eq!(app.cursor, 10);
+        assert_eq!(app.prompt.cursor, 10);
         chord(&mut app, KeyCode::Char('f'), KeyModifiers::ALT);
-        assert_eq!(app.cursor, app.input.len());
-        assert_eq!(app.input, "one 日本 three");
+        assert_eq!(app.prompt.cursor, app.prompt.text.len());
+        assert_eq!(app.prompt.text, "one 日本 three");
     }
 
     #[test]
     fn ctrl_a_and_ctrl_e_go_to_the_ends_of_the_line() {
         let mut app = with_input("日本");
         chord(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
-        assert_eq!(app.cursor, 0);
+        assert_eq!(app.prompt.cursor, 0);
         chord(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
-        assert_eq!(app.cursor, 6);
+        assert_eq!(app.prompt.cursor, 6);
     }
 
     #[test]
     fn home_and_end_go_to_the_ends_of_a_prompt_with_text() {
         let mut app = with_input("hello");
         chord(&mut app, KeyCode::Home, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 0);
+        assert_eq!(app.prompt.cursor, 0);
         chord(&mut app, KeyCode::End, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 5);
+        assert_eq!(app.prompt.cursor, 5);
     }
 
     #[test]
@@ -5493,11 +5405,11 @@ mod tests {
             chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
         }
         chord(&mut app, KeyCode::Char('w'), KeyModifiers::CONTROL);
-        assert_eq!(app.input, "keep  tail");
-        assert_eq!(app.cursor, 5);
+        assert_eq!(app.prompt.text, "keep  tail");
+        assert_eq!(app.prompt.cursor, 5);
         chord(&mut app, KeyCode::Char('w'), KeyModifiers::CONTROL);
-        assert_eq!(app.input, " tail");
-        assert_eq!(app.cursor, 0);
+        assert_eq!(app.prompt.text, " tail");
+        assert_eq!(app.prompt.cursor, 0);
     }
 
     #[test]
@@ -5506,8 +5418,8 @@ mod tests {
         chord(&mut app, KeyCode::Home, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
-        assert_eq!(app.input, "日");
-        assert_eq!(app.cursor, 3);
+        assert_eq!(app.prompt.text, "日");
+        assert_eq!(app.prompt.cursor, 3);
     }
 
     #[test]
@@ -5515,17 +5427,17 @@ mod tests {
         let mut app = with_input("日本語");
         chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Char('u'), KeyModifiers::CONTROL);
-        assert!(app.input.is_empty());
-        assert_eq!(app.cursor, 0);
+        assert!(app.prompt.text.is_empty());
+        assert_eq!(app.prompt.cursor, 0);
     }
 
     #[test]
     fn sending_a_prompt_resets_the_cursor() {
         let mut app = with_input("hi");
         chord(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 0);
+        assert_eq!(app.prompt.cursor, 0);
         type_text(&mut app, "x");
-        assert_eq!(app.input, "x");
+        assert_eq!(app.prompt.text, "x");
     }
 
     #[test]
@@ -5542,8 +5454,8 @@ mod tests {
             Instant::now(),
         );
         assert!(matches!(action, Action::None));
-        assert_eq!(app.input, "a\n\nb");
-        assert_eq!(app.cursor, 3);
+        assert_eq!(app.prompt.text, "a\n\nb");
+        assert_eq!(app.prompt.cursor, 3);
         assert!(app.transcript.entries.is_empty());
     }
 
@@ -5551,18 +5463,18 @@ mod tests {
     fn up_and_down_move_between_lines_keeping_the_column() {
         let mut app = with_input("日本語\nabcdef\nx");
         chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 10 + 1);
+        assert_eq!(app.prompt.cursor, 10 + 1);
         chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 0);
+        assert_eq!(app.prompt.cursor, 0);
         chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 0);
+        assert_eq!(app.prompt.cursor, 0);
         chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Right, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Down, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 10 + 4);
+        assert_eq!(app.prompt.cursor, 10 + 4);
         chord(&mut app, KeyCode::Down, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Down, KeyModifiers::NONE);
-        assert_eq!(app.cursor, app.input.len());
+        assert_eq!(app.prompt.cursor, app.prompt.text.len());
     }
 
     #[test]
@@ -5570,8 +5482,8 @@ mod tests {
         let mut app = with_input("one line");
         chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Down, KeyModifiers::NONE);
-        assert_eq!(app.cursor, 8);
-        assert_eq!(app.input, "one line");
+        assert_eq!(app.prompt.cursor, 8);
+        assert_eq!(app.prompt.text, "one line");
     }
 
     #[test]
@@ -5579,14 +5491,14 @@ mod tests {
         let mut app = with_input("one\ntwo\nthree");
         chord(&mut app, KeyCode::Up, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
-        assert_eq!(app.cursor, 4);
+        assert_eq!(app.prompt.cursor, 4);
         chord(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
-        assert_eq!(app.cursor, 7);
+        assert_eq!(app.prompt.cursor, 7);
         chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
         chord(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
-        assert_eq!(app.input, "one\ntw\nthree");
+        assert_eq!(app.prompt.text, "one\ntw\nthree");
         chord(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
-        assert_eq!(app.input, "one\ntwthree");
+        assert_eq!(app.prompt.text, "one\ntwthree");
     }
 
     #[test]
@@ -5594,8 +5506,8 @@ mod tests {
         let mut app = with_input("ad");
         chord(&mut app, KeyCode::Left, KeyModifiers::NONE);
         app.paste("b\r\nc\ré\n");
-        assert_eq!(app.input, "ab\nc\né\nd");
-        assert_eq!(app.cursor, "ab\nc\né\n".len());
+        assert_eq!(app.prompt.text, "ab\nc\né\nd");
+        assert_eq!(app.prompt.cursor, "ab\nc\né\n".len());
         assert!(app.transcript.entries.is_empty());
     }
 
@@ -5603,7 +5515,7 @@ mod tests {
     fn a_pasted_command_name_is_not_run() {
         let mut app = with_input("");
         app.paste("/mo");
-        assert_eq!(app.input, "/mo");
+        assert_eq!(app.prompt.text, "/mo");
         assert!(app.transcript.entries.is_empty());
     }
 
@@ -5612,7 +5524,7 @@ mod tests {
         let mut app = with_input("x");
         open_permission(&mut app);
         app.paste("lost");
-        assert_eq!(app.input, "x");
+        assert_eq!(app.prompt.text, "x");
     }
 
     #[test]
@@ -5637,7 +5549,7 @@ mod tests {
             panic!("enter on /edit should open the editor");
         };
         assert_eq!(text, "two words");
-        assert_eq!(app.input, "/edit two words");
+        assert_eq!(app.prompt.text, "/edit two words");
     }
 
     #[test]
@@ -5649,17 +5561,17 @@ mod tests {
             panic!("ctrl+g should open the editor");
         };
         assert_eq!(text, "a long\ndraft");
-        assert_eq!(app.input, "a long\ndraft");
+        assert_eq!(app.prompt.text, "a long\ndraft");
         app.finish_edit(Ok("rewritten".to_string()));
-        assert_eq!(app.input, "rewritten");
+        assert_eq!(app.prompt.text, "rewritten");
     }
 
     #[test]
     fn the_editors_text_replaces_the_prompt_with_the_cursor_at_the_end() {
         let mut app = with_input("/edit");
         app.finish_edit(Ok("日本\nsecond".to_string()));
-        assert_eq!(app.input, "日本\nsecond");
-        assert_eq!(app.cursor, app.input.len());
+        assert_eq!(app.prompt.text, "日本\nsecond");
+        assert_eq!(app.prompt.cursor, app.prompt.text.len());
         assert!(app.transcript.entries.is_empty());
     }
 
@@ -5669,7 +5581,7 @@ mod tests {
         app.finish_edit(Err(
             "vi exited with exit status: 1, prompt unchanged".to_string()
         ));
-        assert_eq!(app.input, "/edit draft");
+        assert_eq!(app.prompt.text, "/edit draft");
         assert!(matches!(
             app.transcript.entries.last(),
             Some(Entry::Notice(text)) if text.contains("prompt unchanged")
@@ -5682,7 +5594,7 @@ mod tests {
         type_text(&mut app, "/log");
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.unknown.as_deref(), Some("no log file"));
-        assert_eq!(app.input, "");
+        assert_eq!(app.prompt.text, "");
 
         let dir = std::env::temp_dir().join(format!("coax-log-command-{}", std::process::id()));
         log::open(&dir, log::Level::Info, 0, 1);
@@ -5719,7 +5631,7 @@ mod tests {
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::Down);
         assert!(app.menu.is_none());
-        assert_eq!(app.input, "draft");
+        assert_eq!(app.prompt.text, "draft");
         app.clear_input();
         press(&mut app, KeyCode::Up);
         assert!(matches!(
@@ -5727,7 +5639,7 @@ mod tests {
             Some(MenuTarget::History)
         ));
         press(&mut app, KeyCode::Enter);
-        assert_eq!(app.input, "second");
+        assert_eq!(app.prompt.text, "second");
     }
 
     fn history_texts(app: &App) -> Vec<&str> {
@@ -5797,8 +5709,8 @@ mod tests {
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
         assert!(app.menu.is_none());
-        assert_eq!(app.input, "middle\nwith a second line");
-        assert_eq!(app.cursor, app.input.len());
+        assert_eq!(app.prompt.text, "middle\nwith a second line");
+        assert_eq!(app.prompt.cursor, app.prompt.text.len());
     }
 
     #[test]
@@ -5808,7 +5720,7 @@ mod tests {
         open_history(&mut app);
         press(&mut app, KeyCode::Esc);
         assert!(app.menu.is_none());
-        assert_eq!(app.input, "");
+        assert_eq!(app.prompt.text, "");
     }
 
     #[test]
@@ -5968,7 +5880,7 @@ mod tests {
         ));
         type_text(&mut app, "hello");
         assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-        assert_eq!(app.input, "hello");
+        assert_eq!(app.prompt.text, "hello");
         let screen = header_rows_all(&mut app, 100);
         assert!(
             screen.contains("agent exited: exit status: 3: boom"),
@@ -6362,7 +6274,7 @@ mod tests {
         mark_drag(&mut app, "one", "two");
         let button = app.mark_button.expect("a mark button");
         assert!(matches!(click(&mut app, button.x, button.y), Action::None));
-        assert_eq!(app.input, "① ");
+        assert_eq!(app.prompt.text, "① ");
         assert!(app.selection.is_none());
         let screen = header_rows_all(&mut app, 80);
         assert!(screen.contains("① one two three"), "{screen}");
@@ -6486,7 +6398,7 @@ mod tests {
         press(&mut app, KeyCode::Backspace);
         assert_eq!(app.marks.len(), 1);
         press(&mut app, KeyCode::Backspace);
-        assert_eq!(app.input, "");
+        assert_eq!(app.prompt.text, "");
         assert!(app.marks.is_empty());
     }
 
