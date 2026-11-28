@@ -1,0 +1,30 @@
+{
+  "id": "coax-2cc770",
+  "title": "coax records running background commands in its runtime directory",
+  "body": "coax keeps nothing about a background command once coax exits. Its subreaper hold ends at exit, so a command still running passes to `systemd --user`, and a later coax has no way to know it exists.\n\n## Proposal\n\n- coax writes each background command it finds to `$XDG_RUNTIME_DIR/coax/background.json`. An entry holds the PID, the process group, the start time from `/proc/<pid>/stat`, the command, the folder, the session id and the launch time.\n- Each coax that starts reads the file and keeps only the entries whose PID is alive with the same start time. Several coax processes may share the file, so each write goes through a lock or a rename.\n- When coax quits with background commands still running, it leaves their entries in the file.\n\n## Open\n\n- Whether coax should offer to stop its own commands when it quits, or leave that to the box that lists them.\n- What coax uses when `XDG_RUNTIME_DIR` is unset.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "coax-42022c",
+  "blocked_by": [
+    "coax-97661c"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T03:43:47.732260202Z",
+  "updated_at": "2026-11-28T03:43:47.732260202Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7b26712",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
