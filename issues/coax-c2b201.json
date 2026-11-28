@@ -3,7 +3,7 @@
   "title": "A text field selects by drag and copies with Ctrl+C",
   "body": "The conversation has drag selection, word and line picking on a double or triple click, and copy on release, all in `src/select.rs`. A text field has none of it.\n\n## Proposal\n\n- A drag in a text field selects from the press to the pointer. A double click selects the word under the pointer, and a triple click selects its line. Word and line picking share their rules with `select::word_at` and `select::line_at`.\n- Ctrl+C with a selection copies it and does nothing else. Without a selection, Ctrl+C keeps its meanings (cancel the turn, clear the prompt, arm the exit guard). Releasing the button does not copy.\n- Typing replaces the selection. Backspace and Delete remove it. A cursor key drops it and moves from its matching end.\n- The selection draws in the `selection` colour as the conversation's does. A text field has no mark button.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "coax-cd257e",
@@ -12,19 +12,22 @@
   ],
   "related": [],
   "assignee": "Jack Roddy/4c7bb0a4",
-  "lease_expires": "2026-11-28T07:17:24.696804706Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-28T06:34:37.123684981Z",
-  "updated_at": "2026-11-28T07:02:24.696804706Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-28T07:34:35.746461727Z",
+  "closed_at": "2026-11-28T07:34:35.746461727Z",
+  "close_reason": "ff3aa02 on dev adds the selection to `TextField`, with `select::word_char` shared with the conversation.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "23bb4f1",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "ff3aa02",
+      "branch": "dev"
+    }
   }
 }
