@@ -42,8 +42,10 @@ handling a Claude login. Until Jack says otherwise, coax stays out of logins.
 
 **Releases.** Jack says when a release is, never Claude. Until he does, the
 version in `Cargo.toml` stays where it is and changelog entries accumulate
-under `## [Unreleased]` with `### Added` / `### Changed` / `### Removed`
-headings and no date. The version heading, the date, the `Cargo.toml` bump and
+under `## [Unreleased]` with no date. Entries take any Keep a Changelog
+heading, in its order: `### Added`, `### Changed`, `### Deprecated`,
+`### Removed`, `### Fixed` and `### Security`. A bug fix goes under
+`### Fixed`, never under `### Changed`. The version heading, the date, the `Cargo.toml` bump and
 the compare link at the foot of the changelog are all part of the release
 commit. Release tags are annotated and named `v<version>`. Publish from `main`
 after `dev` merges in, with a clean tree.

@@ -133,24 +133,16 @@ command line, the keys, and the scenario format the fake agent reads.
   of its line, where it sat at the right edge. A call that cannot unfold
   keeps the arrow's two columns blank, so the icons line up. The plan row's
   `▶` is now `▸` while the plan is hidden and `▾` while it shows.
-- The context bar draws its used part as `━` and the rest as `─`, where it
-  drew `▰` and `▱`. Many fonts lack those two, and the terminal's fallback
-  glyphs overlapped their neighbours or lost their outline. The bar turns
-  yellow at 25%, orange at 50% and red at 75%. It used to turn yellow past
-  80% and red past 95%.
+- The context bar turns yellow at 25%, orange at 50% and red at 75%. It
+  used to turn yellow past 80% and red past 95%.
 - `cargo install coax` installs `coax` alone. `coax-fake-agent` builds only
   with the `fake-agent` feature, as in `cargo build --features fake-agent`.
-- A notice is drawn as one line, with its newlines as spaces. coax no
-  longer aborts when a notice holding newlines, such as a rate-limit error
-  from the agent, is cut to fit the screen.
 - Hovering a `foam:` link shows the issue laid out as markdown. The title
   is bold, with a dim line of its type, status and priority under it. The
   body and notes follow. coax runs `foam show <id> --json` for the popup,
   whatever hover command `config.toml` gives the foam scheme.
-- coax draws an agent's question form in a box with an accent border. Long
-  text in the form wraps inside the box, where coax used to cut it short.
-  The text typed into a field wraps too. Each question's header shows its
-  number, as in "Storage · 1 of 2". A question's option descriptions start
+- coax draws an agent's question form in a box with an accent border.
+  Each question's header shows its number, as in "Storage · 1 of 2". A question's option descriptions start
   in one column past its widest option title. A multiple choice marks
   its options `□` and `■`, as a single choice marks its own `○` and `●`.
 - A question's Other field is drawn as the question's last row. Enter on a
@@ -162,6 +154,17 @@ command line, the keys, and the scenario format the fake agent reads.
   that point pans. Before, one long cell was enough to make a table pan.
 - A table in the agent's text, a quoted one included, has a rule between each
   pair of body rows, so a row whose cells wrap stays apart from the next.
+
+### Fixed
+
+- A notice is drawn as one line, with its newlines as spaces. coax no
+  longer aborts when a notice holding newlines, such as a rate-limit error
+  from the agent, is cut to fit the screen.
+- The context bar draws its used part as `━` and the rest as `─`, where it
+  drew `▰` and `▱`. Many fonts lack those two, and the terminal's fallback
+  glyphs overlapped their neighbours or lost their outline.
+- Long text in an agent's question form wraps inside its box, where coax
+  used to cut it short. The text typed into a field wraps too.
 
 ## [0.2.0] - 2026-11-12
 
@@ -528,61 +531,15 @@ command line, the keys, and the scenario format the fake agent reads.
 - An agent that exits no longer takes coax with it. The conversation stays on
   screen and scrolls and copies as before, with a notice `agent exited:` and
   the agent's status and last stderr lines. Sending is off, and the rule under
-  the prompt says the agent has exited. ^c ^c and ^d ^d still quit. A call
-  still running when the agent exits or a turn is cancelled shows `cancelled`
-  in place of `running…`.
+  the prompt says the agent has exited. ^c ^c and ^d ^d still quit.
 - A blank terminal no longer shows while the agent starts or a session loads.
   coax draws `starting <agent>…` or `loading session…`, and ^c quits from it.
 - An agent that does not start names its command in the error. In the picker,
   its row says `failed:` with the reason and Enter on it does nothing, and a
-  row whose session list failed says `sessions failed:`. A failure before the
-  session opens no longer prints terminal reset codes.
-- After a panic the terminal no longer prints escape codes for clicks and the
-  wheel. coax turns mouse capture off before it restores the terminal.
-- A conversation that is taller than the pane at one width and shorter one
-  column narrower no longer panics the scroll bar. The bar shows only when
-  the narrower layout is still taller.
-- A second permission request no longer cancels the first. The requests queue,
-  the box shows the oldest with `N more` under it, and the next appears when
-  one is answered. A box closes, as cancelled, when its turn ends.
-- Ctrl+c while the agent works cancels the turn and also arms the exit guard,
-  so a second Ctrl+c within 1.5 seconds quits when the agent ignores the
-  cancel.
-- The agent's answer to a setting change closes or marks only the menu that
-  asked for it. A late answer used to close an unrelated menu or write its
-  error into it.
-- Picker boxes above the status line widen to fit their longest row, up to the
-  screen width less four columns. They stopped at 60 columns and cut a model's
-  description.
-- Text from the agent, your earlier messages and thoughts now start a new
-  entry when the message id changes, so two replayed messages in a row stay
-  two bubbles. A message sent to a subagent shows under its call, dim and
-  marked `>`, where it used to show as your own message.
-- A subagent's call shows as `agent` from the start, and still does after a
-  session is loaded. The Claude adapter keeps a subagent's history in its own
-  transcript and replays it only to clients that speak the subagent sessions
-  protocol, so a loaded session shows the call with no children, folded and
-  with no marker.
+  row whose session list failed says `sessions failed:`.
 - The token counts on the status line are session totals. Each turn's input,
   cached reads and writes add to the up count and its output to the down
   count. They used to show the last turn only.
-- The `+N −M` size of an edit counts the lines that changed, taken from the
-  same line diff the expanded view shows. It counted every line of the old and
-  new texts. The permission box and a loaded session count the same way.
-- The copy glyph is `⧉` (U+29C9) in place of a Nerd Font private-use
-  character. Some fonts drew that wider than one column and pushed the box's
-  right border out of line.
-- Panning a code block or table counts display columns. A wide character cut
-  by the window's edge shows as a space, where before the rows came out a
-  column or more off.
-- A long session no longer slows down. A transcript of 150 sections with code,
-  a table and two command calls each cost 15 ms a frame, and every event or
-  keystroke drew one. The transcript lays out only the entries on screen, keeps
-  the text layouts for both widths it measures, and caches the rows under
-  expanded edits and commands. A mouse move redraws only when the pointer
-  enters or leaves something it highlights.
-- An idle session no longer spins a core. A closed decade connection used to wake
-  the run loop on every pass.
 - The session has no panes and reads like a messaging thread. The
   conversation starts on the first row. Under the prompt sit the context
   row, the status line and the progress row. The status line carries the
@@ -628,6 +585,55 @@ command line, the keys, and the scenario format the fake agent reads.
 - A bare `coax` opens the agent picker in place of printing usage. A flag
   coax does not know is a usage error, where before it was taken as the agent
   command.
+
+### Fixed
+
+- A call still running when the agent exits or a turn is cancelled shows
+  `cancelled` in place of `running…`.
+- A failure before the session opens no longer prints terminal reset codes.
+- After a panic the terminal no longer prints escape codes for clicks and the
+  wheel. coax turns mouse capture off before it restores the terminal.
+- A conversation that is taller than the pane at one width and shorter one
+  column narrower no longer panics the scroll bar. The bar shows only when
+  the narrower layout is still taller.
+- A second permission request no longer cancels the first. The requests queue,
+  the box shows the oldest with `N more` under it, and the next appears when
+  one is answered. A box closes, as cancelled, when its turn ends.
+- Ctrl+c while the agent works cancels the turn and also arms the exit guard,
+  so a second Ctrl+c within 1.5 seconds quits when the agent ignores the
+  cancel.
+- The agent's answer to a setting change closes or marks only the menu that
+  asked for it. A late answer used to close an unrelated menu or write its
+  error into it.
+- Picker boxes above the status line widen to fit their longest row, up to the
+  screen width less four columns. They stopped at 60 columns and cut a model's
+  description.
+- Text from the agent, your earlier messages and thoughts now start a new
+  entry when the message id changes, so two replayed messages in a row stay
+  two bubbles. A message sent to a subagent shows under its call, dim and
+  marked `>`, where it used to show as your own message.
+- A subagent's call shows as `agent` from the start, and still does after a
+  session is loaded. The Claude adapter keeps a subagent's history in its own
+  transcript and replays it only to clients that speak the subagent sessions
+  protocol, so a loaded session shows the call with no children, folded and
+  with no marker.
+- The `+N −M` size of an edit counts the lines that changed, taken from the
+  same line diff the expanded view shows. It counted every line of the old and
+  new texts. The permission box and a loaded session count the same way.
+- The copy glyph is `⧉` (U+29C9) in place of a Nerd Font private-use
+  character. Some fonts drew that wider than one column and pushed the box's
+  right border out of line.
+- Panning a code block or table counts display columns. A wide character cut
+  by the window's edge shows as a space, where before the rows came out a
+  column or more off.
+- A long session no longer slows down. A transcript of 150 sections with code,
+  a table and two command calls each cost 15 ms a frame, and every event or
+  keystroke drew one. The transcript lays out only the entries on screen, keeps
+  the text layouts for both widths it measures, and caches the rows under
+  expanded edits and commands. A mouse move redraws only when the pointer
+  enters or leaves something it highlights.
+- An idle session no longer spins a core. A closed decade connection used to wake
+  the run loop on every pass.
 
 ## [0.1.0] - 2026-11-06
 
