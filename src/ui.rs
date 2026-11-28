@@ -3394,7 +3394,7 @@ fn tint_selection(frame: &mut Frame, field: &TextField, area: &FieldArea) {
     let Some(selection) = field.selection() else {
         return;
     };
-    let tint = Style::new().bg(palette::get().tint);
+    let tint = palette::get().tint;
     let shown = area.view.rows.iter().skip(area.skipped);
     for (y, row) in (area.area.y..area.area.bottom()).zip(shown) {
         let start = selection.start.max(row.start);
@@ -3405,7 +3405,23 @@ fn tint_selection(frame: &mut Frame, field: &TextField, area: &FieldArea) {
         let x = area.text_x + field.text[row.start..start].width() as u16;
         let width = field.text[start..end].width() as u16;
         let cells = Rect::new(x, y, width, 1).intersection(frame.area());
-        frame.buffer_mut().set_style(cells, tint);
+        let buffer = frame.buffer_mut();
+        for x in cells.left()..cells.right() {
+            select_cell(&mut buffer[(x, y)], tint);
+        }
+    }
+}
+
+/// Mark `cell` as selected with `tint`, or in reverse video where `tint` is
+/// already behind it.
+fn select_cell(cell: &mut ratatui::buffer::Cell, tint: Color) {
+    // a focused form row has the selection colour behind
+    // it, which is also the tint when coax has no RGB
+    // background and foreground to mix one from
+    if cell.bg == tint {
+        cell.modifier.insert(Modifier::REVERSED);
+    } else {
+        cell.set_bg(tint);
     }
 }
 
@@ -4029,6 +4045,19 @@ mod tests {
         let foreground = Some(palette::get().foreground);
         assert_eq!(span("Where should the cache live?").fg, foreground);
         assert_eq!(span("lost on restart").fg, foreground);
+    }
+
+    #[test]
+    fn a_selected_cell_takes_the_tint_or_reverses_where_the_tint_is_already_behind_it() {
+        let tint = Color::Rgb(1, 2, 3);
+        let mut plain = ratatui::buffer::Cell::default();
+        select_cell(&mut plain, tint);
+        assert_eq!(plain.bg, tint);
+        assert!(!plain.modifier.contains(Modifier::REVERSED));
+        let mut focused = ratatui::buffer::Cell::default();
+        focused.set_bg(tint);
+        select_cell(&mut focused, tint);
+        assert!(focused.modifier.contains(Modifier::REVERSED));
     }
 
     #[test]
