@@ -1,0 +1,10 @@
+{
+  "slug": "claude-adapter-usage-is-markdown-only",
+  "text": "The Claude adapter v0.101.0 answers a prompt of exactly `/usage` with every limit window (5-hour, weekly, per-model, extra usage), but only as markdown in the chat. It gets them from Claude Code's `get_usage` control request, which reads `/api/oauth/usage` with the OAuth token. coax could reach the numbers directly only by handling that token. On 2026-11-27 Jack judged showing account or limits in coax not worth it. Source: `isUsageCommandText` and `formatUsageResponse`.",
+  "created_at": "2026-11-28T01:13:02.021690871Z",
+  "updated_at": "2026-11-28T01:13:02.021690871Z",
+  "stamp": {
+    "commit": "51b776c",
+    "branch": "dev"
+  }
+}
