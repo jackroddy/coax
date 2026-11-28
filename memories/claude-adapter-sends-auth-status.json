@@ -1,0 +1,10 @@
+{
+  "slug": "claude-adapter-sends-auth-status",
+  "text": "The Claude adapter v0.101.0 sends the signed-in account unasked, as an `_auth/status_update` extension notification. Its `authStatus` holds a `kind` (`account`, `api_key`, `gateway`, `external` or `none`) and a `label` such as \"Claude Max\". An `account` kind adds `account { plan, email, organization }`. The adapter fills it from `claude auth status --json` and the SDK's `accountInfo()`. It does not implement ACP's draft `auth/status`. Source: `setAuthStatus` and `src/auth-status.ts`.",
+  "created_at": "2026-11-28T01:13:02.000815568Z",
+  "updated_at": "2026-11-28T01:13:02.000815568Z",
+  "stamp": {
+    "commit": "51b776c",
+    "branch": "dev"
+  }
+}
