@@ -1,0 +1,30 @@
+{
+  "id": "coax-c2b201",
+  "title": "A text field selects by drag and copies with Ctrl+C",
+  "body": "The conversation has drag selection, word and line picking on a double or triple click, and copy on release, all in `src/select.rs`. A text field has none of it.\n\n## Proposal\n\n- A drag in a text field selects from the press to the pointer. A double click selects the word under the pointer, and a triple click selects its line. Word and line picking share their rules with `select::word_at` and `select::line_at`.\n- Ctrl+C with a selection copies it and does nothing else. Without a selection, Ctrl+C keeps its meanings (cancel the turn, clear the prompt, arm the exit guard). Releasing the button does not copy.\n- Typing replaces the selection. Backspace and Delete remove it. A cursor key drops it and moves from its matching end.\n- The selection draws in the `selection` colour as the conversation's does. A text field has no mark button.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "coax-cd257e",
+  "blocked_by": [
+    "coax-d59ca7"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T06:34:37.123684981Z",
+  "updated_at": "2026-11-28T06:34:37.123684981Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "23bb4f1",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
