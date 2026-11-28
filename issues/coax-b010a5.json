@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-28T01:28:02.031319992Z",
   "defer_until": null,
   "created_at": "2026-11-28T01:08:56.322459718Z",
-  "updated_at": "2026-11-28T01:13:02.031319992Z",
+  "updated_at": "2026-11-28T01:35:45.394699961Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "1292fdae",
+      "at": "2026-11-28T01:35:45.394699311Z",
+      "author": "Jack Roddy/4c7bb0a4",
+      "text": "Jack decided on 2026-11-27 that the Colour section's call to colour every word that carries a state, a verdict or a kind is deliberate. Do not tone it down. The review added italics, `#` and `####` headings, tabbed and `markdown` fences, the wrap switch, and bold coloured list leads with one-sentence nested detail. It also rewrote the style's own sentences to follow the global prose rules, but left the Colour section alone. These edits are uncommitted in `styles/coax.md`.",
+      "commit": "51b776c",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "51b776c",
