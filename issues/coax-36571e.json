@@ -1,0 +1,28 @@
+{
+  "id": "coax-36571e",
+  "title": "The prompt and form text fields share one text field type",
+  "body": "The prompt's text and cursor live in `App::input` and `App::cursor`, and about 170 lines of `src/app.rs` and `src/ui.rs` read or change them. `App::key` holds the editing keys inline. A form's `Kind::Text` holds a bare `String` that `Form::key` appends to and pops from. `input_view` in `src/ui.rs` is the only code that wraps a field and keeps the cursor's row in view.\n\n## Proposal\n\n- A `TextField` in `src/prompt.rs` holds the text and a byte cursor, and later the selection. It owns every editing key: characters, Backspace, Delete, the arrows, Home and End, word moves and paste. Its `key` returns whether it used the key. The movement helpers already in `src/prompt.rs` become its methods or stay as the free functions it calls.\n- `TextField` lays itself out at a width and a most-rows limit, as `input_view` does now. It gives back the rows shown, the cursor's place among them, and each row's byte range for the mouse work that follows.\n- The prompt keeps a `TextField` in place of `App::input` and `App::cursor`. Prompt-only keys stay in `App::key`, ahead of the field: Enter to send, Up and Down into history at the first or last row, Tab completion, and Ctrl+C.\n- `Kind::Text` holds a `TextField`. A form's text field gets the cursor keys, and it wraps and grows as the prompt does. Shift+Enter adds a line in any form text field. Enter keeps its current meaning.\n\n## Open\n\n- How tall a form text field may grow inside a form that is itself capped at half the screen.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "coax-cd257e",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T06:34:37.100692741Z",
+  "updated_at": "2026-11-28T06:34:37.100692741Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "23bb4f1",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
