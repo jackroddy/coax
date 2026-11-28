@@ -1,0 +1,30 @@
+{
+  "id": "coax-6eaa70",
+  "title": "A box lists the running background commands and stops one",
+  "body": "coax has no view of the background commands it has recorded. The only way to find one today is `ps`, which is how Jack found go-grip a day and a half after its session ended.\n\n## Proposal\n\n- A box, opened like the history box, lists every live entry in the state file. Each row shows the command, its age, its folder, and whether this coax's session started it.\n- A key on a row stops that command's process group, first with `SIGTERM` and then with `SIGKILL` if it stays up. coax then drops the entry.\n- The status line shows the number of running background commands when it is above zero.\n\n## Open\n\n- Which key or `/` command opens the box.\n- Whether the box can stop a command that another coax session started.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "coax-42022c",
+  "blocked_by": [
+    "coax-2cc770"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T03:43:47.743359799Z",
+  "updated_at": "2026-11-28T03:43:47.743359799Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7b26712",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
