@@ -1,0 +1,28 @@
+{
+  "id": "coax-94a420",
+  "title": "A loaded session shows the summary of each question form it answered",
+  "body": "coax-b71e9f added `Entry::Answers`, which `App::answer` in `src/app.rs` builds from the open `Form` when the person answers or dismisses an agent's question form. The entry exists only in a live session. A session opened again with `session/load` replays the `AskUserQuestion` call as an ordinary tool call, and coax has no `Form` to build the summary from.\n\n## Proposal\n\n- When a replayed `AskUserQuestion` tool call carries the questions in `rawInput` and the answers in its result, coax builds the same `Entry::Answers` from them and places it after the call.\n\n## Open\n\n- What the Claude adapter v0.101.0 replays for an `AskUserQuestion` call: whether `rawInput` holds the questions, and whether the result text holds the answers in a form coax can read.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T06:12:37.527900789Z",
+  "updated_at": "2026-11-28T06:12:37.527900789Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4c945d5",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
