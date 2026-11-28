@@ -3,26 +3,29 @@
   "title": "An answered question form leaves a summary of its questions and answers in the conversation",
   "body": "When the person submits an agent's question form, `App::answer` in `src/app.rs` sends the `ElicitationAction` back to the agent and opens the next waiting form. Nothing goes in the transcript. Once the form closes, the conversation shows no record of what was asked or what the person chose. The tool line for the call shows only its title, such as \"Which fruit from the table would you like to pick?\", marked `pending` and then done.\n\n`Entry` in `src/session.rs` has six kinds: `User`, `Agent`, `Thought`, `Tool`, `Permission` and `Notice`. A permission answer already leaves an `Entry::Permission` with the choice drawn on the right in the accent colour.\n\n## Proposal\n\n- A submitted form leaves a new kind of entry. It lists each question's title with the person's answer under it. That covers the chosen option or options, plus any text typed in the Other field or added as a note.\n- The entry looks different from every existing kind, `Permission` and `Notice` included.\n- A form dismissed with Esc leaves the same entry, saying it was dismissed.\n- A session loaded with `session/load` shows the entry too, if the replayed tool call carries the answers.\n\n## Open\n\n- How the entry looks: its border, colour and placement, distinct from the user's accent box on the right and the agent's blue box on the left.\n- Whether the Claude adapter's replay of an `AskUserQuestion` call carries the answers, so a loaded session can rebuild the entry.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/4c7bb0a4",
-  "lease_expires": "2026-11-28T06:18:26.363629284Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-28T06:00:14.737708057Z",
-  "updated_at": "2026-11-28T06:03:26.363629284Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-28T06:13:07.76953197Z",
+  "closed_at": "2026-11-28T06:13:07.76953197Z",
+  "close_reason": "23bb4f1 on dev adds `Form::summary`, `Entry::Answers` and `answer_rows`. Rebuilding the summary in a loaded session went to coax-94a420.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "da1c9f1",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "23bb4f1",
+      "branch": "dev"
+    }
   }
 }
