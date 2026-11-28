@@ -1,0 +1,28 @@
+{
+  "id": "coax-42022c",
+  "title": "Background commands",
+  "body": "A shell command the agent runs in the background can outlive the session that started it. On 2026-11-26 a coax session started go-grip with the Bash tool's `run_in_background`, to serve the README. The session ended and left it running. The shell passed to `systemd --user`, and go-grip served the README for a day and a half until Jack found it.\n\ncoax sees each background command start, as an ordinary `tool_call` whose `rawInput` holds the `command` and `run_in_background: true`. The call goes `completed` at launch, with a result like \"Command running in background with ID …\". That ID is Claude Code's task id, not a process id. The adapter sends a client like coax nothing when the command ends (coax-8f3b7d).\n\nThis milestone gives coax its own record of those commands, so none can run on unnoticed. The pieces, in order:\n\n- coax finds the process behind each background command, and keeps any orphaned one as its own child.\n- coax records each one in a state file in its runtime directory, and drops the ended ones each time it starts.\n- A box lists the commands still running and can stop one.\n- How coax learns that a command ended (coax-8f3b7d) gets an answer from the same process check.\n\nThe design is for Linux, since it reads `/proc` and uses `PR_SET_CHILD_SUBREAPER`. macOS would need `proc_listchildpids` and has no subreaper. It is out of scope until someone runs coax there.",
+  "type": "milestone",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T03:43:47.70974037Z",
+  "updated_at": "2026-11-28T03:43:47.70974037Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7b26712",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
