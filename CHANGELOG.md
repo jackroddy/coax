@@ -50,6 +50,9 @@ command line, the keys, and the scenario format the fake agent reads.
   first Enter filled in the name and a second ran it. With several
   matches, Enter waits until the arrows pick one. Tab fills in the first
   match, and more presses of Tab or Shift+Tab cycle through the rest.
+- A question form draws a question's description and its options'
+  descriptions in the foreground colour, where it used the faint muted
+  colour.
 
 ### Fixed
 

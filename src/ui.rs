@@ -2981,7 +2981,7 @@ fn form_lines(form: &Form, width: usize) -> (Vec<Line<'static>>, Range<usize>) {
                     Span::styled(count, dim()),
                 ]));
                 for piece in field.description.iter().flat_map(|text| wrap(text, room)) {
-                    lines.push(Line::styled(format!("{indent}{piece}"), dim()));
+                    lines.push(Line::styled(format!("{indent}{piece}"), foreground()));
                 }
             }
         }
@@ -3119,12 +3119,12 @@ fn form_row(form: &Form, row: Row, width: usize, focused: bool) -> Vec<Line<'sta
                         }
                         let used: usize = lines[n].iter().map(|span| span.width()).sum();
                         lines[n].push(Span::raw(" ".repeat(column + 2 - used)));
-                        lines[n].push(Span::styled(piece, dim()));
+                        lines[n].push(Span::styled(piece, foreground()));
                     }
                 }
                 (None, Some(description)) => {
                     for piece in wrap(description, room) {
-                        lines.push(vec![Span::styled(format!("{indent}{piece}"), dim())]);
+                        lines.push(vec![Span::styled(format!("{indent}{piece}"), foreground())]);
                     }
                 }
                 _ => {}
@@ -3559,6 +3559,10 @@ fn focus() -> Style {
     Style::new().fg(palette::get().blue)
 }
 
+fn foreground() -> Style {
+    Style::new().fg(palette::get().foreground)
+}
+
 fn bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
 }
@@ -3816,6 +3820,28 @@ mod tests {
         assert_eq!(title_column(&options, 2, 60), Some(8));
         let long = [choice(&"x".repeat(50), Some("why")), choice("Disk", None)];
         assert_eq!(title_column(&long, 2, 60), Some(60 - 2 - DESCRIPTION_MIN));
+    }
+
+    #[test]
+    fn a_question_and_its_options_describe_themselves_in_the_foreground_colour() {
+        let scenario =
+            crate::scenario::Scenario::parse(include_str!("../scenarios/questions.json")).unwrap();
+        let crate::scenario::Step::Elicitation(asked) = &scenario.acts[0].steps[1] else {
+            panic!("the second step asks the questions");
+        };
+        let form = Form::new(asked.message.clone(), &asked.requested_schema);
+        let (lines, _) = form_lines(&form, 80);
+        let span = |text: &str| {
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter().map(move |span| (line, span)))
+                .find(|(_, span)| span.content.contains(text))
+                .map(|(line, span)| line.style.patch(span.style))
+                .unwrap()
+        };
+        let foreground = Some(palette::get().foreground);
+        assert_eq!(span("Where should the cache live?").fg, foreground);
+        assert_eq!(span("lost on restart").fg, foreground);
     }
 
     #[test]
