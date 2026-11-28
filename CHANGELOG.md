@@ -59,6 +59,12 @@ command line, the keys, and the scenario format the fake agent reads.
   the end of that row. A click below the last row puts it at the end of
   the text. A click in a form's text field also takes the form's cursor
   to that field.
+- A drag in the prompt or in a form's text field selects its text. A
+  double click selects a word. A triple click selects a line. Shift with
+  Left, Right, Home or End stretches the selection. Ctrl+C copies the
+  selection. Releasing the button copies nothing. Typing or a paste
+  replaces the selection. Backspace or Delete removes it. Without a
+  selection, Ctrl+C does what it did before.
 
 ### Changed
 

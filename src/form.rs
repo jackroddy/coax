@@ -274,6 +274,28 @@ impl Form {
         }
     }
 
+    pub fn text_field(&self, field: usize) -> Option<&TextField> {
+        match &self.fields.get(field)?.kind {
+            Kind::Text { text, .. } => Some(text),
+            _ => None,
+        }
+    }
+
+    pub fn text_field_mut(&mut self, field: usize) -> Option<&mut TextField> {
+        match &mut self.fields.get_mut(field)?.kind {
+            Kind::Text { text, .. } => Some(text),
+            _ => None,
+        }
+    }
+
+    /// The text field the cursor is on.
+    pub fn focused_text(&self) -> Option<&TextField> {
+        match self.rows().get(self.cursor)? {
+            Row::Text(field) => self.text_field(*field),
+            _ => None,
+        }
+    }
+
     pub fn rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
         for (index, field) in self.fields.iter().enumerate() {

@@ -28,7 +28,7 @@ use crate::clock::Time;
 use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
-use crate::form::{Field, Form, Kind as FormKind};
+use crate::form::Form;
 use crate::glyphs;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
@@ -163,6 +163,9 @@ pub struct App {
 
     /// The text fields on screen, set by the last draw.
     pub field_areas: Vec<ui::FieldArea>,
+
+    /// The text field a press started in, which a drag selects in.
+    field_press: Option<FieldTarget>,
 
     /// An agent command waiting for a yes before it is sent.
     pub confirm: Option<Confirm>,
@@ -753,12 +756,17 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => return self.click(position),
             MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(target) = self.field_press {
+                    self.drag_field(target, position);
+                    return Action::None;
+                }
                 if let Some(press) = self.press
                     && let Some(anchor) = press.anchor
                     && position != press.at
                 {
                     let head = self.texts.nearest(position);
                     self.last_press = None;
+                    self.drop_field_selections();
                     let selection = self.selection.get_or_insert(Selection {
                         anchor,
                         head,
@@ -777,6 +785,7 @@ impl App {
                 return Action::None;
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                self.field_press = None;
                 self.drag = None;
                 self.v_drag = None;
                 return self.release();
@@ -823,6 +832,7 @@ impl App {
             _ => None,
         });
         if let Some(selection) = picked {
+            self.drop_field_selections();
             let text = selection.copy(&self.texts.lines);
             self.selection = Some(selection);
             return Action::Copy(text);
@@ -988,38 +998,146 @@ impl App {
         true
     }
 
-    /// Put the cursor of the text field under `position` where it points,
-    /// and say whether there was one. A form's field takes the form's cursor.
-    fn click_field(&mut self, position: Position) -> bool {
-        let Some(area) = self
+    /// The open form, an agent's or a template's.
+    pub fn open_form(&self) -> Option<&Form> {
+        match (&self.form, &self.template_form) {
+            (Some(asked), _) => Some(&asked.form),
+            (None, Some(open)) => Some(&open.form),
+            (None, None) => None,
+        }
+    }
+
+    fn open_form_mut(&mut self) -> Option<&mut Form> {
+        match (&mut self.form, &mut self.template_form) {
+            (Some(asked), _) => Some(&mut asked.form),
+            (None, Some(open)) => Some(&mut open.form),
+            (None, None) => None,
+        }
+    }
+
+    pub fn text_field(&self, target: FieldTarget) -> Option<&TextField> {
+        match target {
+            FieldTarget::Prompt => Some(&self.prompt),
+            FieldTarget::Form { field, .. } => self.open_form()?.text_field(field),
+        }
+    }
+
+    fn text_field_mut(&mut self, target: FieldTarget) -> Option<&mut TextField> {
+        match target {
+            FieldTarget::Prompt => Some(&mut self.prompt),
+            FieldTarget::Form { field, .. } => self.open_form_mut()?.text_field_mut(field),
+        }
+    }
+
+    /// The text field that has the keys.
+    fn focused_text(&self) -> Option<&TextField> {
+        match self.open_form() {
+            Some(form) => form.focused_text(),
+            None => Some(&self.prompt),
+        }
+    }
+
+    /// Drop the selection of every text field.
+    fn drop_field_selections(&mut self) {
+        self.prompt.anchor = None;
+        if let Some(form) = self.open_form_mut() {
+            for field in 0..form.fields.len() {
+                if let Some(text) = form.text_field_mut(field) {
+                    text.anchor = None;
+                }
+            }
+        }
+    }
+
+    /// The byte of the field drawn at `area` that `position` points at. A
+    /// point above the field is its text's start, and one below its end.
+    fn field_byte(area: &ui::FieldArea, field: &TextField, position: Position) -> usize {
+        if position.y < area.area.y {
+            return 0;
+        }
+        let column = position.x.saturating_sub(area.text_x) as usize;
+        let row = (position.y - area.area.y) as usize + area.skipped;
+        field.at(&area.view, column, row)
+    }
+
+    /// Start a press in the text field under `position`, and say whether
+    /// there was one. A click puts the cursor there, a double click selects
+    /// the word and a triple click the line, and a form's field takes the
+    /// form's cursor.
+    fn press_field(&mut self, position: Position) -> bool {
+        let Some(index) = self
             .field_areas
             .iter()
-            .find(|area| area.area.contains(position))
+            .position(|area| area.area.contains(position))
         else {
             return false;
         };
-        let column = position.x.saturating_sub(area.text_x) as usize;
-        let row = (position.y - area.area.y) as usize + area.skipped;
-        let (form, field, form_row) = match area.target {
-            FieldTarget::Prompt => {
-                self.prompt.cursor = self.prompt.at(&area.view, column, row);
-                return true;
-            }
-            FieldTarget::Form { field, row } => match (&mut self.form, &mut self.template_form) {
-                (Some(asked), _) => (&mut asked.form, field, row),
-                (None, Some(open)) => (&mut open.form, field, row),
-                (None, None) => return false,
-            },
+        let count = self.count_press(position);
+        self.selection = None;
+        let area = &self.field_areas[index];
+        let target = area.target;
+        let Some(at) = self
+            .text_field(target)
+            .map(|field| Self::field_byte(area, field, position))
+        else {
+            return true;
         };
-        if let Some(Field {
-            kind: FormKind::Text { text, .. },
-            ..
-        }) = form.fields.get_mut(field)
+        let Some(field) = self.text_field_mut(target) else {
+            return true;
+        };
+        match count {
+            2 => field.select_word(at),
+            3 => field.select_line(at),
+            _ => {
+                field.cursor = at;
+                field.anchor = Some(at);
+            }
+        }
+        self.field_press = (count == 1).then_some(target);
+        if let FieldTarget::Form { row, .. } = target
+            && let Some(form) = self.open_form_mut()
         {
-            text.cursor = text.at(&area.view, column, row);
-            form.cursor = form_row;
+            form.cursor = row;
         }
         true
+    }
+
+    /// Move the cursor of the field a press started in to `position`,
+    /// selecting from where the press was.
+    fn drag_field(&mut self, target: FieldTarget, position: Position) {
+        self.last_press = None;
+        let Some(index) = self
+            .field_areas
+            .iter()
+            .position(|area| area.target == target)
+        else {
+            return;
+        };
+        let Some(at) = self
+            .text_field(target)
+            .map(|field| Self::field_byte(&self.field_areas[index], field, position))
+        else {
+            return;
+        };
+        if let Some(field) = self.text_field_mut(target) {
+            field.cursor = at;
+        }
+    }
+
+    /// Count a press at `position` as the first, second or third of a
+    /// multiple click.
+    fn count_press(&mut self, position: Position) -> u8 {
+        let now = Instant::now();
+        let count = match self.last_press {
+            Some((at, place, count))
+                if place == position && now.duration_since(at) < MULTI_CLICK =>
+            {
+                count % 3 + 1
+            }
+            _ => 1,
+        };
+        self.last_press = Some((now, position, count));
+        count
     }
 
     fn copy_at(&self, position: Position) -> Option<(usize, usize)> {
@@ -1037,7 +1155,7 @@ impl App {
     }
 
     fn click(&mut self, position: Position) -> Action {
-        if self.template_form.is_some() && self.click_field(position) {
+        if self.template_form.is_some() && self.press_field(position) {
             return Action::None;
         }
         if let Some(open) = &mut self.template_form {
@@ -1058,7 +1176,7 @@ impl App {
         }
         self.selection = None;
         if self.form.is_some() {
-            self.click_field(position);
+            self.press_field(position);
             return Action::None;
         }
         if self.permission.is_some() || self.confirm.is_some() {
@@ -1078,7 +1196,7 @@ impl App {
             }
             return Action::None;
         }
-        if self.click_field(position) {
+        if self.press_field(position) {
             return Action::None;
         }
         if self.press_v_bar(position) {
@@ -1126,16 +1244,7 @@ impl App {
                 .texts
                 .text_at(position)
                 .filter(|_| !self.wide.iter().any(|block| block.area.contains(position)));
-            let now = Instant::now();
-            let count = match self.last_press {
-                Some((at, place, count))
-                    if place == position && now.duration_since(at) < MULTI_CLICK =>
-                {
-                    count % 3 + 1
-                }
-                _ => 1,
-            };
-            self.last_press = Some((now, position, count));
+            let count = self.count_press(position);
             self.press = Some(Press {
                 at: position,
                 anchor,
@@ -1732,6 +1841,12 @@ impl App {
     /// the guard disarms it.
     pub fn key(&mut self, key: KeyEvent, now: Instant) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if key.code == KeyCode::Char('c')
+            && ctrl
+            && let Some(selected) = self.focused_text().and_then(TextField::selected)
+        {
+            return Action::Copy(selected.to_string());
+        }
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         self.unknown = None;
@@ -2043,6 +2158,7 @@ async fn session(
         template_form: None,
         preview_button: None,
         field_areas: Vec::new(),
+        field_press: None,
         confirm: None,
         expanded: HashSet::new(),
         folds: Vec::new(),
@@ -2461,6 +2577,7 @@ mod tests {
             template_form: None,
             preview_button: None,
             field_areas: Vec::new(),
+            field_press: None,
             confirm: None,
             expanded: HashSet::new(),
             folds: Vec::new(),
@@ -4519,6 +4636,82 @@ mod tests {
         click_at(&mut app, (x, y));
         assert_eq!(app.prompt.cursor, 0);
         assert_eq!(app.prompt.text, "hello world");
+    }
+
+    fn drag_to(app: &mut App, from: (u16, u16), to: (u16, u16)) {
+        let down = MouseEventKind::Down(MouseButton::Left);
+        app.mouse(wheel(down, KeyModifiers::NONE, from.0, from.1));
+        let drag = MouseEventKind::Drag(MouseButton::Left);
+        app.mouse(wheel(drag, KeyModifiers::NONE, to.0, to.1));
+        let up = MouseEventKind::Up(MouseButton::Left);
+        assert!(matches!(
+            app.mouse(wheel(up, KeyModifiers::NONE, to.0, to.1)),
+            Action::None
+        ));
+    }
+
+    #[test]
+    fn a_drag_in_the_prompt_selects_and_only_ctrl_c_copies_it() {
+        let mut app = with_settings();
+        app.set_input("hello wide world".to_string());
+        let (x, y) = find_on_screen(&mut app, "> hello");
+        drag_to(&mut app, (x + 2 + 6, y), (x + 2 + 10, y));
+        assert_eq!(app.prompt.selected(), Some("wide"));
+        let Action::Copy(text) = app.key(ctrl('c'), Instant::now()) else {
+            panic!("ctrl+c copies the selection");
+        };
+        assert_eq!(text, "wide");
+        assert_eq!(app.prompt.text, "hello wide world");
+        assert!(app.guard.is_none());
+        type_text(&mut app, "big");
+        assert_eq!(app.prompt.text, "hello big world");
+        assert!(matches!(app.key(ctrl('c'), Instant::now()), Action::None));
+        assert!(app.prompt.text.is_empty());
+    }
+
+    #[test]
+    fn a_drag_past_the_prompts_rows_selects_to_the_end_of_its_text() {
+        let mut app = with_settings();
+        app.set_input("hello world".to_string());
+        let (x, y) = find_on_screen(&mut app, "> hello");
+        drag_to(&mut app, (x + 2 + 6, y), (x, y + 3));
+        assert_eq!(app.prompt.selected(), Some("world"));
+        drag_to(&mut app, (x + 2 + 5, y), (x, 0));
+        assert_eq!(app.prompt.selected(), Some("hello"));
+    }
+
+    #[test]
+    fn a_double_click_in_the_prompt_selects_a_word_and_a_triple_click_its_line() {
+        let mut app = with_settings();
+        app.set_input("one two_x three\nnext".to_string());
+        let (x, y) = find_on_screen(&mut app, "> one");
+        let at = (x + 2 + 5, y);
+        click_at(&mut app, at);
+        click_at(&mut app, at);
+        assert_eq!(app.prompt.selected(), Some("two_x"));
+        click_at(&mut app, at);
+        assert_eq!(app.prompt.selected(), Some("one two_x three"));
+    }
+
+    #[test]
+    fn a_drag_in_a_form_text_field_selects_and_ctrl_c_copies_it() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        let _answer = ask_form(&mut app);
+        let form = &mut app.form.as_mut().unwrap().form;
+        *form.text_field_mut(1).unwrap() = TextField::new("a long note".to_string());
+        let (x, y) = find_on_screen(&mut app, "› a long note");
+        drag_to(&mut app, (x + 2 + 2, y), (x + 2 + 6, y));
+        let form = &app.form.as_ref().unwrap().form;
+        assert_eq!(form.rows()[form.cursor], crate::form::Row::Text(1));
+        let Action::Copy(text) = app.key(ctrl('c'), Instant::now()) else {
+            panic!("ctrl+c copies the selection");
+        };
+        assert_eq!(text, "long");
+        assert!(app.form.is_some());
+        press(&mut app, KeyCode::Backspace);
+        let form = &app.form.as_ref().unwrap().form;
+        assert_eq!(form.text_field(1).unwrap().text, "a  note");
     }
 
     #[test]

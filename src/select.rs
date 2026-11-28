@@ -161,12 +161,18 @@ impl Selection {
     }
 }
 
-/// The word under `point` of `lines`: the run of letters, digits and
-/// underscores around it, or `None` off a word.
+/// Whether `ch` belongs to a word a double click selects: a letter, a digit
+/// or an underscore.
+pub fn word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+/// The word under `point` of `lines`: the run of word characters around it,
+/// or `None` off a word.
 pub fn word_at(lines: &[Option<LineText>], point: Point) -> Option<Selection> {
     let text = lines.get(point.line)?.as_ref()?;
     let cells: Vec<(char, usize, usize)> = text.cells().collect();
-    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let word = word_char;
     let at = cells
         .iter()
         .position(|&(ch, col, width)| (col..col + width.max(1)).contains(&point.col) && word(ch))?;

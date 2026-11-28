@@ -7,6 +7,8 @@ use std::ops::Range;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::select::word_char;
+
 /// Editable text and the cursor in it.
 #[derive(Default)]
 pub struct TextField {
@@ -14,6 +16,9 @@ pub struct TextField {
 
     /// The cursor's byte index into `text`, always on a char boundary.
     pub cursor: usize,
+
+    /// The other end of the selection, which runs from here to the cursor.
+    pub anchor: Option<usize>,
 }
 
 /// What a key did to a field.
@@ -43,7 +48,46 @@ impl TextField {
         TextField {
             cursor: text.len(),
             text,
+            anchor: None,
         }
+    }
+
+    /// The selected bytes, when there are any.
+    pub fn selection(&self) -> Option<Range<usize>> {
+        let anchor = self.anchor?;
+        (anchor != self.cursor).then(|| anchor.min(self.cursor)..anchor.max(self.cursor))
+    }
+
+    pub fn selected(&self) -> Option<&str> {
+        self.selection().map(|range| &self.text[range])
+    }
+
+    /// Select the word at `at`, the run of word characters a double click
+    /// selects, or put the cursor at `at` when it is not on one.
+    pub fn select_word(&mut self, at: usize) {
+        let starts_word = self.text[at..].chars().next().is_some_and(word_char);
+        if !starts_word {
+            self.anchor = None;
+            self.cursor = at;
+            return;
+        }
+        let start = self.text[..at]
+            .char_indices()
+            .rev()
+            .take_while(|&(_, ch)| word_char(ch))
+            .last()
+            .map_or(at, |(i, _)| i);
+        let end = self.text[at..]
+            .find(|ch| !word_char(ch))
+            .map_or(self.text.len(), |n| at + n);
+        self.anchor = Some(start);
+        self.cursor = end;
+    }
+
+    /// Select the line `at` is on.
+    pub fn select_line(&mut self, at: usize) {
+        self.anchor = Some(line_start(&self.text, at));
+        self.cursor = line_end(&self.text, at);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -53,16 +97,24 @@ impl TextField {
     pub fn clear(&mut self) {
         self.text.clear();
         self.cursor = 0;
+        self.anchor = None;
     }
 
     /// The text, leaving the field empty.
     pub fn take(&mut self) -> String {
         self.cursor = 0;
+        self.anchor = None;
         std::mem::take(&mut self.text)
     }
 
-    /// Insert `text` at the cursor and move the cursor past it.
+    /// Insert `text` at the cursor, in place of the selection, and move the
+    /// cursor past it.
     pub fn insert(&mut self, text: &str) {
+        if let Some(selection) = self.selection() {
+            self.cursor = selection.end;
+            self.remove_between(selection.start);
+        }
+        self.anchor = None;
         self.text.insert_str(self.cursor, text);
         self.cursor += text.len();
     }
@@ -73,6 +125,7 @@ impl TextField {
         let (start, end) = (from.min(self.cursor), from.max(self.cursor));
         self.text.replace_range(start..end, "");
         self.cursor = start;
+        self.anchor = None;
     }
 
     /// Handle an editing key, with the text drawn `width` columns wide.
@@ -97,9 +150,37 @@ impl TextField {
             KeyCode::End => Some(text.len()),
             _ => None,
         };
-        if let Some(at) = moved {
-            self.cursor = at;
+        let selection = self.selection();
+        if let Some(mut to) = moved {
+            let extends = matches!(
+                key.code,
+                KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End
+            ) && shift;
+            if extends {
+                self.anchor.get_or_insert(at);
+            } else {
+                // a plain Left or Right with a selection
+                // stops at its edge rather than past it
+                match (key.code, &selection) {
+                    (KeyCode::Left, Some(range)) if !alt && !ctrl => to = range.start,
+                    (KeyCode::Right, Some(range)) if !alt && !ctrl => to = range.end,
+                    _ => {}
+                }
+                self.anchor = None;
+            }
+            self.cursor = to;
             return Keyed::Moved;
+        }
+        if matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            self.anchor = None;
+            return Keyed::Unused;
+        }
+        if let Some(range) = selection
+            && matches!(key.code, KeyCode::Backspace | KeyCode::Delete)
+        {
+            self.cursor = range.end;
+            self.remove_between(range.start);
+            return Keyed::Edited;
         }
         match key.code {
             KeyCode::Enter if alt || shift => self.insert("\n"),
@@ -379,6 +460,7 @@ mod tests {
         let field = TextField {
             text: "one two three four".to_string(),
             cursor: 10,
+            anchor: None,
         };
         let view = field.view(9, 10);
         assert_eq!(view.rows, [0..8, 8..14, 14..18]);
@@ -402,6 +484,77 @@ mod tests {
         let view = field.view(20, 2);
         assert_eq!(view.rows, [0..2, 3..5]);
         assert!(view.starts_here);
+    }
+
+    fn selecting(text: &str, anchor: usize, cursor: usize) -> TextField {
+        TextField {
+            text: text.to_string(),
+            cursor,
+            anchor: Some(anchor),
+        }
+    }
+
+    #[test]
+    fn typing_or_a_paste_replaces_the_selection() {
+        let mut field = selecting("hello wide world", 6, 10);
+        press(&mut field, KeyCode::Char('b'), KeyModifiers::NONE);
+        assert_eq!(field.text, "hello b world");
+        assert_eq!(field.selection(), None);
+        let mut field = selecting("hello wide world", 10, 6);
+        field.insert("big");
+        assert_eq!(field.text, "hello big world");
+        assert_eq!(field.cursor, 9);
+    }
+
+    #[test]
+    fn backspace_or_delete_removes_only_the_selection() {
+        for code in [KeyCode::Backspace, KeyCode::Delete] {
+            let mut field = selecting("hello wide world", 6, 10);
+            assert_eq!(press(&mut field, code, KeyModifiers::NONE), Keyed::Edited);
+            assert_eq!(field.text, "hello  world");
+            assert_eq!(field.cursor, 6);
+        }
+    }
+
+    #[test]
+    fn left_or_right_collapses_a_selection_to_its_edge_and_other_moves_drop_it() {
+        let mut field = selecting("hello wide world", 10, 6);
+        press(&mut field, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!((field.cursor, field.selection()), (10, None));
+        let mut field = selecting("hello wide world", 6, 10);
+        press(&mut field, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!((field.cursor, field.selection()), (6, None));
+        let mut field = selecting("hello wide world", 6, 10);
+        press(&mut field, KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!((field.cursor, field.selection()), (0, None));
+        let mut field = selecting("hello wide world", 6, 10);
+        press(&mut field, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(field.selection(), None);
+    }
+
+    #[test]
+    fn shift_with_left_right_home_or_end_extends_the_selection() {
+        let mut field = TextField::new("hello world".to_string());
+        press(&mut field, KeyCode::Left, KeyModifiers::SHIFT);
+        press(&mut field, KeyCode::Left, KeyModifiers::SHIFT);
+        assert_eq!(field.selected(), Some("ld"));
+        press(&mut field, KeyCode::Home, KeyModifiers::SHIFT);
+        assert_eq!(field.selected(), Some("hello world"));
+        press(&mut field, KeyCode::End, KeyModifiers::SHIFT);
+        assert_eq!(field.selected(), None);
+    }
+
+    #[test]
+    fn a_word_selection_takes_the_run_of_word_chars_and_a_line_selection_its_line() {
+        let mut field = TextField::new("one two_日x three\nnext".to_string());
+        field.select_word(6);
+        assert_eq!(field.selected(), Some("two_日x"));
+        field.select_word(3);
+        assert_eq!((field.cursor, field.selected()), (3, None));
+        field.select_line(6);
+        assert_eq!(field.selected(), Some("one two_日x three"));
+        field.select_line(field.text.len());
+        assert_eq!(field.selected(), Some("next"));
     }
 
     #[test]

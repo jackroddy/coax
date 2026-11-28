@@ -141,6 +141,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             });
         }
     }
+    for area in &app.field_areas {
+        if let Some(field) = app.text_field(area.target) {
+            tint_selection(frame, field, area);
+        }
+    }
     draw_confirm(frame, transcript_area, app);
     draw_guard_rule(frame, lower_rule, app, now);
     header::draw_context(frame, context_area, app);
@@ -3383,6 +3388,27 @@ fn draw_input(frame: &mut Frame, area: Rect, input: &InputView, colour: Option<C
     frame.set_cursor_position((area.x + column, area.y + row));
 }
 
+/// Tint the selected text of `field`, drawn at `area`, as a transcript
+/// selection is tinted.
+fn tint_selection(frame: &mut Frame, field: &TextField, area: &FieldArea) {
+    let Some(selection) = field.selection() else {
+        return;
+    };
+    let tint = Style::new().bg(palette::get().tint);
+    let shown = area.view.rows.iter().skip(area.skipped);
+    for (y, row) in (area.area.y..area.area.bottom()).zip(shown) {
+        let start = selection.start.max(row.start);
+        let end = selection.end.min(row.end);
+        if start >= end {
+            continue;
+        }
+        let x = area.text_x + field.text[row.start..start].width() as u16;
+        let width = field.text[start..end].width() as u16;
+        let cells = Rect::new(x, y, width, 1).intersection(frame.area());
+        frame.buffer_mut().set_style(cells, tint);
+    }
+}
+
 /// The colour of the prompt's text: cyan for a coax command, green for an
 /// agent command.
 fn prompt_colour(input: &str) -> Option<Color> {
@@ -3729,6 +3755,7 @@ mod tests {
         let field = TextField {
             text: text.to_string(),
             cursor,
+            anchor: None,
         };
         input_view(&field, width, max_rows)
     }
