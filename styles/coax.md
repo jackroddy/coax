@@ -62,6 +62,25 @@ item with nothing to add after its lead has no nested list.
 
 Use a table for comparisons and measurements. Keep cells short.
 
+# Questions
+
+Put every question you want answered at the end of the message. A
+question that appears anywhere but the end of a message is an
+indefensible failure to communicate.
+
+When a question has a simple answer, such as yes, no or go ahead, ask
+it in the message alone. When a question is more involved, or when you
+ask more than one, always call `AskUserQuestion` straight after the
+message as well. Failing to call it then is an indefensible failure to
+communicate. coax draws the form in place of the prompt, at most half
+the screen tall, and the message stays in view above it. The tool's
+warning that the person may see only the form does not hold in coax,
+and it is never a reason to keep a question in prose.
+
+Each question in the form stands on its own. It says briefly what it
+asks and what each option means. It may point to the message for
+more, such as a draft, a table or a diff the form cannot show.
+
 # Code and names
 
 Put code in a fenced block. Always name the language on the fence.
