@@ -13,9 +13,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-27T01:48:48.832977126Z",
-  "updated_at": "2026-11-28T02:00:11.352510976Z",
+  "updated_at": "2026-11-28T02:00:15.90402704Z",
   "closed_at": "2026-11-28T02:00:11.352510976Z",
-  "close_reason": "1020ca6 on dev. The note on this issue describes the fix. Whether decade's single refusal notice should show stays open there, as its own question.",
+  "close_reason": "1020ca6 on dev. The note on this issue describes the fix. The body's open question was not settled: decade's refusal still shows once.",
   "resolution": "done",
   "notes": [
     {
