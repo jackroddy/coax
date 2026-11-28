@@ -1,0 +1,10 @@
+{
+  "slug": "claude-adapter-forwards-rate-limits",
+  "text": "The Claude adapter v0.101.0 forwards each SDK `rate_limit_event` as a `usage_update`, with the SDK's `rate_limit_info` unchanged in `_meta[\"_claude/rateLimit\"]`. That object holds `status`, `rateLimitType` (`five_hour`, `seven_day` and others), `utilization` and `resetsAt`. It comes only when the info changes, and never on an API-key or cloud-provider session. ACP itself has no rate-limit field. Source: the `rate_limit_event` case in the adapter's `prompt`.",
+  "created_at": "2026-11-28T01:13:02.011427888Z",
+  "updated_at": "2026-11-28T01:13:02.011427888Z",
+  "stamp": {
+    "commit": "51b776c",
+    "branch": "dev"
+  }
+}
