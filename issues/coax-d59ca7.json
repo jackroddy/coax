@@ -1,0 +1,30 @@
+{
+  "id": "coax-d59ca7",
+  "title": "A click in a text field places the cursor",
+  "body": "A click on the prompt box or on a form's text field does nothing today. The keyboard is the only way to move the cursor.\n\n## Proposal\n\n- A click inside a text field moves its cursor to the character under the pointer. A click past the end of a row moves it to the end of that row. A click below the last row moves it to the end of the text.\n- The mapping from a screen position to a byte uses the row ranges that `TextField` gives back from its layout, so the prompt and form fields share it.\n- A click on a form text field also moves the form's cursor to that field.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "coax-cd257e",
+  "blocked_by": [
+    "coax-36571e"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T06:34:37.112349069Z",
+  "updated_at": "2026-11-28T06:34:37.112349069Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "23bb4f1",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
