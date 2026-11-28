@@ -1,0 +1,10 @@
+{
+  "slug": "readme-preview-with-go-grip",
+  "text": "A README is previewed as GitHub draws it with `go-grip`, which renders the markdown locally and reloads the page when the file is saved. Start `go-grip -b=false -p PORT README.md` in the background. Then open `google-chrome-stable --app=http://localhost:PORT/README.md` with its own `--user-data-dir` under `tmp-claude/` in a decade scratch pane, with terminal false, so its window lands in the pane. Port 6419 is the default and is often taken.",
+  "created_at": "2026-11-28T03:29:40.337236531Z",
+  "updated_at": "2026-11-28T03:29:40.337236531Z",
+  "stamp": {
+    "commit": "7b26712",
+    "branch": "dev"
+  }
+}
