@@ -51,6 +51,13 @@ command line, the keys, and the scenario format the fake agent reads.
   matches, Enter waits until the arrows pick one. Tab fills in the first
   match, and more presses of Tab or Shift+Tab cycle through the rest.
 
+### Fixed
+
+- coax no longer puts a decade notice between every entry when decade
+  gives it no pane. That happens when coax runs inside a tmux session
+  that an agent in a decade pane started. File links still open through
+  decade.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

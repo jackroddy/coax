@@ -289,6 +289,9 @@ pub struct App {
     pub lines_seen: usize,
     pub agent: String,
     pub session: SessionId,
+    /// Whether coax holds a connection to decade.
+    pub decade: bool,
+    /// The pane decade's welcome gave coax, if it gave one.
     pub decade_pane: Option<String>,
     pub permission: Option<Permission>,
 
@@ -643,10 +646,11 @@ impl App {
     pub fn decade(&mut self, message: Message) {
         log::info("decade.recv", json!({"message": format!("{message:?}")}));
         match message {
-            Message::Welcome { pane, .. } => self.decade_pane = pane.or(Some(String::new())),
+            Message::Welcome { pane, .. } => self.decade_pane = pane,
             Message::Error { reason, .. } => self.transcript.notice(format!("decade: {reason}")),
             Message::Closed => {
                 log::info("decade.disconnect", json!({"reason": "closed by decade"}));
+                self.decade = false;
                 self.decade_pane = None;
                 self.transcript.notice("decade went away".to_string());
             }
@@ -899,7 +903,7 @@ impl App {
             .find(|link| link.area.contains(position))?;
         let action = match links::click(&area.target, &self.links, &self.cwd)? {
             Click::Run(argv) => Action::Run(argv),
-            Click::Show { .. } if self.decade_pane.is_none() => {
+            Click::Show { .. } if !self.decade => {
                 self.unknown = Some("no decade connection".to_string());
                 Action::None
             }
@@ -2123,7 +2127,8 @@ async fn session(
         lines_seen: 0,
         agent,
         session,
-        decade_pane: reporter.as_ref().map(|_| String::new()),
+        decade: reporter.is_some(),
+        decade_pane: None,
         permission: None,
         form: None,
         forms: VecDeque::new(),
@@ -2318,6 +2323,9 @@ fn report_to_decade(reporter: &mut Option<Reporter>, app: &mut App) {
     let Some(open) = reporter else {
         return;
     };
+    if app.decade_pane.is_none() {
+        return;
+    }
     let question = app
         .permission
         .as_ref()
@@ -2327,6 +2335,7 @@ fn report_to_decade(reporter: &mut Option<Reporter>, app: &mut App) {
     if let Err(error) = open.send(now) {
         log::info("decade.disconnect", json!({"reason": error.to_string()}));
         *reporter = None;
+        app.decade = false;
         app.decade_pane = None;
         app.transcript.notice("decade went away".to_string());
     }
@@ -2540,6 +2549,7 @@ mod tests {
             lines_seen: 0,
             agent: String::new(),
             session: SessionId::new("s"),
+            decade: false,
             decade_pane: None,
             permission: None,
             form: None,
@@ -2683,13 +2693,60 @@ mod tests {
         let mut app = with_links();
         assert!(matches!(click(&mut app, 11, 3), Action::None));
         assert_eq!(app.unknown.as_deref(), Some("no decade connection"));
-        app.decade_pane = Some(String::new());
+        app.decade = true;
         let Action::Show { to, show } = click(&mut app, 11, 3) else {
             panic!("no show");
         };
         assert_eq!(to, "code");
         assert_eq!(show.target, "/work/src/ui.rs");
         assert_eq!(show.at, Some(serde_json::json!(4)));
+    }
+
+    #[test]
+    fn a_welcome_with_no_pane_stops_agent_updates_but_links_still_reach_decade() {
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::net::UnixListener;
+
+        let dir = std::env::temp_dir().join(format!("coax-no-pane-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("decade.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let lines = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut lines = Vec::new();
+            for line in BufReader::new(stream).lines() {
+                let line = line.unwrap();
+                let ended = line == r#"{"ended":{}}"#;
+                lines.push(line);
+                if ended {
+                    break;
+                }
+            }
+            lines
+        });
+        let identity = decade_channel::Agent {
+            name: "fake".to_string(),
+            version: "1.2.3".to_string(),
+            session: "s".to_string(),
+            args: Vec::new(),
+        };
+        let (reporter, _messages) = report::connect(&path, None, &identity, Vec::new()).unwrap();
+        let mut reporter = Some(reporter);
+        let mut app = with_links();
+        app.decade = true;
+        app.decade(decade_channel::Message::Welcome {
+            pane: None,
+            version: 1,
+        });
+        assert_eq!(app.decade_pane, None);
+        report_to_decade(&mut reporter, &mut app);
+        assert!(matches!(click(&mut app, 11, 3), Action::Show { .. }));
+        app.exited = true;
+        report_to_decade(&mut reporter, &mut app);
+        let lines = lines.join().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(lines.iter().all(|line| !line.starts_with(r#"{"agent""#)));
+        assert_eq!(lines.last().unwrap(), r#"{"ended":{}}"#);
     }
 
     #[test]
@@ -4042,7 +4099,6 @@ mod tests {
         app.settings.apply(&SessionUpdate::UsageUpdate(update));
         app.settings
             .used(&Usage::new(28_485, 12, 4).cached_read_tokens(28_469));
-        app.decade_pane = Some(String::new());
         app.update = Some("0.9.0".to_string());
 
         let width = 140;
