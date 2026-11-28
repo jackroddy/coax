@@ -54,6 +54,11 @@ command line, the keys, and the scenario format the fake agent reads.
   and the field grows to at most half the rows the form may take.
   Shift+Enter or Alt+Enter adds a line in any text field. Enter keeps its
   meaning in a form.
+- A click in the prompt or in a form's text field puts the cursor on the
+  character under the pointer. A click past the end of a row puts it at
+  the end of that row. A click below the last row puts it at the end of
+  the text. A click in a form's text field also takes the form's cursor
+  to that field.
 
 ### Changed
 

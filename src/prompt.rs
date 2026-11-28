@@ -25,7 +25,7 @@ pub enum Keyed {
 }
 
 /// The rows of a field shown at a width and a most-rows limit.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct View {
     /// Each shown row's byte range in the text.
     pub rows: Vec<Range<usize>>,
@@ -118,6 +118,27 @@ impl TextField {
             _ => return Keyed::Unused,
         }
         Keyed::Edited
+    }
+
+    /// The byte index a click lands on at `column` of row `row` of `view`.
+    /// A click past a row's end lands at that end, and one below the last
+    /// row at the end of the text.
+    pub fn at(&self, view: &View, column: usize, row: usize) -> usize {
+        let Some(range) = view.rows.get(row) else {
+            return self.text.len();
+        };
+        let Some(shown) = self.text.get(range.clone()) else {
+            return self.text.len();
+        };
+        let at = range.start + at_column(shown, column);
+
+        // the end of a row that wraps is the start of the
+        // next row, where the cursor would be drawn
+        let wraps = self.text[at..].starts_with(|ch| ch != '\n');
+        if at == range.end && wraps {
+            return char_before(&self.text, at);
+        }
+        at
     }
 
     /// The rows shown at `width` columns and at most `max_rows` rows, a
@@ -381,6 +402,39 @@ mod tests {
         let view = field.view(20, 2);
         assert_eq!(view.rows, [0..2, 3..5]);
         assert!(view.starts_here);
+    }
+
+    #[test]
+    fn a_click_lands_before_the_char_under_it_and_a_wide_char_takes_either_column() {
+        let field = TextField::new("a日b".to_string());
+        let view = field.view(20, 10);
+        assert_eq!(field.at(&view, 0, 0), 0);
+        assert_eq!(field.at(&view, 1, 0), 1);
+        assert_eq!(field.at(&view, 2, 0), 1);
+        assert_eq!(field.at(&view, 3, 0), 4);
+    }
+
+    #[test]
+    fn a_click_past_a_rows_end_lands_at_its_end_and_below_the_rows_at_the_texts_end() {
+        // rows "one two " "three" "", the last after a newline
+        let field = TextField::new("one two three\n".to_string());
+        let view = field.view(9, 10);
+        assert_eq!(view.rows, [0..8, 8..13, 14..14]);
+        assert_eq!(field.at(&view, 30, 1), 13);
+        assert_eq!(field.at(&view, 3, 3), field.text.len());
+        // the end of a wrapped row is drawn on the next
+        // row, so a click there lands before the break space
+        assert_eq!(field.at(&view, 30, 0), 7);
+    }
+
+    #[test]
+    fn a_click_maps_through_a_view_that_starts_past_the_first_row() {
+        // rows "ab" "cd" "ef", the last two shown
+        let field = TextField::new("ab\ncd\nef".to_string());
+        let view = field.view(20, 2);
+        assert!(!view.starts_here);
+        assert_eq!(field.at(&view, 1, 0), 4);
+        assert_eq!(field.at(&view, 9, 1), 8);
     }
 
     #[test]

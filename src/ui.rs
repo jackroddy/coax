@@ -21,7 +21,7 @@ use crate::form::{self, Form, Kind as FormKind, Row};
 use crate::header;
 use crate::links::{self, Kind};
 use crate::palette;
-use crate::prompt::TextField;
+use crate::prompt::{TextField, View};
 use crate::select::{self, LineText};
 use crate::session::{self, Child, Entry, Message, Tool};
 use crate::settings::{self, Control};
@@ -57,7 +57,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         (None, None) => None,
     };
     let bottom_rows = match &form {
-        Some((lines, _)) => (lines.len() + 1).clamp(2, form_cap.max(2)),
+        Some(FormLines { lines, .. }) => (lines.len() + 1).clamp(2, form_cap.max(2)),
         None => input.height(),
     };
     let now = Instant::now();
@@ -119,18 +119,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(line), working_area);
     }
     app.preview_button = None;
+    app.field_areas.clear();
     match form {
-        Some((lines, focus)) => {
+        Some(form) => {
             let area = Rect {
                 height: prompt_area.height + 1,
                 ..upper_rule
             };
-            app.preview_button = draw_form(frame, area, app, lines, focus);
+            draw_form(frame, area, app, form);
         }
         None => {
             draw_rule(frame, upper_rule, THIN);
             draw_input(frame, prompt_area, &input, prompt_colour(&app.prompt.text));
             draw_commands(frame, app, upper_rule);
+            app.field_areas.push(FieldArea {
+                area: prompt_area,
+                text_x: prompt_area.x + PROMPT_LEAD.len() as u16,
+                skipped: 0,
+                target: FieldTarget::Prompt,
+                view: input.view,
+            });
         }
     }
     draw_confirm(frame, transcript_area, app);
@@ -2107,6 +2115,32 @@ pub struct ToggleArea {
     pub word: Word,
 }
 
+/// A text field on screen, found by the mouse.
+pub struct FieldArea {
+    /// The field's rows on screen, from the left edge of its box.
+    pub area: Rect,
+
+    /// The screen column of the text's first column.
+    pub text_x: u16,
+
+    /// The field's rows scrolled out of view above `area`.
+    pub skipped: usize,
+    pub target: FieldTarget,
+    pub view: View,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldTarget {
+    Prompt,
+
+    /// A text field of the open form: the field's index, and its row's
+    /// index into the form's `rows()`.
+    Form {
+        field: usize,
+        row: usize,
+    },
+}
+
 /// A link's text on screen, found by the mouse.
 pub struct LinkArea {
     pub area: Rect,
@@ -2887,15 +2921,9 @@ fn draw_permission(frame: &mut Frame, over: Rect, app: &App) {
 }
 
 /// The open form in a box over the prompt's rows and the rule above them,
-/// scrolled to keep the `focus` lines in view, with its keys on the bottom
-/// border, and where a template form's preview button went.
-fn draw_form(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    lines: Vec<Line<'static>>,
-    focus: Range<usize>,
-) -> Option<Rect> {
+/// scrolled to keep the focus lines in view, with its keys on the bottom
+/// border. Records where its preview button and text fields went.
+fn draw_form(frame: &mut Frame, area: Rect, app: &mut App, form: FormLines) {
     let accent = Style::new().fg(palette::get().accent);
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -2927,17 +2955,40 @@ fn draw_form(
                 Line::styled(" tab next · enter done · esc cancel ", dim()).right_aligned(),
             );
     } else {
-        return None;
+        return;
     }
     let body = block.inner(area);
-    let skip = focus
+    let skip = form
+        .focus
         .end
         .saturating_sub(body.height as usize)
-        .min(focus.start);
-    let lines: Vec<Line> = lines.into_iter().skip(skip).collect();
+        .min(form.focus.start);
+    let lines: Vec<Line> = form.lines.into_iter().skip(skip).collect();
     clear(frame, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
-    button
+    app.preview_button = button;
+    let shown = skip..skip + body.height as usize;
+    for text in form.texts {
+        let start = text.line.max(shown.start);
+        let end = (text.line + text.height).min(shown.end);
+        if start >= end {
+            continue;
+        }
+        app.field_areas.push(FieldArea {
+            area: Rect {
+                y: body.y + (start - skip) as u16,
+                height: (end - start) as u16,
+                ..body
+            },
+            text_x: body.x + (FORM_LEAD + TEXT_LEAD.width()) as u16,
+            skipped: start - text.line,
+            target: FieldTarget::Form {
+                field: text.field,
+                row: text.row,
+            },
+            view: text.view,
+        });
+    }
 }
 
 /// The template form's lines at `width`: its fields, then the filled text
@@ -2947,8 +2998,9 @@ fn template_form_lines(
     open: &TemplateForm,
     width: usize,
     field_rows: usize,
-) -> (Vec<Line<'static>>, Range<usize>) {
-    let (mut lines, focus) = form_lines(&open.form, width, field_rows);
+) -> FormLines {
+    let mut form = form_lines(&open.form, width, field_rows);
+    let lines = &mut form.lines;
     if let Some(template) = app.templates.get(&open.name)
         && open.preview
     {
@@ -2961,7 +3013,7 @@ fn template_form_lines(
             }
         }
     }
-    (lines, focus)
+    form
 }
 
 /// The rows a template form leaves the rest of the screen: a few of the
@@ -2979,10 +3031,32 @@ const FORM_LEAD: usize = 2;
 /// one after it for the cursor.
 const FIELD_LEAD: usize = 3;
 
+const TEXT_LEAD: &str = "› ";
+
+/// A form drawn as lines, before it is scrolled into its box.
+struct FormLines {
+    lines: Vec<Line<'static>>,
+
+    /// The lines to keep in view: the cursor's row through the end of the
+    /// preview it shows.
+    focus: Range<usize>,
+    texts: Vec<FormText>,
+}
+
+/// Where a text field's lines are among a form's lines.
+struct FormText {
+    line: usize,
+    height: usize,
+    field: usize,
+
+    /// The field's row, an index into the form's `rows()`.
+    row: usize,
+    view: View,
+}
+
 /// The form's lines at `width`, with each text field at most `field_rows`
-/// rows, and the lines to keep in view: the cursor's row through the end of
-/// the preview it shows.
-fn form_lines(form: &Form, width: usize, field_rows: usize) -> (Vec<Line<'static>>, Range<usize>) {
+/// rows.
+fn form_lines(form: &Form, width: usize, field_rows: usize) -> FormLines {
     let rows = form.rows();
     let preview = form.focused_preview();
     let room = width.saturating_sub(FORM_LEAD);
@@ -2996,6 +3070,7 @@ fn form_lines(form: &Form, width: usize, field_rows: usize) -> (Vec<Line<'static
         .map(|piece| Line::styled(piece, title_style))
         .collect();
     let mut focus = 0..0;
+    let mut texts = Vec::new();
     let mut shown_field = None;
     let mut number = 0;
     for (index, row) in rows.iter().enumerate() {
@@ -3026,7 +3101,25 @@ fn form_lines(form: &Form, width: usize, field_rows: usize) -> (Vec<Line<'static
         }
         shown_field = field;
         let focused = index == form.cursor;
-        let row_lines = form_row(form, *row, room, field_rows, focused);
+        let view = match *row {
+            Row::Text(field) => match &form.fields[field].kind {
+                FormKind::Text { text, .. } => {
+                    Some(text.view(room.saturating_sub(FIELD_LEAD), field_rows))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let row_lines = form_row(form, *row, room, view.as_ref(), focused);
+        if let (Row::Text(field), Some(view)) = (*row, view) {
+            texts.push(FormText {
+                line: lines.len(),
+                height: row_lines.len(),
+                field,
+                row: index,
+                view,
+            });
+        }
         if focused {
             focus = lines.len()..lines.len() + row_lines.len();
         }
@@ -3064,7 +3157,11 @@ fn form_lines(form: &Form, width: usize, field_rows: usize) -> (Vec<Line<'static
             lines.push(Line::styled(format!("{indent}{piece}"), yellow));
         }
     }
-    (lines, focus)
+    FormLines {
+        lines,
+        focus,
+        texts,
+    }
 }
 
 /// `text` broken into lines of at most `width` columns, at least one.
@@ -3115,13 +3212,13 @@ fn title_column(options: &[form::Choice], mark: usize, width: usize) -> Option<u
     (cap > mark).then(|| (widest + mark).min(cap))
 }
 
-/// A row's lines, at most `width` wide, and a text field's at most
-/// `field_rows` rows.
+/// A row's lines, at most `width` wide, with a text field's rows as `view`
+/// lays them out.
 fn form_row(
     form: &Form,
     row: Row,
     width: usize,
-    field_rows: usize,
+    view: Option<&View>,
     focused: bool,
 ) -> Vec<Line<'static>> {
     let accent = Style::new().fg(palette::get().accent);
@@ -3179,7 +3276,7 @@ fn form_row(
         }
         Row::Text(field) => {
             let field = &form.fields[field];
-            let FormKind::Text { text, .. } = &field.kind else {
+            let (FormKind::Text { text, .. }, Some(view)) = (&field.kind, view) else {
                 return Vec::new();
             };
             let room = width.saturating_sub(FIELD_LEAD);
@@ -3198,7 +3295,6 @@ fn form_row(
                 }
                 pieces
             } else {
-                let view = text.view(room, field_rows);
                 view.rows
                     .iter()
                     .enumerate()
@@ -3225,7 +3321,7 @@ fn form_row(
                 .into_iter()
                 .enumerate()
                 .map(|(n, mut spans)| {
-                    let lead = if n == 0 { "› " } else { "  " };
+                    let lead = if n == 0 { TEXT_LEAD } else { "  " };
                     spans.insert(0, Span::styled(lead, accent));
                     Line::from(spans)
                 })
@@ -3383,6 +3479,7 @@ struct InputView {
 
     /// Column and row of the cursor within the prompt rows, prefix included.
     cursor: (u16, u16),
+    view: View,
 }
 
 const PROMPT_FIRST: &str = "> ";
@@ -3408,6 +3505,7 @@ fn input_view(field: &TextField, width: usize, max_rows: usize) -> InputView {
             (PROMPT_LEAD.len() + view.cursor.0) as u16,
             view.cursor.1 as u16,
         ),
+        view,
     }
 }
 
@@ -3892,7 +3990,7 @@ mod tests {
             panic!("the second step asks the questions");
         };
         let form = Form::new(asked.message.clone(), &asked.requested_schema);
-        let (lines, _) = form_lines(&form, 80, 10);
+        let lines = form_lines(&form, 80, 10).lines;
         let span = |text: &str| {
             lines
                 .iter()

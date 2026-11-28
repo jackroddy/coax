@@ -28,7 +28,7 @@ use crate::clock::Time;
 use crate::command::{self, Candidate, Kind};
 use crate::diff;
 use crate::editor;
-use crate::form::Form;
+use crate::form::{Field, Form, Kind as FormKind};
 use crate::glyphs;
 use crate::links::{self, Click, LinksConfig, Loaded};
 use crate::log;
@@ -40,7 +40,7 @@ use crate::select::{self, Point, Selection};
 use crate::session::{self, Entry, Marked, Transcript};
 use crate::settings::{Category, Control, Setting, Settings};
 use crate::template::Template;
-use crate::ui::{self, Word};
+use crate::ui::{self, FieldTarget, Word};
 
 const WHEEL_LINES: usize = 3;
 
@@ -160,6 +160,9 @@ pub struct App {
 
     /// Where the template form's preview button was drawn.
     pub preview_button: Option<Rect>,
+
+    /// The text fields on screen, set by the last draw.
+    pub field_areas: Vec<ui::FieldArea>,
 
     /// An agent command waiting for a yes before it is sent.
     pub confirm: Option<Confirm>,
@@ -985,6 +988,40 @@ impl App {
         true
     }
 
+    /// Put the cursor of the text field under `position` where it points,
+    /// and say whether there was one. A form's field takes the form's cursor.
+    fn click_field(&mut self, position: Position) -> bool {
+        let Some(area) = self
+            .field_areas
+            .iter()
+            .find(|area| area.area.contains(position))
+        else {
+            return false;
+        };
+        let column = position.x.saturating_sub(area.text_x) as usize;
+        let row = (position.y - area.area.y) as usize + area.skipped;
+        let (form, field, form_row) = match area.target {
+            FieldTarget::Prompt => {
+                self.prompt.cursor = self.prompt.at(&area.view, column, row);
+                return true;
+            }
+            FieldTarget::Form { field, row } => match (&mut self.form, &mut self.template_form) {
+                (Some(asked), _) => (&mut asked.form, field, row),
+                (None, Some(open)) => (&mut open.form, field, row),
+                (None, None) => return false,
+            },
+        };
+        if let Some(Field {
+            kind: FormKind::Text { text, .. },
+            ..
+        }) = form.fields.get_mut(field)
+        {
+            text.cursor = text.at(&area.view, column, row);
+            form.cursor = form_row;
+        }
+        true
+    }
+
     fn copy_at(&self, position: Position) -> Option<(usize, usize)> {
         self.copies
             .iter()
@@ -1000,6 +1037,9 @@ impl App {
     }
 
     fn click(&mut self, position: Position) -> Action {
+        if self.template_form.is_some() && self.click_field(position) {
+            return Action::None;
+        }
         if let Some(open) = &mut self.template_form {
             if self
                 .preview_button
@@ -1017,7 +1057,11 @@ impl App {
             return Action::None;
         }
         self.selection = None;
-        if self.permission.is_some() || self.form.is_some() || self.confirm.is_some() {
+        if self.form.is_some() {
+            self.click_field(position);
+            return Action::None;
+        }
+        if self.permission.is_some() || self.confirm.is_some() {
             return Action::None;
         }
         if self.menu.is_some() {
@@ -1032,6 +1076,9 @@ impl App {
                 }
                 return self.choose();
             }
+            return Action::None;
+        }
+        if self.click_field(position) {
             return Action::None;
         }
         if self.press_v_bar(position) {
@@ -1995,6 +2042,7 @@ async fn session(
         templates,
         template_form: None,
         preview_button: None,
+        field_areas: Vec::new(),
         confirm: None,
         expanded: HashSet::new(),
         folds: Vec::new(),
@@ -2412,6 +2460,7 @@ mod tests {
             templates: BTreeMap::new(),
             template_form: None,
             preview_button: None,
+            field_areas: Vec::new(),
             confirm: None,
             expanded: HashSet::new(),
             folds: Vec::new(),
@@ -4431,6 +4480,68 @@ mod tests {
             reply,
         });
         answer
+    }
+
+    /// The screen column and row where `needle` starts, in ASCII rows.
+    fn find_on_screen(app: &mut App, needle: &str) -> (u16, u16) {
+        let buffer = header_buffer(app, 100);
+        for y in 0..buffer.area.height {
+            let row: Vec<String> = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect();
+            let first = needle.chars().next().unwrap().to_string();
+            for x in 0..row.len() {
+                if row[x] == first && row[x..].concat().starts_with(needle) {
+                    return (x as u16, y);
+                }
+            }
+        }
+        panic!("{needle:?} is not on the screen");
+    }
+
+    fn click_at(app: &mut App, (column, row): (u16, u16)) {
+        let down = MouseEventKind::Down(MouseButton::Left);
+        app.mouse(wheel(down, KeyModifiers::NONE, column, row));
+        let up = MouseEventKind::Up(MouseButton::Left);
+        app.mouse(wheel(up, KeyModifiers::NONE, column, row));
+    }
+
+    #[test]
+    fn a_click_in_the_prompt_puts_the_cursor_on_the_char_under_it_or_the_rows_end() {
+        let mut app = with_settings();
+        app.set_input("hello world".to_string());
+        let (x, y) = find_on_screen(&mut app, "> hello");
+        click_at(&mut app, (x + 2 + 6, y));
+        assert_eq!(app.prompt.cursor, 6);
+        assert!(app.selection.is_none());
+        click_at(&mut app, (x + 60, y));
+        assert_eq!(app.prompt.cursor, app.prompt.text.len());
+        click_at(&mut app, (x, y));
+        assert_eq!(app.prompt.cursor, 0);
+        assert_eq!(app.prompt.text, "hello world");
+    }
+
+    #[test]
+    fn a_click_in_a_form_text_field_moves_the_form_and_the_text_cursor_there() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        let _answer = ask_form(&mut app);
+        let form = &mut app.form.as_mut().unwrap().form;
+        let crate::form::Kind::Text { text, .. } = &mut form.fields[1].kind else {
+            panic!("the second field is the note");
+        };
+        *text = TextField::new("a note".to_string());
+        assert_eq!(form.cursor, 0);
+        let (x, y) = find_on_screen(&mut app, "› a note");
+        click_at(&mut app, (x + 2 + 2, y));
+        let form = &app.form.as_ref().unwrap().form;
+        assert_eq!(form.rows()[form.cursor], crate::form::Row::Text(1));
+        type_text(&mut app, "short ");
+        let form = &app.form.as_ref().unwrap().form;
+        assert!(matches!(
+            &form.fields[1].kind,
+            crate::form::Kind::Text { text, .. } if text.text == "a short note"
+        ));
     }
 
     #[test]
