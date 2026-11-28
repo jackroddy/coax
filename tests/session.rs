@@ -59,6 +59,7 @@ fn check_hello(transcript: &Transcript) {
             Entry::Agent(_) => "agent",
             Entry::Permission { .. } => "permission",
             Entry::Notice(_) => "notice",
+            Entry::Answers { .. } => "answers",
         })
         .collect();
     assert_eq!(

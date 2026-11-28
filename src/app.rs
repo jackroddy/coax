@@ -694,6 +694,12 @@ impl App {
     /// Send `action` for the open form, and open the next one waiting.
     fn answer(&mut self, action: ElicitationAction) {
         if let Some(asked) = self.form.take() {
+            let dismissed = !matches!(action, ElicitationAction::Accept(_));
+            let mut questions = asked.form.summary();
+            if dismissed {
+                questions.iter_mut().for_each(|(_, answer)| *answer = None);
+            }
+            self.transcript.answered(dismissed, questions);
             let _ = asked.reply.send(action);
         }
         self.form = self.forms.pop_front();
@@ -4536,6 +4542,46 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         assert!(app.form.is_none());
         assert!(matches!(answer.try_recv(), Ok(ElicitationAction::Decline)));
+    }
+
+    #[test]
+    fn an_answered_form_leaves_its_questions_and_answers_and_a_dismissed_one_says_so() {
+        let mut app = with_settings();
+        app.transcript.prompt("hi".to_string());
+        let mut answer = ask_form(&mut app);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        let open = &mut app.form.as_mut().unwrap().form;
+        open.cursor = open.rows().len() - 1;
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(
+            answer.try_recv(),
+            Ok(ElicitationAction::Accept(_))
+        ));
+        let screen = header_rows_all(&mut app, 100);
+        for row in [
+            "▍ answered",
+            "▍ Where should the cache live?",
+            "▍   → Disk",
+            "▍ Which platforms should it build on?",
+            "▍     no answer",
+        ] {
+            assert!(screen.contains(row), "{row}\n{screen}");
+        }
+
+        let _answer = ask_form(&mut app);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+        let Some(Entry::Answers {
+            dismissed,
+            questions,
+        }) = app.transcript.entries.last()
+        else {
+            panic!("no answers entry");
+        };
+        assert!(dismissed);
+        assert!(questions.iter().all(|(_, answer)| answer.is_none()));
     }
 
     #[test]

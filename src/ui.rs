@@ -1740,6 +1740,10 @@ fn build_transcript(app: &mut App, width: usize, visible: Range<usize>) -> Built
                 ]);
                 lines.push_text(line, pad, cmr::Join::Break);
             }
+            Entry::Answers {
+                dismissed,
+                questions,
+            } => answer_rows(*dismissed, questions, usable, &mut lines),
             Entry::Notice(text) => {
                 let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
                 let text = cut(&flat, width);
@@ -2298,6 +2302,32 @@ fn wrapped(
             ]);
             out.push_text(line, lead.width(), join);
             lead = rest;
+        }
+    }
+}
+
+/// The bar down the left edge of an answered form's summary.
+const ANSWER_BAR: &str = "▍ ";
+
+fn answer_rows(
+    dismissed: bool,
+    questions: &[(String, Option<String>)],
+    width: usize,
+    out: &mut Drawn,
+) {
+    let bar = Style::new().fg(palette::get().cyan);
+    let (label, label_style) = if dismissed {
+        ("dismissed", Style::new().fg(palette::get().yellow))
+    } else {
+        ("answered", bar)
+    };
+    wrapped(ANSWER_BAR, ANSWER_BAR, bar, label, width, label_style, out);
+    let accent = Style::new().fg(palette::get().accent);
+    for (question, answer) in questions {
+        wrapped(ANSWER_BAR, ANSWER_BAR, bar, question, width, bold(), out);
+        match answer {
+            Some(answer) => wrapped("▍   → ", "▍     ", bar, answer, width, accent, out),
+            None => wrapped("▍     ", "▍     ", bar, "no answer", width, dim(), out),
         }
     }
 }

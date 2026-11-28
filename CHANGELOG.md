@@ -42,6 +42,12 @@ command line, the keys, and the scenario format the fake agent reads.
   think and `~` for a mode change. The chips `①` to `⑳` read `1` to `9`,
   then `A` to `K`. Without the key, coax draws in ASCII when the locale is
   not UTF-8 or `TERM` is `linux`, the Linux console.
+- An answered question form leaves a summary in the conversation. A cyan
+  bar runs down its left edge under the word `answered`, and each
+  question follows in bold with the answer under it in the accent colour.
+  A note typed in a question's Other field follows its pick. A form
+  closed without an answer reads `dismissed` in yellow, with "no answer"
+  under each question.
 
 ### Changed
 

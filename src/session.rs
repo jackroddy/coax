@@ -180,8 +180,18 @@ pub enum Entry {
     Agent(Message),
     Thought(String),
     Tool(Tool),
-    Permission { title: String, choice: String },
+    Permission {
+        title: String,
+        choice: String,
+    },
     Notice(String),
+
+    /// A question form the person answered, or dismissed with no answers:
+    /// each question and its answer in words.
+    Answers {
+        dismissed: bool,
+        questions: Vec<(String, Option<String>)>,
+    },
 }
 
 /// How many of the agent's last stderr lines an exit notice shows.
@@ -346,6 +356,13 @@ impl Transcript {
             .map(|tool| tool.title.clone())
             .unwrap_or_else(|| id.to_string());
         self.entries.push(Entry::Permission { title, choice });
+    }
+
+    pub fn answered(&mut self, dismissed: bool, questions: Vec<(String, Option<String>)>) {
+        self.entries.push(Entry::Answers {
+            dismissed,
+            questions,
+        });
     }
 
     pub fn notice(&mut self, text: String) {

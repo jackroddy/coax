@@ -212,6 +212,46 @@ impl Form {
         answers
     }
 
+    /// Each question as the person read it, with their answer in words, or
+    /// `None` for one left empty. A question's Other text follows its pick.
+    pub fn summary(&self) -> Vec<(String, Option<String>)> {
+        let mut questions = Vec::new();
+        for (index, field) in self.fields.iter().enumerate() {
+            if field.other_of.is_some() {
+                continue;
+            }
+            let picked = match &field.kind {
+                Kind::Choice { options, picked } => picked.map(|p| options[p].title.clone()),
+                Kind::Many { options, picked } => {
+                    let titles: Vec<&str> = options
+                        .iter()
+                        .zip(picked)
+                        .filter(|(_, on)| **on)
+                        .map(|(option, _)| option.title.as_str())
+                        .collect();
+                    (!titles.is_empty()).then(|| titles.join(", "))
+                }
+                Kind::Text { text, .. } => typed(text),
+                Kind::Toggle(on) => Some(if *on { "yes" } else { "no" }.to_string()),
+            };
+            let other = self
+                .fields
+                .iter()
+                .find(|other| other.other_of == Some(index))
+                .and_then(|other| match &other.kind {
+                    Kind::Text { text, .. } => typed(text),
+                    _ => None,
+                });
+            let answer = match (picked, other) {
+                (Some(picked), Some(other)) => Some(format!("{picked} · note: {other}")),
+                (picked, other) => picked.or(other),
+            };
+            let question = field.description.clone().unwrap_or(field.title.clone());
+            questions.push((question, answer));
+        }
+        questions
+    }
+
     /// Add pasted text to the text field the cursor is on, with its
     /// newlines kept only where the field takes lines.
     pub fn paste(&mut self, pasted: &str) {
@@ -384,6 +424,11 @@ impl Form {
         }
         None
     }
+}
+
+fn typed(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 fn field(key: &str, property: &ElicitationPropertySchema, required: bool) -> Field {
@@ -784,6 +829,30 @@ mod tests {
             Some(&ElicitationContentValue::String("on SSD".to_string()))
         );
         assert!(!content.contains_key("question_1"));
+    }
+
+    #[test]
+    fn the_summary_gives_each_question_its_picks_and_note_and_leaves_an_empty_one_unanswered() {
+        let mut form = questions();
+        press(&mut form, KeyCode::Down);
+        press(&mut form, KeyCode::Enter);
+        press(&mut form, KeyCode::Up);
+        form.paste("on SSD");
+        assert_eq!(
+            form.summary(),
+            [
+                (
+                    "Where should the cache live?".to_string(),
+                    Some("Disk · note: on SSD".to_string())
+                ),
+                (form.fields[2].description.clone().unwrap(), None),
+            ]
+        );
+        form.cursor = 3;
+        press(&mut form, KeyCode::Char(' '));
+        form.cursor = 5;
+        press(&mut form, KeyCode::Char(' '));
+        assert_eq!(form.summary()[1].1.as_deref(), Some("Linux, Windows"));
     }
 
     #[test]
