@@ -1,0 +1,28 @@
+{
+  "id": "coax-cd257e",
+  "title": "Text fields",
+  "body": "coax edits text in two places, and the two share nothing.\n\n- The prompt box keeps its text in `App::input` and a byte cursor in `App::cursor`. `App::key` in `src/app.rs` moves the cursor with the helpers in `src/prompt.rs` (by character, word, line and wrapped row). `input_view` in `src/ui.rs` wraps the text with `prompt::wrap_rows` and shows a window of rows around the cursor, growing the box up to half the screen.\n- A form's free-text field is `Kind::Text { text, .. }` in `src/form.rs`. `Form::key` only adds a character at the end or removes the last one. It has no cursor, and Enter moves to the next question, except in a template's many-line field.\n\nNeither one takes the mouse. Drag selection exists only in the conversation (`src/select.rs`), and it copies when the button is released.\n\nThis milestone gives coax one text field that every editable box uses, and then builds mouse editing on it once:\n\n- one text field type, used by the prompt and by every form text field, with Shift+Enter for a new line in a form\n- a click in a text field places the cursor\n- a drag, a double click or a triple click selects text in a text field, Ctrl+C copies it, and typing replaces it\n\nThe field reuses what the conversation's selection already has, such as word and line picking, wherever the two need the same thing, so no idea is written twice.",
+  "type": "milestone",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T06:34:37.089202631Z",
+  "updated_at": "2026-11-28T06:34:37.089202631Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "23bb4f1",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
