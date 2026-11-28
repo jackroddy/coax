@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-28T01:57:12.864310329Z",
   "defer_until": null,
   "created_at": "2026-11-27T01:48:48.832977126Z",
-  "updated_at": "2026-11-28T01:55:33.300568184Z",
+  "updated_at": "2026-11-28T01:55:33.318634169Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "d38840c0",
+      "at": "2026-11-28T01:55:33.318632849Z",
+      "author": "Jack Roddy/4c7bb0a4",
+      "text": "The fix splits the field in two. `App::decade` says coax holds a connection, and `App::click_link` checks it. `App::decade_pane` holds only the pane a `Welcome` gave, and `None` otherwise. `report_to_decade` returns before sending while `decade_pane` is `None`. So coax keeps the connection for `show` and sends no `agent` update without a pane. The refusal itself still shows once, which leaves the open question.",
+      "commit": "319e7e5",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "51b776c",
