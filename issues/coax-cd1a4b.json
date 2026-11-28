@@ -1,0 +1,28 @@
+{
+  "id": "coax-cd1a4b",
+  "title": "Form questions and option descriptions render as markdown, with working links",
+  "body": "coax draws an agent's question form with `draw_form` and `form_lines` in `src/ui.rs`. A question's title, its description and each option's description go in as plain strings, wrapped by `wrap` and styled whole. Agent text in the conversation goes through `cmr::parse` and `cmr::layout`. That pass draws `inline code` and bold, and it makes `foam:` and `file:` links hover and click.\n\nSo a form that names an issue shows `coax-ee3b4d` as bare text. The person has to look the issue up by its id to learn what it is. Backticks and bold show as the characters typed.\n\n## Proposal\n\n- Each question's title, description and option descriptions go through cmr at the form's width, as agent text does.\n- Links in the form register in `App::link_areas` as links in the conversation do. A `foam:` link shows the issue in the hover popup, and a click opens its target.\n- Inline markdown only. A heading, a list or a table in a form string is drawn as its text.\n\n## Open\n\n- Whether option titles render too, or stay plain so the columns line up.\n- How the form's keys and a click on a link share the mouse.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-28T05:58:10.639826433Z",
+  "updated_at": "2026-11-28T05:58:10.639826433Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "da1c9f1",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
