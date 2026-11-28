@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T01:48:16.848082157Z",
-  "updated_at": "2026-11-28T03:43:47.753508732Z",
+  "updated_at": "2026-11-28T03:43:47.764300761Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -48,6 +48,14 @@
       "author": "Jack Roddy/df584c97",
       "text": "Context, restated for the next session. coax reports an agent's running sub-agents to decade (`Snapshot::of` in `src/report.rs`), so decade's sidebar shows what the agent is busy with. A shell command the agent runs in the background is running work too, but coax cannot report it, because the adapter marks the call `completed` at launch and sends nothing when it ends (the research note above).\n\nAgreed plan, not started:\n\n1. Spike: find out what declaring `terminal_output` commits coax to in the Claude adapter v0.101.0, and whether the adapter then sends a `tool_call_update` when a background command ends. This needs only the adapter's code and the ACP schema, no login.\n2. Decide: if it works, coax tracks background commands as running work and reports them to decade beside sub-agents. If the capability brings obligations coax cannot meet, decade shows sub-agents only and this issue closes.",
       "commit": "51b776c",
+      "branch": "dev"
+    },
+    {
+      "id": "16fb67f9",
+      "at": "2026-11-28T03:43:47.764300051Z",
+      "author": "Jack Roddy/4c7bb0a4",
+      "text": "The background commands milestone (coax-42022c) offers a fourth path that needs no capability. coax finds the shell behind each command in `/proc` (coax-97661c), and the command has ended when that PID is gone or its start time no longer matches. That signal works for a live session, and after coax restarts too. It reports no exit code, so `terminal_output` stays the path if coax ever needs the exit status.",
+      "commit": "7b26712",
       "branch": "dev"
     }
   ],
